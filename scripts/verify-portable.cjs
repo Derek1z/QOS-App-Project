@@ -4,6 +4,7 @@
 const { spawnSync } = require('node:child_process')
 const { existsSync, rmSync } = require('node:fs')
 const { join } = require('node:path')
+const { cleanSmokeTemp } = require('./clean-smoke-temp.cjs')
 
 const RELEASE = join(__dirname, '..', 'release')
 const exe = join(RELEASE, '2G_3G_4G_QoS.exe')
@@ -11,6 +12,8 @@ if (!existsSync(exe)) {
   console.error('verify-portable: exe not found: ' + exe)
   process.exit(1)
 }
+// free the disk the SFX extraction needs before launching the portable
+cleanSmokeTemp()
 // The portable 7z SFX wrapper swallows the child's stdout, so the smoke
 // suite writes smoke_ok.marker next to the exe when it completes.
 const MARKER = join(RELEASE, 'smoke_ok.marker')

@@ -13,10 +13,11 @@
     "icon": "node scripts/generate-icon.cjs",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
-    "smoke": "electron-vite build && electron . --smoke",
+    "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron . --smoke",
     "preview:web": "vite --config .preview/vite.config.ts",
-    "dist": "electron-vite build && electron-builder --win",
-    "dist:portable": "electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
+    "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
+    "dist": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --win",
+    "dist:portable": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
   },
   "build": {
     "appId": "com.qos.networkintelligence",

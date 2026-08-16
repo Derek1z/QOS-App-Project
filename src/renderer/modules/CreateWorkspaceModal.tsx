@@ -12,7 +12,8 @@ export default function CreateWorkspaceModal(): React.JSX.Element | null {
   useEffect(() => {
     if (prompt) {
       setName(prompt.defaultName)
-      setTech('4G')
+      // pre-fill with the most recently used technology
+      setTech(prompt.defaultTech ?? '4G')
       const t = setTimeout(() => inputRef.current?.focus(), 0)
       return () => clearTimeout(t)
     }

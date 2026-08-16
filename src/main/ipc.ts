@@ -53,7 +53,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       title: 'Open 2G/3G/4G QoS Workspace',
       properties: ['openFile'],
       filters: [{ name: 'QoS Workspaces', extensions: ['qosdb'] }],
-      defaultPath: dirs.workspaces
+      defaultPath: appState.load().lastWorkspaceDir ?? dirs.workspaces
     })
     return res.canceled ? null : res.filePaths[0]
   })
@@ -62,7 +62,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog({
       title: 'Choose Folder for New Workspace',
       properties: ['openDirectory', 'createDirectory'],
-      defaultPath: dirs.workspaces
+      defaultPath: appState.load().lastWorkspaceDir ?? dirs.workspaces
     })
     return res.canceled ? null : res.filePaths[0]
   })

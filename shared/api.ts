@@ -95,6 +95,10 @@ export interface Summary {
 export interface AppStateData {
   recentWorkspaces: RecentWorkspace[]
   lastWorkspacePath?: string
+  /** last technology chosen when creating a workspace — pre-fills the modal */
+  lastTechnology?: Technology
+  /** last folder chosen when creating a workspace — pre-fills the dialog */
+  lastWorkspaceDir?: string
   theme: 'dark'
   density: 'compact'
 }

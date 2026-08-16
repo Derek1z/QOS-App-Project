@@ -5,6 +5,8 @@ import type { RecentWorkspace } from '../../../shared/api'
 export default function Welcome(): React.JSX.Element {
   const recent = useAppStore((s) => s.recent)
   const busy = useAppStore((s) => s.busy)
+  const error = useAppStore((s) => s.error)
+  const setError = useAppStore((s) => s.setError)
 
   return (
     <div className="welcome">
@@ -16,6 +18,22 @@ export default function Welcome(): React.JSX.Element {
           a new one to begin.
         </p>
       </div>
+      {error && (
+        <div className="welcome-error" role="alert">
+          <div className="welcome-error-icon">⚠️</div>
+          <div className="welcome-error-body">
+            <div className="welcome-error-title">That didn't work</div>
+            <div className="welcome-error-msg">{error}</div>
+            <div className="welcome-error-hint">
+              Check that the chosen folder is writable and not locked by another copy of the app,
+              then try again — or open a different workspace instead.
+            </div>
+          </div>
+          <button className="btn btn-sm" onClick={() => setError(null)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
       <div className="welcome-actions">
         <button className="btn btn-primary" disabled={busy} onClick={() => void openWorkspaceFlow()}>
           Locate Workspace

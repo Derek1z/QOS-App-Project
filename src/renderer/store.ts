@@ -43,8 +43,8 @@ interface AppStore {
   setBusy(v: boolean): void
   setError(e: string | null): void
   setInvestigationTarget(t: { scope: 'cell' | 'site' | 'district'; id: number; name: string; path: string[] } | null): void
-  createPrompt: { defaultName: string; resolve: (c: CreateWorkspaceChoice | null) => void } | null
-  openCreatePrompt(defaultName: string, resolve: (c: CreateWorkspaceChoice | null) => void): void
+  createPrompt: { defaultName: string; defaultTech?: Technology; resolve: (c: CreateWorkspaceChoice | null) => void } | null
+  openCreatePrompt(defaultName: string, defaultTech: Technology | undefined, resolve: (c: CreateWorkspaceChoice | null) => void): void
   answerCreatePrompt(c: CreateWorkspaceChoice | null): void
 }
 
@@ -70,7 +70,8 @@ export const useAppStore = create<AppStore>((set) => ({
   setError: (error) => set({ error }),
   setInvestigationTarget: (investigationTarget) => set({ investigationTarget }),
   createPrompt: null,
-  openCreatePrompt: (defaultName, resolve) => set({ createPrompt: { defaultName, resolve } }),
+  openCreatePrompt: (defaultName, defaultTech, resolve) =>
+    set({ createPrompt: { defaultName, defaultTech, resolve } }),
   answerCreatePrompt: (c) => {
     set((s) => {
       s.createPrompt?.resolve(c)

@@ -54,6 +54,8 @@ interface DemoFact {
 const demoFacts: DemoFact[] = []
 let demoWorkspaceName = 'Preview Network'
 let demoTech: Technology = '4G'
+// remembered choices for workspace creation (demo mirror of appState)
+const demoAppState: { lastTechnology?: Technology; lastWorkspaceDir?: string } = {}
 let demoKpiSeq = 100
 // per-cell demo extra KPI values keyed `${cellId}|${weekStart}|${kpiKey}`
 const demoKpiValues = new Map<string, number>()
@@ -3132,10 +3134,23 @@ export const previewApi: Api & { demo: true } = {
           lastOpened: new Date().toISOString()
         }
       ],
+      lastTechnology: demoAppState.lastTechnology,
+      lastWorkspaceDir: demoAppState.lastWorkspaceDir,
       theme: 'dark' as const,
       density: 'compact' as const
     }),
-    set: async (p) => ({ recentWorkspaces: [], theme: 'dark' as const, density: 'compact' as const, ...p })
+    set: async (p) => {
+      if (p.lastTechnology) demoAppState.lastTechnology = p.lastTechnology
+      if (p.lastWorkspaceDir) demoAppState.lastWorkspaceDir = p.lastWorkspaceDir
+      return {
+        recentWorkspaces: [],
+        lastTechnology: demoAppState.lastTechnology,
+        lastWorkspaceDir: demoAppState.lastWorkspaceDir,
+        theme: 'dark' as const,
+        density: 'compact' as const,
+        ...p
+      }
+    }
   },
   imports: {
     analyze: async (paths: string[]): Promise<FileAnalysis[]> => {

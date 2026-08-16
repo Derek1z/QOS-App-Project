@@ -33,12 +33,14 @@ export async function openWorkspaceFlow(path?: string): Promise<void> {
 
 export async function createWorkspaceFlow(name?: string): Promise<void> {
   const st = useAppStore.getState()
+  // remember the last folder + technology so the next creation is pre-filled
+  const app = await window.api.appState.get()
   const dir = await window.api.workspace.pickDirectory()
   if (!dir) return
   // Electron does not implement window.prompt() (it returns null), so name and
   // technology are collected by an in-app modal instead.
   const choice = await new Promise<CreateWorkspaceChoice | null>((resolve) => {
-    useAppStore.getState().openCreatePrompt(name ?? '', resolve)
+    useAppStore.getState().openCreatePrompt(name ?? '', app.lastTechnology, resolve)
   })
   if (!choice) return
   const finalName = choice.name.trim()
@@ -47,6 +49,8 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   st.setError(null)
   try {
     await window.api.workspace.create(dir, finalName, choice.tech)
+    // remember the choices for next time
+    await window.api.appState.set({ lastTechnology: choice.tech, lastWorkspaceDir: dir })
     await refreshWorkspaceState()
     emit('WORKSPACE_CHANGED')
   } catch (e) {

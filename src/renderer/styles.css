@@ -1031,6 +1031,48 @@ code {
   margin: 22px 0 28px;
 }
 
+.welcome-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 18px auto 0;
+  max-width: 520px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.09);
+}
+
+.welcome-error-icon {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.welcome-error-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.welcome-error-title {
+  font-weight: 700;
+  color: var(--danger);
+  font-size: 13.5px;
+}
+
+.welcome-error-msg {
+  color: var(--text);
+  font-size: 12.5px;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.welcome-error-hint {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+
 .recent {
   text-align: left;
 }

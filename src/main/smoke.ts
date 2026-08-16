@@ -5,7 +5,7 @@ import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
   getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
-  getRegionMap, getRegionDistricts
+  getRegionMap, getRegionDistricts, getKpiOverview
 } from './services/queryService'
 import {
   searchEntities, getInvestigation, setInvestigationStatus, addInvestigationNote,
@@ -820,6 +820,21 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (!tch || tch.value == null) throw new Error('tch_congestion value missing: ' + JSON.stringify(extraRow.kpis))
   if (tch.value !== 3.5) throw new Error('tch_congestion value wrong: ' + tch.value)
   if (tch.breached !== true) throw new Error('tch_congestion should breach target 2: ' + JSON.stringify(tch))
+  // 27d3. tech-aware NC: under 2G the cell breaching TCH Congestion (3.5 > 2)
+  // every day must be classified NC from its imported KPI — not the PRB rule
+  const kpiNc = await getCellIntelligence({ limit: 500 })
+  const ncRow = kpiNc.rows.find((r) => r.cellName === 'EXTRA_001_A')
+  const nonNcRow = kpiNc.rows.find((r) => r.cellName === 'EXTRA_002_A')
+  if (!ncRow || !ncRow.isNc) throw new Error('2G cell breaching TCH Congestion should be NC: ' + JSON.stringify(ncRow))
+  if (nonNcRow && nonNcRow.isNc) throw new Error('2G cell under the TCH target must not be NC: ' + JSON.stringify(nonNcRow))
+  // 27d4. KPI overview: breach summary + worst cells for the active technology
+  const kpiOv = await getKpiOverview(10)
+  if (kpiOv.technology !== '2G') throw new Error('kpi overview wrong tech: ' + kpiOv.technology)
+  const tchKpi = kpiOv.kpis.find((k) => k.key === 'tch_congestion')
+  if (!tchKpi || tchKpi.breachedCells < 1) throw new Error('kpi overview missing tch breach: ' + JSON.stringify(kpiOv.kpis))
+  if (!kpiOv.worstCells.some((c) => c.cellName === 'EXTRA_001_A')) {
+    throw new Error('kpi overview worst cells missing EXTRA_001_A: ' + JSON.stringify(kpiOv.worstCells))
+  }
   await removeKpiDef(ws.getCurrent()!.connection, saved.kpiId)
   const afterRemove = await listKpiDefs(ws.getCurrent()!.connection, tech)
   if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')

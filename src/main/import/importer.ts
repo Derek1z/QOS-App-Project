@@ -12,6 +12,7 @@ import {
   orderedMappedRows, normalizeHeader
 } from './mapping'
 import { validateSample } from './validator'
+import { discoverKpiDefs } from '../services/kpiService'
 import createImportWorker from './importWorker?nodeWorker'
 import type { ImportCoreJob } from './importCore'
 import type {
@@ -47,7 +48,8 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
       if (header.length === 0) {
         out.push({
           id: `${path}::bad`, path, filename: basename(path), header: [], sample: [],
-          fingerprint: '', suggestedMapping: {}, confidence: 0, knownProfile: false,
+          fingerprint: '', suggestedMapping: {}, suggestedKpiMapping: {},
+          confidence: 0, knownProfile: false,
           errors: ['File is empty or unreadable']
         })
         continue
@@ -58,17 +60,22 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
       const mapping = profile ?? suggested
       const confidence = mappingConfidence(mapping, header)
       const issues = validateSample(header, rows, { columns: mapping })
+      // spec §54a: suggest KPI assignments for the active technology from the
+      // source column names (exact alias + fuzzy token match)
+      const kpiDiscovery = await discoverKpiDefs(ws.connection, header)
       const st = statSync(path)
       const id = `${path}|${st.size}|${st.mtimeMs}`
       out.push({
         id, path, filename: basename(path), header, sample: rows, fingerprint,
-        suggestedMapping: mapping, confidence, knownProfile: !!profile,
+        suggestedMapping: mapping, suggestedKpiMapping: kpiDiscovery.mapping,
+        confidence, knownProfile: !!profile,
         errors: issues.filter((i) => i.severity === 'error').map((i) => i.message)
       })
     } catch (e) {
       out.push({
         id: `${path}::err`, path, filename: basename(path), header: [], sample: [],
-        fingerprint: '', suggestedMapping: {}, confidence: 0, knownProfile: false,
+        fingerprint: '', suggestedMapping: {}, suggestedKpiMapping: {},
+        confidence: 0, knownProfile: false,
         errors: [errMessage(e)]
       })
     }

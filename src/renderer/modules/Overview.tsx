@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
-import type { HealthResult, NcMovementRow, PriorityRow } from '../../../shared/api'
+import type { HealthResult, NcMovementRow, PriorityRow, KpiOverviewResult } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { healthLineOption, ncMovementOption, weekLabel } from '../lib/overviewCharts'
 import GhanaMap from './GhanaMap'
@@ -51,21 +51,24 @@ export default function Overview(): React.JSX.Element {
   const [health, setHealth] = useState<HealthResult | null>(null)
   const [movement, setMovement] = useState<NcMovementRow[]>([])
   const [priority, setPriority] = useState<PriorityRow[]>([])
+  const [kpiOverview, setKpiOverview] = useState<KpiOverviewResult | null>(null)
   const s = summary
 
   useEffect(() => {
     let alive = true
     void (async () => {
       try {
-        const [h, m, p] = await Promise.all([
+        const [h, m, p, ko] = await Promise.all([
           window.api.analytics.health(),
           window.api.analytics.ncMovement(8),
-          window.api.analytics.priorityQueue('balanced', 8)
+          window.api.analytics.priorityQueue('balanced', 8),
+          window.api.analytics.kpiOverview(8)
         ])
         if (!alive) return
         setHealth(h)
         setMovement(m)
         setPriority(p)
+        setKpiOverview(ko)
       } catch {
         /* workspace may have closed mid-flight */
       }
@@ -73,7 +76,9 @@ export default function Overview(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly])
+    // technology is part of the workspace — reload when the switcher changes
+    // so the KPI watch reflects the active technology's imported KPIs
+  }, [workspace?.path, workspace?.readOnly, workspace?.technology])
 
   const kpis: { label: string; value: string }[] = [
     { label: 'Cells', value: fmt(s?.cells, 0) },
@@ -202,6 +207,72 @@ export default function Overview(): React.JSX.Element {
             Transparent 0–100 Priority Score (PRB, persistence, users, traffic, throughput, trend).
             The full queue with action workflow arrives with the Priority Center (M4).
           </p>
+        </div>
+
+        <div className="card">
+          <div className="file-head">
+            <h3>KPI Watch — {kpiOverview?.technology ?? workspace?.technology ?? '4G'}</h3>
+            {kpiOverview?.weekStart && (
+              <span className="badge">{weekLabel(kpiOverview.weekStart)}</span>
+            )}
+          </div>
+          {!kpiOverview || (kpiOverview.kpis.length === 0 && kpiOverview.worstCells.length === 0) ? (
+            <p className="card-note">
+              No imported KPI breaches for {kpiOverview?.technology ?? workspace?.technology ?? '4G'} yet —
+              map extra columns to KPIs in Data Manager and import data.
+            </p>
+          ) : (
+            <>
+              {kpiOverview.kpis.length > 0 && (
+                <div className="kpi-breach-list">
+                  {kpiOverview.kpis.map((k) => (
+                    <div key={k.key} className="kpi-breach-row">
+                      <span className="prio-name">
+                        {k.label}
+                        {k.unit ? <span className="kpi-breach-unit"> ({k.unit})</span> : null}
+                      </span>
+                      <span className="kpi-breach-meta">
+                        <b>{k.breachedCells}</b>/{k.observedCells} cells breached
+                        {k.target != null && (
+                          <span className="card-note"> target {k.target}{k.unit ? ` ${k.unit}` : ''}</span>
+                        )}
+                      </span>
+                      <span
+                        className={`badge ${k.avgSeverity != null && k.avgSeverity >= 50 ? 'badge-ro' : 'badge-warn'}`}
+                      >
+                        {k.avgSeverity == null ? '—' : `sev ${Math.round(k.avgSeverity)}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {kpiOverview.worstCells.length > 0 && (
+                <div className="worst-cells">
+                  <div className="worst-cells-title">Worst cells</div>
+                  {kpiOverview.worstCells.slice(0, 5).map((c) => (
+                    <div key={c.cellId} className="prio-row">
+                      <span className="prio-rank">{c.breachScore == null ? '—' : Math.round(c.breachScore)}</span>
+                      <div className="prio-main">
+                        <div className="prio-head">
+                          <span className="prio-name">{c.cellName}</span>
+                          <span className="prio-score" style={{ color: 'var(--danger)' }}>
+                            {c.breachedKpis} breached
+                          </span>
+                        </div>
+                        <div className="prio-meta">
+                          {c.site ?? '—'} · {c.district ?? '—'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="card-note">
+                Breaches of the {kpiOverview?.technology ?? 'active'} technology's editable KPI
+                targets — switch 2G/3G/4G above to re-run this against that technology's imported KPIs.
+              </p>
+            </>
+          )}
         </div>
 
         <GhanaMap />

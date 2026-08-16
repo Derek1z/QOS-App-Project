@@ -61,6 +61,7 @@ const api: Api = {
     priorityQueue: (mode: PriorityMode, limit?: number) =>
       ipcRenderer.invoke('analytics:priorityQueue', mode, limit),
     health: () => ipcRenderer.invoke('analytics:health'),
+    kpiOverview: (limit?: number) => ipcRenderer.invoke('analytics:kpiOverview', limit),
     healthMatrix: (
       scope: HealthScope,
       opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }

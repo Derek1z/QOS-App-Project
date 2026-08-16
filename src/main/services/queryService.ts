@@ -13,7 +13,7 @@ import type {
   InvestigationScope, ActionStatus, PriorityBand, PriorityCenterOpts,
   PriorityCenterResult, PriorityCenterRow, ForecastMetric, ForecastHorizon,
   ForecastRisk, ForecastResult, ForecastRiskRow, ForecastSeries, ForecastPoint,
-  ForecastScope, CellKpiValue
+  ForecastScope, CellKpiValue, KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell, Technology
 } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { computeNetworkHealth } from '../analytics/health'
@@ -36,6 +36,93 @@ export async function getRulesCurrent(): Promise<Rules | null> {
   const w = getCurrent()
   if (!w) return null
   return getRules(w.connection)
+}
+
+/** Spec §54a: per-technology KPI breach summary + worst cells for the latest
+ *  week, driven entirely by the imported extra KPI values vs editable targets.
+ *  Reads technology straight from workspace_meta (no service imports) so the
+ *  analytics bundle stays cycle-free. */
+export async function getKpiOverview(limit = 8): Promise<KpiOverviewResult> {
+  const w = getCurrent()
+  if (!w) return { technology: '4G', weekStart: null, kpis: [], worstCells: [] }
+  const conn = w.connection
+  const techR = await conn.runAndReadAll(
+    `SELECT value FROM workspace_meta WHERE key = 'technology'`
+  )
+  const raw = techR.getRowObjects()[0]?.value
+  const tech: Technology = raw === '2G' || raw === '3G' ? (String(raw) as Technology) : '4G'
+
+  const latestR = await conn.runAndReadAll(
+    `SELECT max(week_start) AS ws FROM agg_cell_kpi_weekly`
+  )
+  const weekStart = latestR.getRowObjects()[0]?.ws
+  if (weekStart == null) return { technology: tech, weekStart: null, kpis: [], worstCells: [] }
+
+  const val = `CASE k.agg
+    WHEN 'sum' THEN w.sum_value
+    WHEN 'max' THEN w.max_value
+    WHEN 'min' THEN w.min_value
+    ELSE w.avg_value
+  END`
+  const sev = `CASE WHEN k.worse_is_higher THEN
+      LEAST(100, GREATEST(0, (${val} - k.target) / NULLIF(k.target, 0) * 100))
+    ELSE
+      LEAST(100, GREATEST(0, (k.target - ${val}) / NULLIF(k.target, 0) * 100))
+    END`
+  const breach = `(${val} > k.target AND k.worse_is_higher
+    OR ${val} < k.target AND NOT k.worse_is_higher)`
+  const where = `WHERE w.week_start = ? AND k.technology = ? AND k.active AND k.target IS NOT NULL`
+
+  const kpisR = await conn.runAndReadAll(
+    `SELECT k.kpi_key AS key, k.label, k.unit, k.target, k.worse_is_higher,
+       count(*) FILTER (WHERE ${breach}) AS breached_cells,
+       count(*) AS observed_cells,
+       ROUND(avg(${sev}) FILTER (WHERE ${breach}), 1) AS avg_severity
+     FROM agg_cell_kpi_weekly w
+     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+     ${where}
+     GROUP BY k.kpi_key, k.label, k.unit, k.target, k.worse_is_higher
+     ORDER BY avg_severity DESC NULLS LAST, breached_cells DESC
+     LIMIT ?`,
+    [String(weekStart), tech, limit]
+  )
+  const kpis: KpiOverviewKpi[] = kpisR.getRowObjects().map((x) => ({
+    key: String(x.key),
+    label: String(x.label),
+    unit: String(x.unit ?? ''),
+    target: x.target == null ? null : Number(x.target),
+    worseIsHigher: Boolean(x.worse_is_higher),
+    breachedCells: Number(x.breached_cells ?? 0),
+    observedCells: Number(x.observed_cells ?? 0),
+    avgSeverity: x.avg_severity == null ? null : Number(x.avg_severity)
+  }))
+
+  const cellsR = await conn.runAndReadAll(
+    `SELECT c.cell_id, c.name AS cell_name, s.name AS site, d.name AS district,
+       count(*) FILTER (WHERE ${breach}) AS breached_kpis,
+       ROUND(avg(${sev}) FILTER (WHERE ${breach}), 1) AS breach_score
+     FROM agg_cell_kpi_weekly w
+     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+     JOIN dim_cell c ON c.cell_id = w.cell_id
+     LEFT JOIN dim_site s ON s.site_id = c.site_id
+     LEFT JOIN dim_district d ON d.district_id = c.district_id
+     ${where}
+     GROUP BY c.cell_id, c.name, s.name, d.name
+     HAVING count(*) FILTER (WHERE ${breach}) > 0
+     ORDER BY breach_score DESC NULLS LAST
+     LIMIT ?`,
+    [String(weekStart), tech, limit]
+  )
+  const worstCells: KpiOverviewCell[] = cellsR.getRowObjects().map((x) => ({
+    cellId: Number(x.cell_id),
+    cellName: String(x.cell_name),
+    site: x.site ? String(x.site) : null,
+    district: x.district ? String(x.district) : null,
+    breachScore: x.breach_score == null ? null : Number(x.breach_score),
+    breachedKpis: Number(x.breached_kpis ?? 0)
+  }))
+
+  return { technology: tech, weekStart: String(weekStart), kpis, worstCells }
 }
 
 export async function updateRulesCurrent(patch: RulesPatch): Promise<Rules> {

@@ -20,7 +20,8 @@ import type {
   RawArchiveStatus, WorkspaceSnapshot, CreateSnapshotOpts, SnapshotComparison,
   SnapshotComparisonKpi, MaintenanceAction, MaintenanceResult,
   MaintenanceScheduleSettings, ScheduledMaintenanceRun, ScheduledRunResult,
-  ReportChartConfig, KpiDefinition, KpiDefPatch, KpiDiscovery, CellKpiValue, Technology
+  ReportChartConfig, KpiDefinition, KpiDefPatch, KpiDiscovery, CellKpiValue, Technology,
+  KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
 import { weekLabel } from './overviewCharts'
@@ -61,22 +62,27 @@ const DEMO_KPI_SEEDS: Array<{
   technology: Technology; key: string; label: string; unit: string;
   worseIsHigher: boolean; target: number | null; agg: KpiDefinition['agg']; aliases: string[]
 }> = [
-  { technology: '2G', key: 'tch_congestion', label: 'TCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['tch congestion', 'tch congestion (%)'] },
-  { technology: '2G', key: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['sdcch congestion'] },
-  { technology: '2G', key: 'tch_availability', label: 'TCH Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['tch availability'] },
-  { technology: '2G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate'] },
-  { technology: '2G', key: 'gprs_traffic', label: 'GPRS Traffic', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['gprs traffic'] },
-  { technology: '2G', key: 'gprs_throughput', label: 'GPRS/EDGE Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['gprs throughput'] },
-  { technology: '3G', key: 'ce_utilization', label: 'CE Utilization', unit: '%', worseIsHigher: true, target: 70, agg: 'avg', aliases: ['ce utilization'] },
-  { technology: '3G', key: 'hsdpa_throughput', label: 'HSDPA Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['hsdpa throughput'] },
-  { technology: '3G', key: 'rrc_connection_success', label: 'RRC Connection Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['rrc connection success'] },
-  { technology: '3G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate'] },
-  { technology: '4G', key: 'prb_utilization', label: 'PRB Utilization', unit: '%', worseIsHigher: true, target: 80, agg: 'avg', aliases: ['prb utilization'] },
-  { technology: '4G', key: 'dl_throughput', label: 'DL Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['dl throughput'] },
-  { technology: '4G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users'] },
-  { technology: '4G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume'] },
-  { technology: '4G', key: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['availability'] },
-  { technology: '4G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate'] }
+  { technology: '2G', key: 'tch_congestion', label: 'TCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['tch congestion', 'tch congestion (%)', 'tch congestion rate', 'congestion'] },
+  { technology: '2G', key: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['sdcch congestion', 'sdcch congestion (%)', 'sdcch congestion rate'] },
+  { technology: '2G', key: 'tch_availability', label: 'TCH Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['tch availability', 'tch availability (%)', 'availability'] },
+  { technology: '2G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)', 'drops (%)'] },
+  { technology: '2G', key: 'call_setup_success', label: 'Call Setup Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['call setup success', 'cssr', 'call setup success rate (%)'] },
+  { technology: '2G', key: 'gprs_traffic', label: 'GPRS Traffic', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['gprs traffic', 'gprs traffic (mb)', 'gprs data volume'] },
+  { technology: '2G', key: 'gprs_throughput', label: 'GPRS/EDGE Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['gprs throughput', 'gprs/edge throughput', 'throughput', 'dl throughput (kbps)', 'edge throughput'] },
+  { technology: '2G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'active users', 'rrc connected ues'] },
+  { technology: '3G', key: 'ce_utilization', label: 'CE Utilization', unit: '%', worseIsHigher: true, target: 70, agg: 'avg', aliases: ['ce utilization', 'ce utilization (%)', 'channel element utilization'] },
+  { technology: '3G', key: 'hsdpa_throughput', label: 'HSDPA Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['hsdpa throughput', 'hsdpa throughput (kbps)', 'dl throughput (kbps)', 'throughput'] },
+  { technology: '3G', key: 'hsupa_throughput', label: 'HSUPA Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['hsupa throughput', 'hsupa throughput (kbps)', 'ul throughput'] },
+  { technology: '3G', key: 'rrc_connection_success', label: 'RRC Connection Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['rrc connection success', 'rrc setup success rate', 'cssr'] },
+  { technology: '3G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)'] },
+  { technology: '3G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', 'volume'] },
+  { technology: '3G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'active users', 'rrc connected ues'] },
+  { technology: '4G', key: 'prb_utilization', label: 'PRB Utilization', unit: '%', worseIsHigher: true, target: 80, agg: 'avg', aliases: ['prb utilization', 'prb', 'prb util', 'prb utilization (%)', '4g prb', 'peak hour traffic utilization'] },
+  { technology: '4G', key: 'dl_throughput', label: 'DL Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['dl throughput', 'throughput', 'dl throughput (kbps)', 'e-utran ip throughput ue dl', 'e-utran ip throughput ue dl (kbps)'] },
+  { technology: '4G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'rrc connected ues', 'rrc connected ues (avg)', 'active users'] },
+  { technology: '4G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', '4g data volume', 'volume'] },
+  { technology: '4G', key: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['availability', 'cell availability', 'availability (%)', '4g cell availability'] },
+  { technology: '4G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] }
 ]
 
 let demoKpiDefs: KpiDefinition[] = seedDemoKpiDefs()
@@ -112,7 +118,41 @@ function demoKpiKeyByAlias(tech: Technology, header: string): string | null {
       if (norm(a) === n) return d.key
     }
   }
-  return null
+  // fuzzy fallback: word-set overlap (Jaccard) >= 0.5 — mirrors the desktop
+  // discovery so the preview suggests the same KPI assignments
+  const tokens = (s: string): string[] => norm(s).split(' ').filter(Boolean)
+  const hTokens = tokens(header)
+  let best: string | null = null
+  let bestScore = 0.5
+  if (hTokens.length > 0) {
+    for (const d of demoKpisFor(tech)) {
+      for (const a of [...d.sourceHeaders, d.label, d.key]) {
+        const aTokens = tokens(a)
+        if (aTokens.length === 0) continue
+        let inter = 0
+        for (const t of hTokens) if (aTokens.includes(t)) inter++
+        const sim = inter / (hTokens.length + aTokens.length - inter)
+        if (sim > bestScore) {
+          bestScore = sim
+          best = d.key
+        }
+      }
+    }
+  }
+  return best
+}
+
+function demoKpiDiscover(headers: string[], tech: Technology): KpiDiscovery {
+  const mapping: Record<string, string> = {}
+  let matched = 0
+  for (const h of headers) {
+    const key = demoKpiKeyByAlias(tech, h)
+    if (key) {
+      mapping[h] = key
+      matched++
+    }
+  }
+  return { mapping, confidence: headers.length > 0 ? matched / headers.length : 0 }
 }
 const cellsSeen = new Set<string>()
 const factKeys = new Set<string>() // `${date}|${cell}`
@@ -2818,7 +2858,72 @@ export const previewApi: Api & { demo: true } = {
     forecast: async (opts?: ForecastOpts): Promise<ForecastResult> => demoForecast(opts),
     priorityQueue: async (mode: PriorityMode, limit = 10): Promise<PriorityRow[]> =>
       demoPriority(mode).slice(0, limit),
-    health: async (): Promise<HealthResult> => demoHealth()
+    health: async (): Promise<HealthResult> => demoHealth(),
+    kpiOverview: async (limit = 8): Promise<KpiOverviewResult> => {
+      const tech = demoTech
+      const cells = demoNcLifecycle().cells
+      const byKey = new Map<
+        string,
+        {
+          key: string; label: string; unit: string; target: number | null; worseIsHigher: boolean
+          breached: number; observed: number; sevSum: number
+        }
+      >()
+      const cellAgg = new Map<number, { score: number; breached: number }>()
+      for (const c of cells) {
+        let cellScore = 0
+        let cellBreached = 0
+        for (const v of demoCellKpis(c.cellId, c.weekStart)) {
+          const agg = byKey.get(v.key) ?? {
+            key: v.key, label: v.label, unit: v.unit, target: v.target,
+            worseIsHigher: v.worseIsHigher, breached: 0, observed: 0, sevSum: 0
+          }
+          agg.observed++
+          if (v.value != null && v.target != null && v.target !== 0) {
+            const sev = v.worseIsHigher
+              ? ((v.value - v.target) / v.target) * 100
+              : ((v.target - v.value) / v.target) * 100
+            if (sev > 0) {
+              agg.breached++
+              agg.sevSum += Math.min(100, sev)
+              cellScore += Math.min(100, sev)
+              cellBreached++
+            }
+          }
+          byKey.set(v.key, agg)
+        }
+        if (cellBreached > 0) cellAgg.set(c.cellId, { score: cellScore / cellBreached, breached: cellBreached })
+      }
+      const kpis: KpiOverviewKpi[] = [...byKey.values()]
+        .filter((k) => k.breached > 0)
+        .map((k) => ({
+          key: k.key,
+          label: k.label,
+          unit: k.unit,
+          target: k.target,
+          worseIsHigher: k.worseIsHigher,
+          breachedCells: k.breached,
+          observedCells: k.observed,
+          avgSeverity: k.breached > 0 ? Math.round((k.sevSum / k.breached) * 10) / 10 : null
+        }))
+        .sort((a, b) => (b.avgSeverity ?? 0) - (a.avgSeverity ?? 0))
+        .slice(0, limit)
+      const worstCells: KpiOverviewCell[] = [...cellAgg.entries()]
+        .sort((a, b) => b[1].score - a[1].score)
+        .slice(0, limit)
+        .map(([cellId, a]) => {
+          const base = cells.find((c) => c.cellId === cellId)
+          return {
+            cellId,
+            cellName: base?.cellName ?? `Cell ${cellId}`,
+            site: base?.site ?? null,
+            district: base?.district ?? null,
+            breachScore: Math.round(a.score * 10) / 10,
+            breachedKpis: a.breached
+          }
+        })
+      return { technology: tech, weekStart: cells[0]?.weekStart ?? null, kpis, worstCells }
+    }
   },
   investigation: {
     search: async (scope: InvestigationScope, q?: string): Promise<EntityOption[]> => demoSearch(scope, q),
@@ -2946,17 +3051,7 @@ export const previewApi: Api & { demo: true } = {
       }
     },
     discover: async (headers: string[], technology?: Technology): Promise<KpiDiscovery> => {
-      const tech = technology ?? demoTech
-      const mapping: Record<string, string> = {}
-      let matched = 0
-      for (const h of headers) {
-        const key = demoKpiKeyByAlias(tech, h)
-        if (key) {
-          mapping[h] = key
-          matched++
-        }
-      }
-      return { mapping, confidence: headers.length > 0 ? matched / headers.length : 0 }
+      return demoKpiDiscover(headers, technology ?? demoTech)
     },
     seed: async (technology?: Technology): Promise<KpiDefinition[]> => {
       const tech = technology ?? demoTech
@@ -3033,6 +3128,7 @@ export const previewApi: Api & { demo: true } = {
             sample: [],
             fingerprint: '',
             suggestedMapping: {},
+            suggestedKpiMapping: {},
             confidence: 0,
             knownProfile: false,
             errors: ['File could not be read']
@@ -3049,6 +3145,7 @@ export const previewApi: Api & { demo: true } = {
             sample: [],
             fingerprint: '',
             suggestedMapping: {},
+            suggestedKpiMapping: {},
             confidence: 0,
             knownProfile: false,
             errors: ['Empty file']
@@ -3074,6 +3171,7 @@ export const previewApi: Api & { demo: true } = {
           sample: rows.slice(1, 6),
           fingerprint,
           suggestedMapping: remembered ?? suggested,
+          suggestedKpiMapping: demoKpiDiscover(header, demoTech).mapping,
           confidence: mappingConfidence(suggested),
           knownProfile: remembered !== null,
           errors

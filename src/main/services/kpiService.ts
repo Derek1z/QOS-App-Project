@@ -229,7 +229,21 @@ export async function removeKpiDef(conn: DuckDBConnection, kpiId: number): Promi
   await conn.run(`DELETE FROM agg_cell_kpi_weekly WHERE kpi_id = ?`, [kpiId])
 }
 
-/** Match source headers to KPI aliases (normalized) for import auto-mapping. */
+/** Word-set overlap (Jaccard) on normalized headers — 1.0 for identical. */
+function tokenSimilarity(a: string, b: string): number {
+  const na = normalizeHeader(a).split(' ').filter(Boolean)
+  const nb = normalizeHeader(b).split(' ').filter(Boolean)
+  if (na.length === 0 || nb.length === 0) return 0
+  const setB = new Set(nb)
+  let inter = 0
+  for (const t of na) if (setB.has(t)) inter++
+  const union = na.length + nb.length - inter
+  return union > 0 ? inter / union : 0
+}
+
+/** Match source headers to KPI aliases for import auto-mapping: exact alias
+ *  match first, then a fuzzy token-overlap fallback against every alias,
+ *  label and key of the technology's definitions (spec §54a). */
 export async function discoverKpiDefs(
   conn: DuckDBConnection,
   headers: string[],
@@ -243,12 +257,35 @@ export async function discoverKpiDefs(
       if (n && !aliasIndex.has(n)) aliasIndex.set(n, d.key)
     }
   }
+  // fuzzy candidates: per KPI, the best-scoring alias for a given header
+  const candidates = new Map<string, { key: string; score: number; exact: boolean }>()
+  for (const d of defs) {
+    for (const a of [...d.sourceHeaders, d.label, d.key]) {
+      const n = normalizeHeader(a)
+      if (!n) continue
+      for (const h of headers) {
+        const sim = n === normalizeHeader(h) ? 1 : tokenSimilarity(n, normalizeHeader(h))
+        if (sim < 0.5) continue
+        const prev = candidates.get(h)
+        if (!prev || sim > prev.score || (sim === prev.score && !prev.exact)) {
+          candidates.set(h, { key: d.key, score: sim, exact: sim === 1 })
+        }
+      }
+    }
+  }
   const mapping: Record<string, string> = {}
   let matched = 0
   for (const h of headers) {
-    const key = aliasIndex.get(normalizeHeader(h))
-    if (key) {
-      mapping[h] = key
+    // exact alias wins outright
+    const exact = aliasIndex.get(normalizeHeader(h))
+    if (exact) {
+      mapping[h] = exact
+      matched++
+      continue
+    }
+    const fuzzy = candidates.get(h)
+    if (fuzzy) {
+      mapping[h] = fuzzy.key
       matched++
     }
   }

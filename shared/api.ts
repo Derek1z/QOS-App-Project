@@ -139,6 +139,9 @@ export interface FileAnalysis {
   sample: string[][]
   fingerprint: string
   suggestedMapping: Record<string, CanonicalField>
+  /** source header -> KPI key, fuzzy-matched against the active technology's
+   *  KPI aliases (spec §54a). Empty when nothing matched. */
+  suggestedKpiMapping: Record<string, string>
   confidence: number
   knownProfile: boolean
   errors: string[]
@@ -149,6 +152,38 @@ export interface MappingConfig {
   /** extra columns mapped to per-technology KPI keys (spec §54a):
    *  source header -> KpiDefinition.key */
   kpiColumns?: Record<string, string>
+}
+
+/** Per-technology KPI breach summary for the latest analysed week. */
+export interface KpiOverviewKpi {
+  key: string
+  label: string
+  unit: string
+  target: number | null
+  worseIsHigher: boolean
+  /** cells whose value breached the target in the worse direction */
+  breachedCells: number
+  /** cells with any value for this KPI that week */
+  observedCells: number
+  /** mean breach severity (0-100) across breaching cells */
+  avgSeverity: number | null
+}
+
+export interface KpiOverviewCell {
+  cellId: number
+  cellName: string
+  site: string | null
+  district: string | null
+  /** mean breach severity (0-100) across the cell's breached KPIs */
+  breachScore: number | null
+  breachedKpis: number
+}
+
+export interface KpiOverviewResult {
+  technology: Technology
+  weekStart: string | null
+  kpis: KpiOverviewKpi[]
+  worstCells: KpiOverviewCell[]
 }
 
 export type IssueSeverity = 'error' | 'warning' | 'info'
@@ -1084,6 +1119,8 @@ export interface Api {
       scope: HealthScope,
       opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }
     ): Promise<HealthMatrixResult>
+    /** Per-technology KPI breach summary + worst cells (spec §54a). */
+    kpiOverview(limit?: number): Promise<KpiOverviewResult>
     cellIntelligence(opts?: {
       search?: string
       lifecycle?: Lifecycle | ''

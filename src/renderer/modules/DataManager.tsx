@@ -71,6 +71,8 @@ export default function DataManager(): React.JSX.Element {
   const [analyses, setAnalyses] = useState<FileAnalysis[]>([])
   const [mappings, setMappings] = useState<Record<string, MappingConfig>>({})
   const [kpiDefs, setKpiDefs] = useState<KpiDefinition[]>([])
+  // per-file state of the auto-suggested KPI assignments (spec §54a)
+  const [kpiSuggest, setKpiSuggest] = useState<Record<string, 'applied' | 'dismissed'>>({})
   const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
   const [result, setResult] = useState<ImportResult | null>(null)
   const [progress, setProgress] = useState<ImportProgress | null>(null)
@@ -190,6 +192,7 @@ export default function DataManager(): React.JSX.Element {
     try {
       const as = await window.api.imports.analyze(paths)
       setAnalyses(as)
+      setKpiSuggest({})
       const next: Record<string, MappingConfig> = {}
       for (const a of as) next[a.id] = { columns: a.suggestedMapping }
       setMappings(next)
@@ -277,6 +280,19 @@ export default function DataManager(): React.JSX.Element {
       delete cols[header]
       return { ...prev, [id]: { columns: cols, kpiColumns: kcols } }
     })
+  }
+
+  /** One-click accept of the fuzzy-matched KPI suggestions for a file. */
+  async function applyKpiSuggestions(a: FileAnalysis): Promise<void> {
+    const suggested = a.suggestedKpiMapping ?? {}
+    const keys = Object.keys(suggested)
+    if (keys.length === 0) return
+    setMappings((prev) => {
+      const cur = prev[a.id] ?? { columns: a.suggestedMapping }
+      return { ...prev, [a.id]: { columns: cur.columns, kpiColumns: { ...suggested } } }
+    })
+    setKpiSuggest((prev) => ({ ...prev, [a.id]: 'applied' }))
+    await preview(a.id, { columns: a.suggestedMapping, kpiColumns: { ...suggested } })
   }
 
   useEffect(() => {
@@ -430,6 +446,11 @@ export default function DataManager(): React.JSX.Element {
               {analyses.map((a) => {
                 const mapping = mappings[a.id] ?? { columns: a.suggestedMapping }
                 const prev = previews[a.id]
+                const suggestedKeys = Object.keys(a.suggestedKpiMapping ?? {})
+                const showSuggest =
+                  suggestedKeys.length > 0 &&
+                  kpiSuggest[a.id] !== 'applied' &&
+                  kpiSuggest[a.id] !== 'dismissed'
                 return (
                   <div key={a.id} className="card file-card">
                     <div className="file-head">
@@ -442,6 +463,36 @@ export default function DataManager(): React.JSX.Element {
                         <span className="file-err">blocked: {a.errors.join('; ')}</span>
                       )}
                     </div>
+                    {showSuggest && (
+                      <div className="notice kpi-suggest">
+                        <span>
+                          ✨ Auto-suggested {suggestedKeys.length} KPI{' '}
+                          {suggestedKeys.length === 1 ? 'mapping' : 'mappings'} from the column
+                          names — apply to analyze them as {a.header.length ? 'per-technology' : ''} KPIs.
+                        </span>
+                        <span className="suggest-actions">
+                          <button
+                            className="btn btn-primary btn-sm"
+                            disabled={busy}
+                            onClick={() => void applyKpiSuggestions(a)}
+                          >
+                            Apply suggestions
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            disabled={busy}
+                            onClick={() => setKpiSuggest((p) => ({ ...p, [a.id]: 'dismissed' }))}
+                          >
+                            Dismiss
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    {kpiSuggest[a.id] === 'applied' && (
+                      <div className="notice notice-ok">
+                        ✓ {suggestedKeys.length} KPI suggestions applied — edit any column below if needed.
+                      </div>
+                    )}
                     {a.errors.length === 0 && (
                       <>
                         <table className="map-table">

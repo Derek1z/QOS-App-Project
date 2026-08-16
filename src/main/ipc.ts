@@ -5,7 +5,7 @@ import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
   getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
-  getRegionMap, getRegionDistricts
+  getRegionMap, getRegionDistricts, getKpiOverview
 } from './services/queryService'
 import {
   searchEntities, getInvestigation, setInvestigationStatus, addInvestigationNote,
@@ -97,6 +97,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     getPriorityQueue(mode, limit)
   )
   ipcMain.handle('analytics:health', () => getHealth())
+  ipcMain.handle('analytics:kpiOverview', (_e, limit?: number) => getKpiOverview(limit))
   ipcMain.handle(
     'analytics:healthMatrix',
     (_e, scope: HealthScope, opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }) =>

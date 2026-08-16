@@ -2665,3 +2665,69 @@ code {
 .kpi-grid-label { font-size: 11px; color: var(--text-dim); }
 .kpi-grid-value { font-size: 14px; font-weight: 700; }
 .kpi-grid-target { font-size: 10px; color: var(--text-faint); }
+
+/* --- KPI suggestion banner (import auto-mapping, spec §54a) --- */
+.notice-ok {
+  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.4);
+  color: var(--green);
+}
+.kpi-suggest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.suggest-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* --- Overview KPI Watch card --- */
+.kpi-breach-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.kpi-breach-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.kpi-breach-row:last-child {
+  border-bottom: none;
+}
+.kpi-breach-unit {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.kpi-breach-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.worst-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.worst-cells-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}

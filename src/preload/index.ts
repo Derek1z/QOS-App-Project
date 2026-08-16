@@ -31,6 +31,7 @@ const api: Api = {
     pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),
     create: (dir, name, technology) => ipcRenderer.invoke('workspace:create', dir, name, technology),
     open: (path, opts) => ipcRenderer.invoke('workspace:open', path, opts),
+    isLocked: (path: string) => ipcRenderer.invoke('workspace:isLocked', path),
     close: () => ipcRenderer.invoke('workspace:close'),
     info: () => ipcRenderer.invoke('workspace:info'),
     setTechnology: (technology) => ipcRenderer.invoke('workspace:setTechnology', technology),

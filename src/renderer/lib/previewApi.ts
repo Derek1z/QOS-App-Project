@@ -55,7 +55,11 @@ const demoFacts: DemoFact[] = []
 let demoWorkspaceName = 'Preview Network'
 let demoTech: Technology = '4G'
 // remembered choices for workspace creation (demo mirror of appState)
-const demoAppState: { lastTechnology?: Technology; lastWorkspaceDir?: string } = {}
+const demoAppState: {
+  lastTechnology?: Technology
+  lastWorkspaceDir?: string
+  createdWorkspaces?: Array<{ name: string; technology: Technology; createdAt: string }>
+} = {}
 let demoKpiSeq = 100
 // per-cell demo extra KPI values keyed `${cellId}|${weekStart}|${kpiKey}`
 const demoKpiValues = new Map<string, number>()
@@ -2702,6 +2706,7 @@ export const previewApi: Api & { demo: true } = {
     open: async () => {
       throw new Error('Opening workspaces is not available in browser preview mode')
     },
+    isLocked: async (): Promise<{ locked: boolean; pid?: number }> => ({ locked: false }),
     close: async () => {},
     info: async () => demoWorkspaceInfo(),
     setTechnology: async (technology: Technology): Promise<WorkspaceInfo> => {
@@ -3136,16 +3141,19 @@ export const previewApi: Api & { demo: true } = {
       ],
       lastTechnology: demoAppState.lastTechnology,
       lastWorkspaceDir: demoAppState.lastWorkspaceDir,
+      createdWorkspaces: demoAppState.createdWorkspaces,
       theme: 'dark' as const,
       density: 'compact' as const
     }),
     set: async (p) => {
       if (p.lastTechnology) demoAppState.lastTechnology = p.lastTechnology
       if (p.lastWorkspaceDir) demoAppState.lastWorkspaceDir = p.lastWorkspaceDir
+      if (p.createdWorkspaces) demoAppState.createdWorkspaces = p.createdWorkspaces
       return {
         recentWorkspaces: [],
         lastTechnology: demoAppState.lastTechnology,
         lastWorkspaceDir: demoAppState.lastWorkspaceDir,
+        createdWorkspaces: demoAppState.createdWorkspaces,
         theme: 'dark' as const,
         density: 'compact' as const,
         ...p

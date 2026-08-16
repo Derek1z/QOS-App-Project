@@ -31,6 +31,18 @@ export async function openWorkspaceFlow(path?: string): Promise<void> {
   }
 }
 
+// Suggest a default workspace name from the creation history: the most recent
+// name, suffixed (_2, _3, …) until it doesn't collide with a previous one.
+function suggestWorkspaceName(created: Array<{ name: string }> | undefined): string {
+  if (!created || created.length === 0) return ''
+  const used = new Set(created.map((c) => c.name))
+  const base = created[0].name
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base}_${n}`)) n++
+  return `${base}_${n}`
+}
+
 export async function createWorkspaceFlow(name?: string): Promise<void> {
   const st = useAppStore.getState()
   // remember the last folder + technology so the next creation is pre-filled
@@ -39,8 +51,9 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   if (!dir) return
   // Electron does not implement window.prompt() (it returns null), so name and
   // technology are collected by an in-app modal instead.
+  const defaultName = name ?? suggestWorkspaceName(app.createdWorkspaces)
   const choice = await new Promise<CreateWorkspaceChoice | null>((resolve) => {
-    useAppStore.getState().openCreatePrompt(name ?? '', app.lastTechnology, resolve)
+    useAppStore.getState().openCreatePrompt(defaultName, app.lastTechnology, resolve)
   })
   if (!choice) return
   const finalName = choice.name.trim()
@@ -49,8 +62,16 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   st.setError(null)
   try {
     await window.api.workspace.create(dir, finalName, choice.tech)
-    // remember the choices for next time
-    await window.api.appState.set({ lastTechnology: choice.tech, lastWorkspaceDir: dir })
+    // remember the choices + creation history for next time
+    const created = [
+      { name: finalName, technology: choice.tech, createdAt: new Date().toISOString() },
+      ...(app.createdWorkspaces ?? [])
+    ].slice(0, 8)
+    await window.api.appState.set({
+      lastTechnology: choice.tech,
+      lastWorkspaceDir: dir,
+      createdWorkspaces: created
+    })
     await refreshWorkspaceState()
     emit('WORKSPACE_CHANGED')
   } catch (e) {

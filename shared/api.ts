@@ -92,6 +92,12 @@ export interface Summary {
   avgAvailability: number | null
 }
 
+export interface CreatedWorkspaceEntry {
+  name: string
+  technology: Technology
+  createdAt: string
+}
+
 export interface AppStateData {
   recentWorkspaces: RecentWorkspace[]
   lastWorkspacePath?: string
@@ -99,6 +105,8 @@ export interface AppStateData {
   lastTechnology?: Technology
   /** last folder chosen when creating a workspace — pre-fills the dialog */
   lastWorkspaceDir?: string
+  /** recently created workspace names — used to suggest a default name */
+  createdWorkspaces?: CreatedWorkspaceEntry[]
   theme: 'dark'
   density: 'compact'
 }
@@ -1100,6 +1108,8 @@ export interface Api {
     pickDirectory(): Promise<string | null>
     create(dir: string, name: string, technology?: Technology): Promise<WorkspaceInfo>
     open(path: string, opts?: { readOnly?: boolean }): Promise<WorkspaceInfo>
+    /** Whether another live instance holds the workspace's lock file. */
+    isLocked(path: string): Promise<{ locked: boolean; pid?: number }>
     close(): Promise<void>
     info(): Promise<WorkspaceInfo | null>
     /** switch the active workspace's technology (2G/3G/4G) and re-seed its KPI set */

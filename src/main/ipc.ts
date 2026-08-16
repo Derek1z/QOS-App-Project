@@ -35,6 +35,8 @@ import {
 import {
   seedCurrent, listCurrent, saveCurrent, removeCurrent, discoverCurrent
 } from './services/kpiService'
+import { lockPath } from './workspace/lock'
+import { existsSync, readFileSync } from 'node:fs'
 import type {
   CreateSnapshotOpts, MaintenanceAction, MappingConfig, KpiDefPatch, Technology
 } from '../../shared/api'
@@ -47,6 +49,24 @@ export function broadcastWorkspaceChanged(win: BrowserWindow | null): void {
 
 export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('workspace:listRecent', () => appState.load().recentWorkspaces)
+
+  ipcMain.handle('workspace:isLocked', (_e, path: string) => {
+    const lp = lockPath(path)
+    if (!existsSync(lp)) return { locked: false }
+    let pid = NaN
+    try {
+      pid = parseInt(readFileSync(lp, 'utf8'), 10)
+    } catch {
+      /* unreadable -> treat as unlocked */
+    }
+    if (!Number.isFinite(pid) || pid === process.pid) return { locked: false }
+    try {
+      process.kill(pid, 0)
+      return { locked: true, pid }
+    } catch {
+      return { locked: false } // stale lock from a dead process
+    }
+  })
 
   ipcMain.handle('workspace:pickOpen', async () => {
     const res = await dialog.showOpenDialog({

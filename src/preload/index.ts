@@ -33,6 +33,7 @@ const api: Api = {
     open: (path, opts) => ipcRenderer.invoke('workspace:open', path, opts),
     close: () => ipcRenderer.invoke('workspace:close'),
     info: () => ipcRenderer.invoke('workspace:info'),
+    setTechnology: (technology) => ipcRenderer.invoke('workspace:setTechnology', technology),
     onChanged: (cb) => {
       const listener = () => cb()
       ipcRenderer.on('workspace:changed', listener)

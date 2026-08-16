@@ -168,7 +168,7 @@ export async function getPriorityQueue(mode: PriorityMode, limit = 50): Promise<
   return r.getRowObjects().map((x) => {
     let components = {
       prbSeverity: 0, persistence: 0, userImpact: 0, trafficImpact: 0,
-      throughputDegradation: 0, worseningTrend: 0
+      throughputDegradation: 0, worseningTrend: 0, kpiBreach: 0
     }
     try {
       const parsed = JSON.parse(String(x.weights ?? '{}'))
@@ -481,6 +481,8 @@ export async function getCellDetail(cellId: number): Promise<CellDetail | null> 
     lifecycle: String(x.lifecycle) as Lifecycle,
     severity: String(x.severity) as Severity
   }))
+  const latestWeek = weeks.length > 0 ? weeks[weeks.length - 1].weekStart : (life ? String(life.week_start) : '')
+  const kpis = latestWeek ? await cellKpiValues(conn, cellId, latestWeek) : []
   return {
     cellId: Number(dim.cell_id),
     cellName: String(dim.cell_name ?? ''),
@@ -498,7 +500,8 @@ export async function getCellDetail(cellId: number): Promise<CellDetail | null> 
           prbAvg: life.prb_avg == null ? null : Number(life.prb_avg)
         }
       : null,
-    weeks
+    weeks,
+    kpis
   }
 }
 

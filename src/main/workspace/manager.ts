@@ -176,6 +176,19 @@ export async function getCurrentInfo(): Promise<WorkspaceInfo | null> {
   return assemble(current)
 }
 
+/** Switch the active workspace's technology and re-seed its KPI set. */
+export async function setWorkspaceTechnology(technology: Technology): Promise<WorkspaceInfo> {
+  if (!current) throw new Error('No workspace is open')
+  if (current.readOnly) throw new Error('Workspace is open read-only — switch technology on the writable workspace')
+  const tech = technology === '2G' || technology === '3G' ? technology : '4G'
+  await current.connection.run(
+    `UPDATE workspace_meta SET value = ? WHERE key = 'technology'`,
+    [tech]
+  )
+  await seedKpiDefs(current.connection, tech)
+  return assemble(current)
+}
+
 // --- lifecycle ---
 
 export async function createWorkspace(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {

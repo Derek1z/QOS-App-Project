@@ -11,7 +11,7 @@ import {
 } from './queryService'
 import type {
   DueReport, ReportChartConfig, ReportFormat, ReportHistoryRow, ReportOpts, ReportPack,
-  ReportSectionId, ReportSnapshot, ReportType
+  ReportSectionId, ReportSnapshot, ReportType, CellIntelligenceRow, CellKpiValue
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, REPORT_SECTIONS } from '../../../shared/api'
 
@@ -46,6 +46,21 @@ type SectionBuilder = () => Promise<SectionTable>
 
 const fmt = (v: number | null | undefined, unit = '', digits = 1): string =>
   v == null ? '—' : `${Number(v).toFixed(digits)}${unit}`
+
+/** KPI columns present across the row set, in first-seen order (spec §54a). */
+function kpiColumnDefs(rows: CellIntelligenceRow[]): CellKpiValue[] {
+  const seen = new Map<string, CellKpiValue>()
+  for (const r of rows) {
+    for (const k of r.kpis) if (!seen.has(k.key)) seen.set(k.key, k)
+  }
+  return [...seen.values()]
+}
+
+function kpiCellValue(c: CellIntelligenceRow, key: string): string | null {
+  const k = c.kpis.find((x) => x.key === key)
+  if (!k || k.value == null) return null
+  return `${Number(k.value).toFixed(1)}${k.breached ? ' ⚠' : ''}${k.unit ? ` ${k.unit}` : ''}`
+}
 
 const fmtK = (v: number | null | undefined): string =>
   v == null ? '—' : `${Math.round(v).toLocaleString()}`
@@ -113,10 +128,15 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'all-cells': async () => {
     const r = await getCellIntelligence({ limit: 200 })
+    const kpiCols = kpiColumnDefs(r.rows)
     return {
       title: 'All Cells',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Priority'],
-      rows: r.rows.map((c) => [c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity, c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.priorityScore ?? null]),
+      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Priority', ...kpiCols.map((k) => k.label)],
+      rows: r.rows.map((c) => [
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity,
+        c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.priorityScore ?? null,
+        ...kpiCols.map((k) => kpiCellValue(c, k.key))
+      ]),
       note: `Showing ${r.total} cells (first ${r.rows.length}).`
     }
   },
@@ -124,20 +144,30 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
   'nc-register': async () => {
     const r = await getCellIntelligence({ limit: 400 })
     const nc = r.rows.filter((c) => c.isNc)
+    const kpiCols = kpiColumnDefs(nc)
     return {
       title: 'NC Register',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Breach days'],
-      rows: nc.map((c) => [c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity, c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays]),
+      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Breach days', ...kpiCols.map((k) => k.label)],
+      rows: nc.map((c) => [
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity,
+        c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays,
+        ...kpiCols.map((k) => kpiCellValue(c, k.key))
+      ]),
       note: `${nc.length} NC cells under the active ruleset.`
     }
   },
 
   'persistent-nc': async () => {
     const r = await getCellIntelligence({ lifecycle: 'Persistent NC', limit: 100 })
+    const kpiCols = kpiColumnDefs(r.rows)
     return {
       title: 'Persistent NC',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Trend', 'Severity', 'PRB %', 'Breach days', 'Priority'],
-      rows: r.rows.map((c) => [c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.trend, c.severity, c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays, c.priorityScore ?? null]),
+      columns: ['Cell', 'Region', 'District', 'Site', 'Trend', 'Severity', 'PRB %', 'Breach days', 'Priority', ...kpiCols.map((k) => k.label)],
+      rows: r.rows.map((c) => [
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.trend, c.severity,
+        c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays, c.priorityScore ?? null,
+        ...kpiCols.map((k) => kpiCellValue(c, k.key))
+      ]),
       note: `${r.total} persistent NC cells — escalation candidates.`
     }
   },

@@ -794,6 +794,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
     target: 9
   })
   if (patched.target !== 9) throw new Error('kpi patch failed')
+  // 27d2. switch to 2G so the imported 2G columns (TCH congestion) belong to
+  // the active technology — the flow a real 2G user follows
+  await ws.setWorkspaceTechnology('2G')
   const extraCsv = join(dir, 'kpi_extra.csv')
   writeFileSync(extraCsv, [
     'Date/Time,Cell,District,Region,Site,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps),TCH Congestion (%)',
@@ -820,6 +823,24 @@ export async function runSmokeTest(dir: string): Promise<void> {
   await removeKpiDef(ws.getCurrent()!.connection, saved.kpiId)
   const afterRemove = await listKpiDefs(ws.getCurrent()!.connection, tech)
   if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')
+
+  // 27e. technology switching (spec §54a): the workspace is now 2G from 27d2;
+  // the imported TCH congestion (3.5 vs target 2) must feed the priority score
+  const infoNow = await ws.getCurrentInfo()
+  if (infoNow?.technology !== '2G') throw new Error('expected 2G after switch: ' + infoNow?.technology)
+  const twoGDefs = await listKpiDefs(ws.getCurrent()!.connection, '2G')
+  if (twoGDefs.length < 5) throw new Error('2G KPI set not seeded on switch: ' + twoGDefs.length)
+  const kpiPrio = await getPriorityQueue('balanced', 100)
+  const prioCell = kpiPrio.find((p) => p.cellName === 'EXTRA_001_A')
+  if (prioCell && prioCell.components.kpiBreach < 1) {
+    throw new Error('kpiBreach component not populated: ' + JSON.stringify(prioCell.components))
+  }
+  const ciKpi = await getCellIntelligence({ limit: 500 })
+  const extraDetail = ciKpi.rows.find((r) => r.cellName === 'EXTRA_001_A')
+  if (extraDetail && extraDetail.kpis.length === 0) throw new Error('cell kpis missing after tech switch')
+  // switch back so later smoke steps run under the default 4G
+  const backTo4G = await ws.setWorkspaceTechnology('4G')
+  if (backTo4G.technology !== '4G') throw new Error('switch back to 4G failed')
 
   // file-based success marker for packaged runs: the portable 7z SFX wrapper
   // swallows the child's stdout, so verify-portable checks for this file
@@ -879,7 +900,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
         kpiDefs: true,
         kpiDiscovery: true,
         kpiSaveRemove: true,
-        kpiExtraImport: true
+        kpiExtraImport: true,
+        kpiTechSwitch: true,
+        kpiScoring: true
       })
   )
 }

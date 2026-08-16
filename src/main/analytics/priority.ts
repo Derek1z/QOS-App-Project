@@ -2,6 +2,11 @@ import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
 import type { PriorityMode, PriorityBand, Lifecycle, Trend } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { getRules } from './rules'
+import { cellKpiBreachByCell } from './kpiBreach'
+
+/** How much the imported-KPI target-breach component weighs in the score.
+ *  The six classical components keep 80%; the editable targets drive 20%. */
+const KPI_BREACH_WEIGHT = 0.2
 
 /** Priority Score (spec §43): transparent 0-100 score from six weighted
  *  components. Default weights 25/20/15/15/15/10; five modes rebalance them.
@@ -79,6 +84,11 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
   const rows = r.getRowObjects()
   if (rows.length === 0) return
 
+  // spec §54a: editable per-technology KPI targets feed the score — a cell whose
+  // imported KPIs breach their targets (e.g. TCH congestion > 2%) is more urgent
+  const weekStart = rows[0].week_start == null ? null : String(rows[0].week_start)
+  const kpiBreach = await cellKpiBreachByCell(conn, rows.map((x) => Number(x.cell_id)), weekStart)
+
   await conn.run(`DELETE FROM cell_priority_history WHERE cell_id IN (${idList})`)
 
   const insert = async (mode: PriorityMode, weights: number[]): Promise<void> => {
@@ -95,21 +105,25 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
       const lifecycle = String(x.lifecycle) as Lifecycle
       const trend = String(x.trend) as Trend
 
+      const kpiBreachScore = kpiBreach.get(Number(x.cell_id)) ?? 0
       const components = {
         prbSeverity: Math.round(clamp((100 * (prbAvg - rules.prbThresholdPct)) / 40, 0, 100) * 10) / 10,
         persistence: PERSISTENCE_BY_LIFECYCLE[lifecycle] ?? 0,
         userImpact: avgUsers > 0 ? Math.round(clamp((100 * (users - avgUsers)) / avgUsers, 0, 100) * 10) / 10 : 0,
         trafficImpact: avgVolume > 0 ? Math.round(clamp((100 * (volume - avgVolume)) / avgVolume, 0, 100) * 10) / 10 : 0,
         throughputDegradation: avgThroughput > 0 ? Math.round(clamp((100 * (avgThroughput - throughput)) / avgThroughput, 0, 100) * 10) / 10 : 0,
-        worseningTrend: TREND_COMPONENT[trend] ?? 50
+        worseningTrend: TREND_COMPONENT[trend] ?? 50,
+        kpiBreach: kpiBreachScore
       }
-      const score =
+      const classical =
         (weights[0] * components.prbSeverity +
           weights[1] * components.persistence +
           weights[2] * components.userImpact +
           weights[3] * components.trafficImpact +
           weights[4] * components.throughputDegradation +
           weights[5] * components.worseningTrend) / 100
+      // editable targets modulate the score: 80% classical + 20% KPI breach
+      const score = (1 - KPI_BREACH_WEIGHT) * classical + KPI_BREACH_WEIGHT * components.kpiBreach
       const rounded = Math.round(score * 10) / 10
       inserts.push(`(${Number(x.cell_id)}, ?, ?, ?, '${mode}', ?, ${rules.version})`)
       params.push(

@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useAppStore, emit, type PeriodId, type Grain } from '../store'
+import type { Technology } from '../../../shared/api'
 
 const PERIODS: { id: PeriodId; label: string }[] = [
   { id: '7d', label: 'Last 7 days' },
@@ -7,6 +9,8 @@ const PERIODS: { id: PeriodId; label: string }[] = [
   { id: 'mtd', label: 'Month to date' },
   { id: '3m', label: 'Last 3 months' }
 ]
+
+const TECHS: Technology[] = ['2G', '3G', '4G']
 
 const GRAINS: Grain[] = ['daily', 'weekly', 'monthly']
 
@@ -20,6 +24,22 @@ export default function CommandBar(): React.JSX.Element {
   const grain = useAppStore((s) => s.grain)
   const setPeriod = useAppStore((s) => s.setPeriod)
   const setGrain = useAppStore((s) => s.setGrain)
+  const [switching, setSwitching] = useState(false)
+
+  async function switchTech(tech: Technology): Promise<void> {
+    if (!workspace || workspace.technology === tech || switching) return
+    setSwitching(true)
+    try {
+      const w = await window.api.workspace.setTechnology(tech)
+      useAppStore.getState().setWorkspace(w)
+      emit('WORKSPACE_CHANGED')
+      emit('RULESET_CHANGED')
+    } catch (e) {
+      useAppStore.getState().setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSwitching(false)
+    }
+  }
 
   return (
     <header className="bar">
@@ -28,6 +48,18 @@ export default function CommandBar(): React.JSX.Element {
           {workspace ? workspace.name : 'No workspace'}
           {workspace?.readOnly && <span className="badge badge-ro">READ ONLY</span>}
         </span>
+        <div className="seg tech-seg" title="Switch technology — analysis uses that technology's imported KPI columns">
+          {TECHS.map((t) => (
+            <button
+              key={t}
+              className={`seg-btn${workspace?.technology === t ? ' active' : ''}`}
+              disabled={!workspace || workspace.readOnly || switching}
+              onClick={() => void switchTech(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
         <select
           className="sel"
           value={period}

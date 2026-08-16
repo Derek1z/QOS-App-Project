@@ -73,14 +73,14 @@ export default function CellIntelligence(): React.JSX.Element {
     [search, fLifecycle, fTrend, fSeverity, fPriority]
   )
 
-  // reset to page 0 on any filter change (search debounced)
+  // reset to page 0 on any filter change (search debounced) or tech switch
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current)
     debounce.current = setTimeout(() => void load(0, false), search === '' ? 0 : 350)
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [search, fLifecycle, fTrend, fSeverity, fPriority, load])
+  }, [search, fLifecycle, fTrend, fSeverity, fPriority, workspace?.technology, workspace?.path, load])
 
   useEffect(() => {
     void (async () => {
@@ -188,12 +188,17 @@ export default function CellIntelligence(): React.JSX.Element {
                   <th>Lifecycle</th>
                   <th>Trend</th>
                   <th>Severity</th>
-                  <th>PRB avg</th>
-                  <th>Breach</th>
+                  {workspace?.technology === '4G' && (
+                    <>
+                      <th>PRB avg</th>
+                      <th>Breach</th>
+                    </>
+                  )}
                   <th>Priority</th>
                   {data.rows[0]?.kpis.map((k) => (
                     <th key={k.key} title={`${k.label} target ${k.target ?? '—'}`}>
                       {k.label}
+                      {k.breached && ' ⚠'}
                     </th>
                   ))}
                 </tr>
@@ -216,8 +221,12 @@ export default function CellIntelligence(): React.JSX.Element {
                     <td>
                       <Chip text={r.severity} tone={r.severity === 'Critical' ? 'bad' : r.severity === 'High' ? 'warn' : 'dim'} />
                     </td>
-                    <td>{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
-                    <td>{r.breachDays}</td>
+                    {workspace?.technology === '4G' && (
+                      <>
+                        <td>{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
+                        <td>{r.breachDays}</td>
+                      </>
+                    )}
                     <td>
                       {r.priorityScore != null ? (
                         <span style={{ color: BAND_COLOR[r.priorityBand ?? 'Low'] ?? 'var(--text)', fontWeight: 700 }}>
@@ -284,6 +293,26 @@ export default function CellIntelligence(): React.JSX.Element {
                     Priority {detail.current.priorityScore} · {detail.current.priorityBand}
                   </span>
                 )}
+              </div>
+            )}
+
+            {detail.kpis.length > 0 && (
+              <div className="card drawer-kpis">
+                <div className="drawer-sub">Per-technology KPIs (latest week)</div>
+                <div className="kpi-grid">
+                  {detail.kpis.map((k) => (
+                    <div key={k.key} className={`kpi-cell${k.breached ? ' kpi-breached' : ''}`}>
+                      <span className="kpi-grid-label">{k.label}</span>
+                      <span className="kpi-grid-value">
+                        {k.value != null ? `${Number(k.value).toFixed(1)}${k.unit ? ` ${k.unit}` : ''}` : '—'}
+                        {k.breached && ' ⚠'}
+                      </span>
+                      <span className="kpi-grid-target">
+                        target {k.target ?? '—'} · {k.worseIsHigher ? '↑ worse' : '↓ worse'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

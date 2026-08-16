@@ -80,6 +80,8 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   })
   ipcMain.handle('workspace:close', () => ws.closeWorkspace())
   ipcMain.handle('workspace:info', () => ws.getCurrentInfo())
+  ipcMain.handle('workspace:setTechnology', (_e, technology: Technology) =>
+    ws.setWorkspaceTechnology(technology))
 
   ipcMain.handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
   ipcMain.handle('kpis:save', (_e, patch: KpiDefPatch) => saveCurrent(patch))

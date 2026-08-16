@@ -608,7 +608,8 @@ function demoPriority(mode: PriorityMode): PriorityRow[] {
       userImpact,
       trafficImpact,
       throughputDegradation,
-      worseningTrend: score >= 80 ? 100 : score >= 60 ? 50 : 0
+      worseningTrend: score >= 80 ? 100 : score >= 60 ? 50 : 0,
+      kpiBreach: Math.round(Math.min(100, Math.max(0, score / 2)))
     }
   }))
 }
@@ -765,7 +766,8 @@ function demoCellDetail(cellId: number): CellDetail | null {
       priorityBand: 'Medium',
       prbAvg: base.prbAvg
     },
-    weeks
+    weeks,
+    kpis: demoCellKpis(cellId, base.weekStart)
   }
 }
 
@@ -2659,6 +2661,11 @@ export const previewApi: Api & { demo: true } = {
     },
     close: async () => {},
     info: async () => demoWorkspaceInfo(),
+    setTechnology: async (technology: Technology): Promise<WorkspaceInfo> => {
+      demoTech = technology === '2G' || technology === '3G' ? technology : '4G'
+      demoKpiValues.clear()
+      return demoWorkspaceInfo()
+    },
     onChanged: () => () => {},
     snapshots: async (): Promise<WorkspaceSnapshot[]> => demoSnapshots,
     createSnapshot: async (name: string, opts?: CreateSnapshotOpts): Promise<WorkspaceSnapshot> => {

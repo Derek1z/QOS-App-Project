@@ -2654,3 +2654,14 @@ code {
 .kpi-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
 .kpi-field-wide { grid-column: 1 / -1; }
 .tab-note { font-size: 10px; color: var(--text-faint); margin-left: 4px; }
+
+/* --- technology switcher + drawer KPI grid (spec §54a) --- */
+.tech-seg { margin-left: 4px; }
+.tech-seg .seg-btn { min-width: 34px; font-weight: 700; font-size: 12px; }
+.drawer-kpis { margin-bottom: 12px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 8px; }
+.kpi-cell { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.kpi-cell.kpi-breached { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.kpi-grid-label { font-size: 11px; color: var(--text-dim); }
+.kpi-grid-value { font-size: 14px; font-weight: 700; }
+.kpi-grid-target { font-size: 10px; color: var(--text-faint); }

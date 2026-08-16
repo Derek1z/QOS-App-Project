@@ -391,6 +391,8 @@ export interface PriorityRow {
     trafficImpact: number
     throughputDegradation: number
     worseningTrend: number
+    /** 0-100: how far the cell's imported KPI values breach their editable targets */
+    kpiBreach: number
   }
 }
 
@@ -490,6 +492,8 @@ export interface CellDetail {
     prbAvg: number | null
   } | null
   weeks: CellWeekPoint[]
+  /** extra per-technology KPI values for the latest week (spec §54a) */
+  kpis: CellKpiValue[]
 }
 
 export type PerfMetric = 'prb' | 'throughput' | 'users' | 'volume' | 'availability'
@@ -1048,6 +1052,8 @@ export interface Api {
     open(path: string, opts?: { readOnly?: boolean }): Promise<WorkspaceInfo>
     close(): Promise<void>
     info(): Promise<WorkspaceInfo | null>
+    /** switch the active workspace's technology (2G/3G/4G) and re-seed its KPI set */
+    setTechnology(technology: Technology): Promise<WorkspaceInfo>
     onChanged(cb: () => void): () => void
     snapshots(): Promise<WorkspaceSnapshot[]>
     createSnapshot(name: string, opts?: CreateSnapshotOpts): Promise<WorkspaceSnapshot>

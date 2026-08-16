@@ -286,3 +286,4 @@ export function removeCurrent(kpiId: number): Promise<void> {
 export function discoverCurrent(headers: string[], technology?: Technology): Promise<KpiDiscovery> {
   return discoverKpiDefs(conn(), headers, technology)
 }
+

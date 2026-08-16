@@ -1,6 +1,10 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
 import type { HealthComponentRow, Lifecycle } from '../../../shared/api'
 import { getRules } from './rules'
+import { cellKpiBreachByCell } from './kpiBreach'
+
+/** KPI target-breach share of the cell health score (spec §54a). */
+const KPI_BREACH_WEIGHT = 0.15
 
 /** Health scores (spec §29, §62). Network health is computed on the fly from
  *  agg_network_weekly (cheap, a handful of rows); cell health is persisted in
@@ -105,6 +109,10 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
   const rows = r.getRowObjects()
   if (rows.length === 0) return
 
+  // spec §54a: a cell whose imported KPIs breach their editable targets is less
+  // healthy — blend the breach severity (0-100) into the score.
+  const kpiBreach = await cellKpiBreachByCell(conn, rows.map((x) => Number(x.cell_id)), null)
+
   await conn.run(`DELETE FROM cell_health_history WHERE cell_id IN (${idList})`)
 
   const inserts: string[] = []
@@ -125,14 +133,16 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
     const availability = Math.round(clamp(avail, 0, 100) * 10) / 10
     const ncHealth = NC_HEALTH[lifecycle] ?? 100
     const growth = Math.round(clamp(100 - clamp(growthPct, 0, 100) / 0.3, 0, 100) * 10) / 10
-    const score =
+    const kpiHealth = Math.round(clamp(100 - (kpiBreach.get(Number(x.cell_id)) ?? 0), 0, 100) * 10) / 10
+    const classical =
       0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * ncHealth + 0.1 * growth
+    const score = (1 - KPI_BREACH_WEIGHT) * classical + KPI_BREACH_WEIGHT * kpiHealth
 
     inserts.push(`(${Number(x.cell_id)}, ?, ?, ?)`)
     params.push(
       Number(x.date_id),
       Math.round(score * 10) / 10,
-      JSON.stringify({ capacity, throughput, availability, ncHealth, growth })
+      JSON.stringify({ capacity, throughput, availability, ncHealth, growth, kpiHealth })
     )
   }
   for (let i = 0; i < inserts.length; i += 500) {

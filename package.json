@@ -1,0 +1,66 @@
+{
+  "name": "2g-3g-4g-qos-network-intelligence",
+  "productName": "2G/3G/4G QoS",
+  "version": "0.1.0",
+  "description": "2G/3G/4G QoS Network Intelligence - portable telecom QoS analytics workstation (Electron + DuckDB)",
+  "author": "2G/3G/4G QoS Network Intelligence",
+  "main": "out/main/index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "icon": "node scripts/generate-icon.cjs",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
+    "smoke": "electron-vite build && electron . --smoke",
+    "preview:web": "vite --config .preview/vite.config.ts",
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:portable": "electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
+  },
+  "build": {
+    "appId": "com.qos.networkintelligence",
+    "productName": "2G/3G/4G QoS",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "build/icon.ico"
+    ],
+    "asarUnpack": [
+      "**/node_modules/@duckdb/**",
+      "**/*.node"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "2G_3G_4G_QoS.exe"
+    }
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.5.5-r.4",
+    "echarts": "^6.1.0",
+    "exceljs": "^4.4.0",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  }
+}

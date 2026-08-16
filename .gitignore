@@ -1,0 +1,15 @@
+.freebuff/
+node_modules/
+out/
+dist/
+workspaces/
+backups/
+exports/
+app_state.json
+*.qosdb
+*.qosdb.lock
+*.log
+.DS_Store
+release/
+*.tmp
+win-unpacked/

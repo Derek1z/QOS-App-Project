@@ -1,0 +1,85 @@
+import { useAppStore, emit, type PeriodId, type Grain } from '../store'
+
+const PERIODS: { id: PeriodId; label: string }[] = [
+  { id: '7d', label: 'Last 7 days' },
+  { id: '4w', label: 'Last 4 weeks' },
+  { id: '12w', label: 'Last 12 weeks' },
+  { id: 'mtd', label: 'Month to date' },
+  { id: '3m', label: 'Last 3 months' }
+]
+
+const GRAINS: Grain[] = ['daily', 'weekly', 'monthly']
+
+function grainLabel(g: Grain): string {
+  return g === 'weekly' ? 'Week' : g.charAt(0).toUpperCase() + g.slice(1)
+}
+
+export default function CommandBar(): React.JSX.Element {
+  const workspace = useAppStore((s) => s.workspace)
+  const period = useAppStore((s) => s.period)
+  const grain = useAppStore((s) => s.grain)
+  const setPeriod = useAppStore((s) => s.setPeriod)
+  const setGrain = useAppStore((s) => s.setGrain)
+
+  return (
+    <header className="bar">
+      <div className="bar-left">
+        <span className="bar-workspace" title={workspace?.path}>
+          {workspace ? workspace.name : 'No workspace'}
+          {workspace?.readOnly && <span className="badge badge-ro">READ ONLY</span>}
+        </span>
+        <select
+          className="sel"
+          value={period}
+          disabled={!workspace}
+          onChange={(e) => {
+            setPeriod(e.target.value as PeriodId)
+            emit('PERIOD_CHANGED')
+          }}
+        >
+          {PERIODS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <div className="seg">
+          {GRAINS.map((g) => (
+            <button
+              key={g}
+              className={`seg-btn${grain === g ? ' active' : ''}`}
+              disabled={!workspace}
+              onClick={() => {
+                setGrain(g)
+                emit('GRAIN_CHANGED')
+              }}
+            >
+              {grainLabel(g)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="bar-right">
+        <button className="btn btn-ghost" disabled title="Milestone 2 — ruleset editing">
+          PRB ≥ 80%
+        </button>
+        <button className="btn btn-ghost" disabled title="Milestone 2 — ruleset editing">
+          Breach ≥ 1d
+        </button>
+        <button className="btn btn-ghost" disabled title="Milestone 3 — comparison mode">
+          Compare
+        </button>
+        <button className="btn btn-ghost" disabled title="Milestone 1 — import pipeline">
+          Import
+        </button>
+        <button className="btn btn-ghost" disabled title="Milestone 5 — report builder">
+          Export
+        </button>
+        <button className="btn btn-ghost" disabled title="Milestone 3 — saved views">
+          Views
+        </button>
+        <span className="kbd-hint">Ctrl K</span>
+      </div>
+    </header>
+  )
+}

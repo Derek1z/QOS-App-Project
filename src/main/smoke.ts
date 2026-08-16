@@ -804,7 +804,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   const kpiRec = kpiAnalysis[0]
   if (!kpiRec) throw new Error('kpi extra file not analyzed')
   const kpiMapping = {
-    ...kpiRec.suggestedMapping,
+    columns: kpiRec.suggestedMapping,
     kpiColumns: { 'TCH Congestion (%)': 'tch_congestion' } as Record<string, string>
   }
   const kpiPrev = await previewImport(kpiRec.id, kpiMapping as never)

@@ -219,7 +219,7 @@ async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
     SELECT s.date_id, c.cell_id, k.kpi_id, try_cast(j.value AS DOUBLE)
     FROM stg_clean s
     JOIN dim_cell c ON c.name = s.cell_name
-    JOIN json_each(s.kpi_json) j
+    CROSS JOIN LATERAL json_each(s.kpi_json) j
     JOIN kpi_defs k ON k.kpi_key = j.key
     WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
       AND NOT EXISTS (

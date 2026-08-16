@@ -194,7 +194,14 @@ export default function DataManager(): React.JSX.Element {
       setAnalyses(as)
       setKpiSuggest({})
       const next: Record<string, MappingConfig> = {}
-      for (const a of as) next[a.id] = { columns: a.suggestedMapping }
+      for (const a of as) {
+        const m: MappingConfig = { columns: a.suggestedMapping }
+        // remembered sources restore their accepted KPI assignments too
+        if (a.knownProfile && Object.keys(a.suggestedKpiMapping ?? {}).length > 0) {
+          m.kpiColumns = { ...a.suggestedKpiMapping }
+        }
+        next[a.id] = m
+      }
       setMappings(next)
       for (const a of as) {
         if (a.errors.length === 0) {
@@ -449,6 +456,7 @@ export default function DataManager(): React.JSX.Element {
                 const suggestedKeys = Object.keys(a.suggestedKpiMapping ?? {})
                 const showSuggest =
                   suggestedKeys.length > 0 &&
+                  !a.knownProfile &&
                   kpiSuggest[a.id] !== 'applied' &&
                   kpiSuggest[a.id] !== 'dismissed'
                 return (
@@ -491,6 +499,13 @@ export default function DataManager(): React.JSX.Element {
                     {kpiSuggest[a.id] === 'applied' && (
                       <div className="notice notice-ok">
                         ✓ {suggestedKeys.length} KPI suggestions applied — edit any column below if needed.
+                      </div>
+                    )}
+                    {a.knownProfile && suggestedKeys.length > 0 && (
+                      <div className="notice notice-ok">
+                        ↺ Remembered {suggestedKeys.length} KPI{' '}
+                        {suggestedKeys.length === 1 ? 'assignment' : 'assignments'} from the last
+                        import of this source — adjust below if needed.
                       </div>
                     )}
                     {a.errors.length === 0 && (

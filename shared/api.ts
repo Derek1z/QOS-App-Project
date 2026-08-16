@@ -154,6 +154,15 @@ export interface MappingConfig {
   kpiColumns?: Record<string, string>
 }
 
+/** One week of a KPI's value history on the KPI Watch card. */
+export interface KpiTrendPoint {
+  weekStart: string
+  /** network mean value that week (per the definition's aggregation) */
+  value: number | null
+  /** any cell breached the target that week */
+  breached: boolean
+}
+
 /** Per-technology KPI breach summary for the latest analysed week. */
 export interface KpiOverviewKpi {
   key: string
@@ -167,6 +176,8 @@ export interface KpiOverviewKpi {
   observedCells: number
   /** mean breach severity (0-100) across breaching cells */
   avgSeverity: number | null
+  /** value history (last ~12 weeks) with breach weeks flagged */
+  trend: KpiTrendPoint[]
 }
 
 export interface KpiOverviewCell {

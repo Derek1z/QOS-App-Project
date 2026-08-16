@@ -139,10 +139,17 @@ export function makeFingerprint(headers: string[]): string {
   return h1.toString(16) + '-' + h2.toString(16)
 }
 
+/** A remembered source profile: canonical columns + any KPI assignments the
+ *  user accepted on the last import of this source (spec §13, §54a). */
+export interface SourceProfile {
+  columns: Record<string, CanonicalField>
+  kpiColumns: Record<string, string>
+}
+
 export async function loadProfileConn(
   conn: DuckDBConnection,
   fingerprint: string
-): Promise<Record<string, CanonicalField> | null> {
+): Promise<SourceProfile | null> {
   const r = await conn.runAndReadAll(
     `SELECT profile FROM source_mapping_profiles WHERE fingerprint = ?`,
     [fingerprint]
@@ -150,7 +157,15 @@ export async function loadProfileConn(
   const row = r.getRowObjects()[0]
   if (!row || !row.profile) return null
   try {
-    return JSON.parse(String(row.profile)) as Record<string, CanonicalField>
+    const parsed = JSON.parse(String(row.profile)) as
+      | SourceProfile
+      | Record<string, CanonicalField>
+    // profiles saved before KPI support store the plain canonical map
+    if (parsed && !('columns' in parsed)) {
+      return { columns: parsed as Record<string, CanonicalField>, kpiColumns: {} }
+    }
+    const p = parsed as SourceProfile
+    return { columns: p.columns ?? {}, kpiColumns: p.kpiColumns ?? {} }
   } catch {
     return null
   }
@@ -169,7 +184,7 @@ export async function saveProfileConn(
        profile = excluded.profile,
        confidence = excluded.confidence,
        last_used = now()`,
-    [fingerprint, JSON.stringify(mapping.columns), confidence]
+    [fingerprint, JSON.stringify({ columns: mapping.columns, kpiColumns: mapping.kpiColumns ?? {} }), confidence]
   )
 }
 

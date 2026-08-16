@@ -835,6 +835,14 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (!kpiOv.worstCells.some((c) => c.cellName === 'EXTRA_001_A')) {
     throw new Error('kpi overview worst cells missing EXTRA_001_A: ' + JSON.stringify(kpiOv.worstCells))
   }
+  // 27d5. accepted KPI suggestions persist in the source profile: re-analyzing
+  // the same file must restore the TCH assignment from the remembered profile
+  const kpiRec2 = (await analyzeFiles([extraCsv]))[0]
+  if (!kpiRec2) throw new Error('re-analyze of kpi extra file failed')
+  if (!kpiRec2.knownProfile) throw new Error('kpi source profile not remembered on re-analyze')
+  if (kpiRec2.suggestedKpiMapping['TCH Congestion (%)'] !== 'tch_congestion') {
+    throw new Error('kpi profile lost accepted assignment: ' + JSON.stringify(kpiRec2.suggestedKpiMapping))
+  }
   await removeKpiDef(ws.getCurrent()!.connection, saved.kpiId)
   const afterRemove = await listKpiDefs(ws.getCurrent()!.connection, tech)
   if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')

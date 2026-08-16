@@ -21,7 +21,7 @@ import type {
   SnapshotComparisonKpi, MaintenanceAction, MaintenanceResult,
   MaintenanceScheduleSettings, ScheduledMaintenanceRun, ScheduledRunResult,
   ReportChartConfig, KpiDefinition, KpiDefPatch, KpiDiscovery, CellKpiValue, Technology,
-  KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell
+  KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell, KpiTrendPoint
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
 import { weekLabel } from './overviewCharts'
@@ -156,7 +156,8 @@ function demoKpiDiscover(headers: string[], tech: Technology): KpiDiscovery {
 }
 const cellsSeen = new Set<string>()
 const factKeys = new Set<string>() // `${date}|${cell}`
-const profiles = new Map<string, Record<string, CanonicalField>>() // fingerprint -> remembered mapping
+// fingerprint -> remembered mapping (canonical columns + accepted KPI assignments)
+const profiles = new Map<string, { columns: Record<string, CanonicalField>; kpiColumns: Record<string, string> }>()
 const auditRows: ImportAuditRow[] = []
 const demoArchiveRows: RawArchiveRow[] = []
 let demoArchiveSeq = 0
@@ -2894,6 +2895,27 @@ export const previewApi: Api & { demo: true } = {
         }
         if (cellBreached > 0) cellAgg.set(c.cellId, { score: cellScore / cellBreached, breached: cellBreached })
       }
+      // weekly value history (last 8 weeks) for the trend sparklines — a
+      // deterministic wobble around the current value; breach weeks flagged
+      const demoWeekStarts = (): string[] => {
+        const out: string[] = []
+        const d = new Date(Date.UTC(2026, 6, 27))
+        for (let i = 7; i >= 0; i--) {
+          const w = new Date(d)
+          w.setUTCDate(w.getUTCDate() - i * 7)
+          out.push(w.toISOString().slice(0, 10))
+        }
+        return out
+      }
+      const demoTrend = (key: string, label: string, unit: string, target: number | null, worseIsHigher: boolean): KpiTrendPoint[] => {
+        const weeks = demoWeekStarts()
+        const base = demoCellKpis(1, weeks[weeks.length - 1]).find((v) => v.key === key)?.value ?? 50
+        return weeks.map((w, i) => {
+          const value = Math.round(Math.max(0, base + ((key.length + i * 7) % 11 - 5) * (worseIsHigher ? 4 : 0.4)) * 10) / 10
+          const breached = target != null && (worseIsHigher ? value > target : value < target)
+          return { weekStart: w, value, breached }
+        })
+      }
       const kpis: KpiOverviewKpi[] = [...byKey.values()]
         .filter((k) => k.breached > 0)
         .map((k) => ({
@@ -2904,7 +2926,8 @@ export const previewApi: Api & { demo: true } = {
           worseIsHigher: k.worseIsHigher,
           breachedCells: k.breached,
           observedCells: k.observed,
-          avgSeverity: k.breached > 0 ? Math.round((k.sevSum / k.breached) * 10) / 10 : null
+          avgSeverity: k.breached > 0 ? Math.round((k.sevSum / k.breached) * 10) / 10 : null,
+          trend: demoTrend(k.key, k.label, k.unit, k.target, k.worseIsHigher)
         }))
         .sort((a, b) => (b.avgSeverity ?? 0) - (a.avgSeverity ?? 0))
         .slice(0, limit)
@@ -3170,8 +3193,10 @@ export const previewApi: Api & { demo: true } = {
           header,
           sample: rows.slice(1, 6),
           fingerprint,
-          suggestedMapping: remembered ?? suggested,
-          suggestedKpiMapping: demoKpiDiscover(header, demoTech).mapping,
+          suggestedMapping: remembered ? remembered.columns : suggested,
+          suggestedKpiMapping: remembered
+            ? remembered.kpiColumns
+            : demoKpiDiscover(header, demoTech).mapping,
           confidence: mappingConfidence(suggested),
           knownProfile: remembered !== null,
           errors
@@ -3248,9 +3273,13 @@ export const previewApi: Api & { demo: true } = {
         inserted++
       }
 
-      // Remember the mapping profile for this source fingerprint (spec §13).
+      // Remember the mapping profile for this source fingerprint (spec §13),
+      // including the accepted KPI assignments (spec §54a).
       if (inserted > 0) {
-        profiles.set(rec.fingerprint, { ...mapping.columns })
+        profiles.set(rec.fingerprint, {
+          columns: { ...mapping.columns },
+          kpiColumns: { ...(mapping.kpiColumns ?? {}) }
+        })
       }
 
       const importId = ++importCounter

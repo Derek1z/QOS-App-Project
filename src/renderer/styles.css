@@ -1185,6 +1185,12 @@ code {
   text-transform: capitalize;
 }
 
+.status-credit {
+  margin-left: 10px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* --- data manager --- */
 .tabs {
   display: flex;
@@ -2695,17 +2701,24 @@ code {
   gap: 6px;
   margin-bottom: 10px;
 }
+.kpi-breach-item {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.kpi-breach-item:last-child {
+  border-bottom: none;
+}
 .kpi-breach-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
 }
-.kpi-breach-row:last-child {
-  border-bottom: none;
+.kpi-sparkline {
+  display: block;
+  margin-top: 3px;
+  max-width: 100%;
 }
 .kpi-breach-unit {
   color: var(--text-faint);

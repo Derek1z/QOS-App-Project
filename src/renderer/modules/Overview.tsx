@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
-import type { HealthResult, NcMovementRow, PriorityRow, KpiOverviewResult } from '../../../shared/api'
+import type { HealthResult, NcMovementRow, PriorityRow, KpiOverviewResult, KpiTrendPoint } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { healthLineOption, ncMovementOption, weekLabel } from '../lib/overviewCharts'
 import GhanaMap from './GhanaMap'
@@ -30,6 +30,59 @@ function HealthGauge({ score }: { score: number | null }): React.JSX.Element {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Compact sparkline of a KPI's weekly value history — breach weeks in red,
+ *  dashed line at the target. Pure SVG, no chart library overhead. */
+function KpiSparkline({ trend, target }: { trend: KpiTrendPoint[]; target: number | null }): React.JSX.Element {
+  if (trend.length === 0) return <span className="card-note">no weekly history</span>
+  const W = 280
+  const H = 34
+  const pad = 4
+  const values = trend.map((t) => t.value).filter((v): v is number => v != null)
+  const maxV = Math.max(1, ...values, target ?? 0) * 1.05
+  const minV = Math.min(0, ...values, target ?? 0)
+  const span = Math.max(1, maxV - minV)
+  const bw = W / trend.length
+  const y = (v: number): number => H - pad - ((v - minV) / span) * (H - pad * 2)
+  const bars = trend.map((t, i) => {
+    const v = t.value ?? 0
+    const bh = Math.max(1.5, H - pad - y(v))
+    return (
+      <rect
+        key={t.weekStart}
+        x={i * bw + bw * 0.18}
+        y={y(v)}
+        width={bw * 0.64}
+        height={bh}
+        rx={1.5}
+        fill={t.breached ? 'var(--danger)' : 'var(--accent)'}
+        opacity={t.breached ? 0.95 : 0.55}
+      >
+        <title>{`${weekLabel(t.weekStart)}: ${v == null ? '—' : v}${t.breached ? ' — breach' : ''}`}</title>
+      </rect>
+    )
+  })
+  const targetLine =
+    target != null && target >= minV && target <= maxV ? (
+      <line
+        x1={0}
+        x2={W}
+        y1={y(target)}
+        y2={y(target)}
+        stroke="var(--text-faint)"
+        strokeWidth={1}
+        strokeDasharray="3 3"
+      >
+        <title>{`target ${target}`}</title>
+      </line>
+    ) : null
+  return (
+    <svg className="kpi-sparkline" width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+      {targetLine}
+      {bars}
+    </svg>
   )
 }
 
@@ -225,23 +278,26 @@ export default function Overview(): React.JSX.Element {
             <>
               {kpiOverview.kpis.length > 0 && (
                 <div className="kpi-breach-list">
-                  {kpiOverview.kpis.map((k) => (
-                    <div key={k.key} className="kpi-breach-row">
-                      <span className="prio-name">
-                        {k.label}
-                        {k.unit ? <span className="kpi-breach-unit"> ({k.unit})</span> : null}
-                      </span>
-                      <span className="kpi-breach-meta">
-                        <b>{k.breachedCells}</b>/{k.observedCells} cells breached
-                        {k.target != null && (
-                          <span className="card-note"> target {k.target}{k.unit ? ` ${k.unit}` : ''}</span>
-                        )}
-                      </span>
-                      <span
-                        className={`badge ${k.avgSeverity != null && k.avgSeverity >= 50 ? 'badge-ro' : 'badge-warn'}`}
-                      >
-                        {k.avgSeverity == null ? '—' : `sev ${Math.round(k.avgSeverity)}`}
-                      </span>
+                  {kpiOverview.kpis.slice(0, 5).map((k) => (
+                    <div key={k.key} className="kpi-breach-item">
+                      <div className="kpi-breach-row">
+                        <span className="prio-name">
+                          {k.label}
+                          {k.unit ? <span className="kpi-breach-unit"> ({k.unit})</span> : null}
+                        </span>
+                        <span className="kpi-breach-meta">
+                          <b>{k.breachedCells}</b>/{k.observedCells} cells breached
+                          {k.target != null && (
+                            <span className="card-note"> target {k.target}{k.unit ? ` ${k.unit}` : ''}</span>
+                          )}
+                        </span>
+                        <span
+                          className={`badge ${k.avgSeverity != null && k.avgSeverity >= 50 ? 'badge-ro' : 'badge-warn'}`}
+                        >
+                          {k.avgSeverity == null ? '—' : `sev ${Math.round(k.avgSeverity)}`}
+                        </span>
+                      </div>
+                      <KpiSparkline trend={k.trend} target={k.target} />
                     </div>
                   ))}
                 </div>

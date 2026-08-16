@@ -13,7 +13,8 @@ import type {
   InvestigationScope, ActionStatus, PriorityBand, PriorityCenterOpts,
   PriorityCenterResult, PriorityCenterRow, ForecastMetric, ForecastHorizon,
   ForecastRisk, ForecastResult, ForecastRiskRow, ForecastSeries, ForecastPoint,
-  ForecastScope, CellKpiValue, KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell, Technology
+  ForecastScope, CellKpiValue, KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell,
+  KpiTrendPoint, Technology
 } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { computeNetworkHealth } from '../analytics/health'
@@ -94,7 +95,8 @@ export async function getKpiOverview(limit = 8): Promise<KpiOverviewResult> {
     worseIsHigher: Boolean(x.worse_is_higher),
     breachedCells: Number(x.breached_cells ?? 0),
     observedCells: Number(x.observed_cells ?? 0),
-    avgSeverity: x.avg_severity == null ? null : Number(x.avg_severity)
+    avgSeverity: x.avg_severity == null ? null : Number(x.avg_severity),
+    trend: []
   }))
 
   const cellsR = await conn.runAndReadAll(
@@ -121,6 +123,33 @@ export async function getKpiOverview(limit = 8): Promise<KpiOverviewResult> {
     breachScore: x.breach_score == null ? null : Number(x.breach_score),
     breachedKpis: Number(x.breached_kpis ?? 0)
   }))
+
+  // weekly value history per KPI (last 12 weeks) for the trend sparklines;
+  // a week counts as breached when any cell breached the target that week
+  const trendR = await conn.runAndReadAll(
+    `SELECT k.kpi_key AS key, w.week_start,
+       ROUND(avg(${val}), 1) AS value,
+       count(*) FILTER (WHERE ${breach}) AS breached_cells
+     FROM agg_cell_kpi_weekly w
+     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+     WHERE k.technology = ? AND k.active AND k.target IS NOT NULL
+       AND w.week_start >= (SELECT max(week_start) FROM agg_cell_kpi_weekly) - INTERVAL 11 WEEK
+     GROUP BY k.kpi_key, w.week_start
+     ORDER BY w.week_start`,
+    [tech]
+  )
+  const trendByKey = new Map<string, KpiTrendPoint[]>()
+  for (const x of trendR.getRowObjects()) {
+    const key = String(x.key)
+    const list = trendByKey.get(key) ?? []
+    list.push({
+      weekStart: String(x.week_start ?? ''),
+      value: x.value == null ? null : Number(x.value),
+      breached: Number(x.breached_cells ?? 0) > 0
+    })
+    trendByKey.set(key, list)
+  }
+  for (const k of kpis) k.trend = trendByKey.get(k.key) ?? []
 
   return { technology: tech, weekStart: String(weekStart), kpis, worstCells }
 }

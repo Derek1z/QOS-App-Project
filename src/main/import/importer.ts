@@ -57,7 +57,9 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
       const suggested = autoMap(header)
       const fingerprint = makeFingerprint(header)
       const profile = await loadProfileConn(ws.connection, fingerprint)
-      const mapping = profile ?? suggested
+      // a remembered source profile restores both the canonical columns and
+      // the KPI assignments the user accepted on the last import
+      const mapping = profile ? profile.columns : suggested
       const confidence = mappingConfidence(mapping, header)
       const issues = validateSample(header, rows, { columns: mapping })
       // spec §54a: suggest KPI assignments for the active technology from the
@@ -67,7 +69,8 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
       const id = `${path}|${st.size}|${st.mtimeMs}`
       out.push({
         id, path, filename: basename(path), header, sample: rows, fingerprint,
-        suggestedMapping: mapping, suggestedKpiMapping: kpiDiscovery.mapping,
+        suggestedMapping: mapping,
+        suggestedKpiMapping: profile ? profile.kpiColumns : kpiDiscovery.mapping,
         confidence, knownProfile: !!profile,
         errors: issues.filter((i) => i.severity === 'error').map((i) => i.message)
       })

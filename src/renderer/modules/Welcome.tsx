@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { openWorkspaceFlow, createWorkspaceFlow } from '../lib/flows'
-import type { AppStateData, RecentWorkspace } from '../../../shared/api'
+import type { AppStateData, RecentWorkspace, Technology } from '../../../shared/api'
 
 export default function Welcome(): React.JSX.Element {
   const recent = useAppStore((s) => s.recent)
@@ -11,6 +11,8 @@ export default function Welcome(): React.JSX.Element {
   // remembered choices + lock state are loaded per visit so the screen always
   // reflects what the Create/Open flows will actually do
   const [recall, setRecall] = useState<Pick<AppStateData, 'lastTechnology' | 'lastWorkspaceDir' | 'createdWorkspaces'> | null>(null)
+  const [recallTech, setRecallTech] = useState<Technology | undefined>(undefined)
+  const [recallDir, setRecallDir] = useState<string | undefined>(undefined)
   const [locked, setLocked] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
@@ -24,6 +26,8 @@ export default function Welcome(): React.JSX.Element {
           lastWorkspaceDir: app.lastWorkspaceDir,
           createdWorkspaces: app.createdWorkspaces
         })
+        setRecallTech(app.lastTechnology)
+        setRecallDir(app.lastWorkspaceDir)
       } catch {
         /* appState unavailable — skip the recall line */
       }
@@ -54,6 +58,18 @@ export default function Welcome(): React.JSX.Element {
 
   const createdCount = recall?.createdWorkspaces?.length ?? 0
 
+  async function setDefaultTech(t: Technology): Promise<void> {
+    setRecallTech(t)
+    await window.api.appState.set({ lastTechnology: t })
+  }
+
+  async function changeDefaultDir(): Promise<void> {
+    const dir = await window.api.workspace.pickDirectory()
+    if (!dir) return
+    setRecallDir(dir)
+    await window.api.appState.set({ lastWorkspaceDir: dir })
+  }
+
   return (
     <div className="welcome">
       <div className="welcome-hero">
@@ -64,13 +80,43 @@ export default function Welcome(): React.JSX.Element {
           a new one to begin.
         </p>
       </div>
-      {recall?.lastTechnology && (
+      {recall && (
         <div className="welcome-recall">
-          New workspaces will default to <b>{recall.lastTechnology}</b>
-          {recall.lastWorkspaceDir ? (
-            <> in <code title={recall.lastWorkspaceDir}>{recall.lastWorkspaceDir}</code></>
-          ) : null}
-          {createdCount > 0 ? <> — {createdCount} created so far</> : null}
+          <div className="welcome-recall-head">
+            <span className="welcome-recall-label">Defaults for new workspaces</span>
+            <div className="tech-seg seg welcome-tech-seg" title="Default technology for new workspaces">
+              {(['2G', '3G', '4G'] as Technology[]).map((t) => (
+                <button
+                  key={t}
+                  className={`seg-btn${recallTech === t ? ' active' : ''}`}
+                  onClick={() => void setDefaultTech(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="welcome-recall-dir">
+            <span>Folder:</span>
+            <code title={recallDir ?? 'app default'}>{recallDir ?? 'app default'}</code>
+            <button className="btn btn-sm" onClick={() => void changeDefaultDir()}>
+              Change…
+            </button>
+          </div>
+          {createdCount > 0 && (
+            <>
+              <div className="welcome-history-title">Recently created</div>
+              <div className="welcome-history">
+                {(recall.createdWorkspaces ?? []).slice(0, 5).map((c) => (
+                  <div key={c.createdAt + c.name} className="welcome-history-row">
+                    <span className="recent-name">{c.name}</span>
+                    <span className="badge">{c.technology}</span>
+                    <span className="recent-when">{new Date(c.createdAt).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
       {error && (

@@ -50,10 +50,12 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   const dir = await window.api.workspace.pickDirectory()
   if (!dir) return
   // Electron does not implement window.prompt() (it returns null), so name and
-  // technology are collected by an in-app modal instead.
+  // technology are collected by an in-app modal instead. The default technology
+  // is the one remembered for this folder, falling back to the global last one.
   const defaultName = name ?? suggestWorkspaceName(app.createdWorkspaces)
+  const defaultTech = app.technologyByDir?.[dir] ?? app.lastTechnology
   const choice = await new Promise<CreateWorkspaceChoice | null>((resolve) => {
-    useAppStore.getState().openCreatePrompt(defaultName, app.lastTechnology, resolve)
+    useAppStore.getState().openCreatePrompt(defaultName, defaultTech, resolve)
   })
   if (!choice) return
   const finalName = choice.name.trim()
@@ -62,7 +64,8 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   st.setError(null)
   try {
     await window.api.workspace.create(dir, finalName, choice.tech)
-    // remember the choices + creation history for next time
+    // remember the choices + creation history for next time; the technology is
+    // keyed per folder so each project folder keeps its own default
     const created = [
       { name: finalName, technology: choice.tech, createdAt: new Date().toISOString() },
       ...(app.createdWorkspaces ?? [])
@@ -70,6 +73,7 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
     await window.api.appState.set({
       lastTechnology: choice.tech,
       lastWorkspaceDir: dir,
+      technologyByDir: { ...(app.technologyByDir ?? {}), [dir]: choice.tech },
       createdWorkspaces: created
     })
     await refreshWorkspaceState()

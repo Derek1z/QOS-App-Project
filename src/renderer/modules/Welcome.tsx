@@ -60,13 +60,25 @@ export default function Welcome(): React.JSX.Element {
 
   async function setDefaultTech(t: Technology): Promise<void> {
     setRecallTech(t)
-    await window.api.appState.set({ lastTechnology: t })
+    const app = await window.api.appState.get()
+    // remember per folder when one is chosen, so each project keeps its own
+    // technology default
+    await window.api.appState.set({
+      lastTechnology: t,
+      ...(recallDir
+        ? { technologyByDir: { ...(app.technologyByDir ?? {}), [recallDir]: t } }
+        : {})
+    })
   }
 
   async function changeDefaultDir(): Promise<void> {
     const dir = await window.api.workspace.pickDirectory()
     if (!dir) return
     setRecallDir(dir)
+    // switching folders switches to that folder's remembered technology
+    const app = await window.api.appState.get()
+    const folderTech = app.technologyByDir?.[dir]
+    if (folderTech) setRecallTech(folderTech)
     await window.api.appState.set({ lastWorkspaceDir: dir })
   }
 
@@ -84,17 +96,26 @@ export default function Welcome(): React.JSX.Element {
         <div className="welcome-recall">
           <div className="welcome-recall-head">
             <span className="welcome-recall-label">Defaults for new workspaces</span>
-            <div className="tech-seg seg welcome-tech-seg" title="Default technology for new workspaces">
-              {(['2G', '3G', '4G'] as Technology[]).map((t) => (
-                <button
-                  key={t}
-                  className={`seg-btn${recallTech === t ? ' active' : ''}`}
-                  onClick={() => void setDefaultTech(t)}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <span className="welcome-recall-controls">
+              <div className="tech-seg seg welcome-tech-seg" title="Default technology for new workspaces">
+                {(['2G', '3G', '4G'] as Technology[]).map((t) => (
+                  <button
+                    key={t}
+                    className={`seg-btn${recallTech === t ? ' active' : ''}`}
+                    onClick={() => void setDefaultTech(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={busy}
+                onClick={() => void createWorkspaceFlow()}
+              >
+                Create workspace now
+              </button>
+            </span>
           </div>
           <div className="welcome-recall-dir">
             <span>Folder:</span>

@@ -58,6 +58,7 @@ let demoTech: Technology = '4G'
 const demoAppState: {
   lastTechnology?: Technology
   lastWorkspaceDir?: string
+  technologyByDir?: Record<string, Technology>
   createdWorkspaces?: Array<{ name: string; technology: Technology; createdAt: string }>
 } = {}
 let demoKpiSeq = 100
@@ -3141,6 +3142,7 @@ export const previewApi: Api & { demo: true } = {
       ],
       lastTechnology: demoAppState.lastTechnology,
       lastWorkspaceDir: demoAppState.lastWorkspaceDir,
+      technologyByDir: demoAppState.technologyByDir,
       createdWorkspaces: demoAppState.createdWorkspaces,
       theme: 'dark' as const,
       density: 'compact' as const
@@ -3148,11 +3150,13 @@ export const previewApi: Api & { demo: true } = {
     set: async (p) => {
       if (p.lastTechnology) demoAppState.lastTechnology = p.lastTechnology
       if (p.lastWorkspaceDir) demoAppState.lastWorkspaceDir = p.lastWorkspaceDir
+      if (p.technologyByDir) demoAppState.technologyByDir = { ...(demoAppState.technologyByDir ?? {}), ...p.technologyByDir }
       if (p.createdWorkspaces) demoAppState.createdWorkspaces = p.createdWorkspaces
       return {
         recentWorkspaces: [],
         lastTechnology: demoAppState.lastTechnology,
         lastWorkspaceDir: demoAppState.lastWorkspaceDir,
+        technologyByDir: demoAppState.technologyByDir,
         createdWorkspaces: demoAppState.createdWorkspaces,
         theme: 'dark' as const,
         density: 'compact' as const,

@@ -105,6 +105,8 @@ export interface AppStateData {
   lastTechnology?: Technology
   /** last folder chosen when creating a workspace — pre-fills the dialog */
   lastWorkspaceDir?: string
+  /** technology remembered per creation folder (folder -> technology) */
+  technologyByDir?: Record<string, Technology>
   /** recently created workspace names — used to suggest a default name */
   createdWorkspaces?: CreatedWorkspaceEntry[]
   theme: 'dark'

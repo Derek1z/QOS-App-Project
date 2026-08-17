@@ -18,7 +18,10 @@ import {
   generateReportPack, listReportDefinitions, saveReportDefinition, listReportHistory,
   checkDueReports
 } from './services/reportingService'
-import { analyzeFiles, previewImport, runImport, rawArchive, purgeRawArchive } from './import/importer'
+import { analyzeFiles, previewImport, runImport, rawArchive, purgeRawArchive, geoStats } from './import/importer'
+import { readCsvSample } from './import/csv'
+import { detectTechnology } from './import/mapping'
+import type { MappingConfig } from '../../shared/api'
 import {
   createSnapshot, listSnapshots, restoreSnapshot, removeSnapshot, compareSnapshots
 } from './services/snapshotService'
@@ -27,7 +30,7 @@ import {
   getSchedule, setSchedule, runScheduled, scheduleHistory, maybeRunScheduled
 } from './services/maintenanceScheduler'
 import {
-  seedKpiDefs, listKpiDefs, saveKpiDef, removeKpiDef, discoverKpiDefs
+  seedKpiDefs, seedCurrent, listKpiDefs, saveKpiDef, removeKpiDef, discoverKpiDefs
 } from './services/kpiService'
 import { app } from 'electron'
 import { overrideDataDirs, dirs } from './paths'
@@ -980,6 +983,187 @@ export async function runSmokeTest(dir: string): Promise<void> {
   const dupCells = await ws.getCurrent()!.connection.runAndReadAll("SELECT count(*) n FROM dim_cell WHERE name = 'ACC-006-A'")
   if (Number(dupCells.getRowObjects()[0].n) !== 1) {
     throw new Error('dup-dims ACC-006-A must be a single dim_cell row, got ' + dupCells.getRowObjects()[0].n)
+  }
+
+  // tech detection + schema normalization: 2G files (BTS/TCH vocabulary) and
+  // 3G files (NodeB/HSDPA) must be detected and mapped onto the shared model
+  // (Tech → Region → District → Site → Cell → DateTime → KPI → Value)
+  {
+    const g2Csv = join(dir, 'tech-2g.csv')
+    writeFileSync(g2Csv, [
+      'DATETIME,REGION,DISTRICT,BTS,CELL ID,TCH Congestion,SDCCH Congestion',
+      '2026-07-05,Greater Accra,Accra Metro,BTS-100,100-1,1.2,0.4',
+      '2026-07-05,Greater Accra,Accra Metro,BTS-100,100-2,2.1,0.9',
+      '2026-07-05,Greter Accra,Accra Metro,BTS-100,100-3,1.0,0.3'
+    ].join('\n'))
+    const [g2] = await analyzeFiles([g2Csv])
+    if (!g2 || g2.errors.length > 0) throw new Error('2G analyze failed: ' + JSON.stringify(g2?.errors))
+    if (g2.detectedTechnology !== '2G') throw new Error('2G headers not detected: ' + g2.detectedTechnology)
+    if (g2.suggestedMapping['BTS'] !== 'site') throw new Error('2G BTS must map to site: ' + JSON.stringify(g2.suggestedMapping))
+    if (g2.suggestedMapping['CELL ID'] !== 'cell') throw new Error('2G CELL ID must map to cell: ' + JSON.stringify(g2.suggestedMapping))
+
+    const g3Csv = join(dir, 'tech-3g.csv')
+    writeFileSync(g3Csv, [
+      'DATE,TIME,REGION,DISTRICT,NODEB,CELL,CE Utilization,HSDPA Throughput',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,200-1,55.0,9200',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,200-2,61.0,8400'
+    ].join('\n'))
+    const [g3] = await analyzeFiles([g3Csv])
+    if (!g3 || g3.errors.length > 0) throw new Error('3G analyze failed: ' + JSON.stringify(g3?.errors))
+    if (g3.detectedTechnology !== '3G') throw new Error('3G headers not detected: ' + g3.detectedTechnology)
+    if (g3.suggestedMapping['NODEB'] !== 'site') throw new Error('3G NODEB must map to site: ' + JSON.stringify(g3.suggestedMapping))
+
+    const g4Csv = join(dir, 'tech-4g.csv')
+    writeFileSync(g4Csv, [
+      'DATE,TIME,REGION,DISTRICT,ENODEB,CELL,PRB Utilization',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-1,72.0',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-2,66.0'
+    ].join('\n'))
+    const [g4] = await analyzeFiles([g4Csv])
+    if (!g4) throw new Error('4G analyze failed')
+    if (g4.detectedTechnology !== '4G') throw new Error('4G headers not detected: ' + g4.detectedTechnology)
+    if (g4.suggestedMapping['ENODEB'] !== 'site') throw new Error('4G ENODEB must map to site: ' + JSON.stringify(g4.suggestedMapping))
+
+    const vCsv = join(dir, 'tech-volte.csv')
+    writeFileSync(vCsv, [
+      'DATE,TIME,REGION,DISTRICT,ENODEB,CELL,MOS,RTP Jitter',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-1,3.8,12',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-2,3.6,18'
+    ].join('\n'))
+    const [gv] = await analyzeFiles([vCsv])
+    if (!gv) throw new Error('VoLTE analyze failed')
+    if (gv.detectedTechnology !== '4G') throw new Error('VoLTE headers must classify as 4G: ' + gv.detectedTechnology)
+  }
+
+  // geoStats: mapped region/district must report matches against the
+  // workspace dimensions from the imported rows above
+  {
+    const g2Csv = join(dir, 'tech-2g.csv')
+    const [g2] = await analyzeFiles([g2Csv])
+    const gs = await geoStats(g2!.id, { columns: g2!.suggestedMapping })
+    if (!gs || gs.fields.length !== 4) throw new Error('geoStats missing fields: ' + JSON.stringify(gs))
+    const region = gs.fields.find((f) => f.field === 'region')
+    const cell = gs.fields.find((f) => f.field === 'cell')
+    const site = gs.fields.find((f) => f.field === 'site')
+    // 'Greater Accra' / 'Accra Metro' were imported earlier — they must match
+    if (!region || region.matched < 1) throw new Error('geoStats region should match: ' + JSON.stringify(region))
+    // the 2G cells/sites were only analyzed, never imported — they must
+    // surface as unmatched (never silently dropped)
+    if (!cell || cell.matched !== 0 || cell.unmatched < 2) {
+      throw new Error('geoStats cell must report unmatched: ' + JSON.stringify(cell))
+    }
+    if (!site || site.unmatched < 1) throw new Error('geoStats site must report unmatched: ' + JSON.stringify(site))
+    // the typo'd region should fuzzy-suggest the existing dimension name
+    if (region.suggestions['greter accra'] !== 'Greater Accra') {
+      throw new Error('geoStats fuzzy suggestion missing: ' + JSON.stringify(region.suggestions))
+    }
+  }
+
+  // readCsvSample regression: a CSV whose final row lacks a trailing newline
+  // used to lose that row (the unterminated-record fallback ran only after an
+  // EOF read that never happened). Every row must survive, with or without a
+  // trailing newline, under LF, CRLF, and for single-line files.
+  {
+    const mk = (name: string, text: string) => {
+      const p = join(dir, name)
+      writeFileSync(p, text)
+      return p
+    }
+    const rows = (p: string) => {
+      const { header, rows: r } = readCsvSample(p, 20000)
+      return { header, rows: r }
+    }
+    const lf = mk('csv-lf.csv', 'A,B\n1,one\n2,two\n3,three\n')
+    const noNl = mk('csv-nonl.csv', 'A,B\n1,one\n2,two\n3,three')
+    const crlf = mk('csv-crlf.csv', 'A,B\r\n1,one\r\n2,two\r\n3,three\r\n')
+    const crlfNoNl = mk('csv-crlf-nonl.csv', 'A,B\r\n1,one\r\n2,two\r\n3,three')
+    const single = mk('csv-single.csv', 'A,B\n1,one')
+    for (const [name, expect] of [
+      ['LF + trailing newline', lf], ['LF, no trailing newline', noNl],
+      ['CRLF + trailing newline', crlf], ['CRLF, no trailing newline', crlfNoNl],
+      ['single line, no trailing newline', single]
+    ] as Array<[string, string]>) {
+      const s = rows(expect)
+      if (s.header.join(',') !== 'A,B') throw new Error(`csv reader ${name}: bad header ${s.header.join(',')}`)
+      if (s.rows.length !== 3 && s.rows.length !== 1) {
+        throw new Error(`csv reader ${name}: expected 3 rows (1 for single), got ${s.rows.length}`)
+      }
+      if (s.rows.length === 3 && s.rows[2].join(',') !== '3,three') {
+        throw new Error(`csv reader ${name}: last row lost: ${JSON.stringify(s.rows)}`)
+      }
+      if (s.rows.length === 1 && s.rows[0].join(',') !== '1,one') {
+        throw new Error(`csv reader ${name}: single row wrong: ${JSON.stringify(s.rows)}`)
+      }
+    }
+  }
+
+  // value aliases (spec §13): an accepted fuzzy suggestion remaps an unmatched
+  // source value onto the existing dimension at import time — geoStats must
+  // report the remap live, and the import must not create a misspelled row
+  {
+    const g2Csv = join(dir, 'tech-2g.csv')
+    const [g2] = await analyzeFiles([g2Csv])
+    const mapping: MappingConfig = {
+      columns: g2!.suggestedMapping,
+      valueAliases: { region: { 'greter accra': 'Greater Accra' } }
+    }
+    const gs = await geoStats(g2!.id, mapping)
+    const region = gs?.fields.find((f) => f.field === 'region')
+    if (!region) throw new Error('geoStats alias: region missing')
+    // after the remap every region row matches the existing dimension
+    if (region.matched < 3 || region.unmatched !== 0 || region.topUnmatched.length !== 0) {
+      throw new Error('geoStats alias: remap not reflected: ' + JSON.stringify(region))
+    }
+    const aliasRes = await runImport(g2!.id, mapping, { backupDir: join(dir, 'backups') })
+    if (aliasRes.insertedRows < 3) {
+      throw new Error('geoStats alias: import dropped remapped rows: ' + aliasRes.insertedRows)
+    }
+    const bad = await ws.getCurrent()!.connection.runAndReadAll(
+      "SELECT count(*) n FROM dim_region WHERE name = 'Greter Accra'"
+    )
+    if (Number(bad.getRowObjects()[0].n) !== 0) {
+      throw new Error('geoStats alias: misspelled region created despite alias')
+    }
+    const good = await ws.getCurrent()!.connection.runAndReadAll(
+      "SELECT count(*) n FROM dim_region WHERE name = 'Greater Accra'"
+    )
+    if (Number(good.getRowObjects()[0].n) !== 1) {
+      throw new Error('geoStats alias: Greater Accra should remain a single row')
+    }
+  }
+
+  // grain: the summary is computed per grain from the matching aggregate
+  // tables — the grain field must track the request and every grain must
+  // answer without error
+  {
+    const sDaily = await getSummary({ grain: 'daily' })
+    const sWeekly = await getSummary({ grain: 'weekly' })
+    const sMonthly = await getSummary({ grain: 'monthly' })
+    if (!sDaily || !sWeekly || !sMonthly) throw new Error('per-grain summary returned null')
+    if (sDaily.grain !== 'daily' || sWeekly.grain !== 'weekly' || sMonthly.grain !== 'monthly') {
+      throw new Error('summary grain mismatch: ' + sDaily.grain + '/' + sWeekly.grain + '/' + sMonthly.grain)
+    }
+    const hDaily = await getHealth('daily')
+    const hWeekly = await getHealth('weekly')
+    if (!hDaily || hDaily.network.length === 0) throw new Error('daily health empty')
+    // the last asOf can coincide (a Monday is both a daily date and a
+    // week-start) — the series themselves must bucket differently
+    const dAsof = hDaily.network.map((x) => x.asOf).join(',')
+    const wAsof = hWeekly.network.map((x) => x.asOf).join(',')
+    if (dAsof === wAsof) {
+      throw new Error('daily and weekly health should differ by bucket: ' + dAsof)
+    }
+  }
+
+  // VoLTE is a 4G capability: the 4G seed set carries the voice KPIs and a
+  // 4G file with MOS/RTP columns imports them as 4G extra KPIs
+  {
+    const k4 = await seedCurrent('4G')
+    if (!k4 || k4.length === 0) throw new Error('4G KPI seeds missing')
+    const keys = k4.map((x) => x.key)
+    for (const need of ['mos', 'vqi', 'rtp_jitter', 'volte_drop_call_rate']) {
+      if (!keys.includes(need)) throw new Error('4G seeds missing VoLTE KPI ' + need + ': ' + keys.join(','))
+    }
   }
 
   // startup repair: a legacy workspace holding duplicate dimension rows (from

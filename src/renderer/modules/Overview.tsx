@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-import { useAppStore, emit } from '../store'
+import React, { useEffect, useState } from 'react'
+import { useAppStore, emit, type PeriodId, type Grain } from '../store'
 import type { HealthResult, NcMovementRow, PriorityRow, KpiOverviewResult, KpiTrendPoint } from '../../../shared/api'
+import { techProfile } from '../lib/techProfile'
 import Chart from '../lib/Chart'
 import { healthLineOption, ncMovementOption, weekLabel } from '../lib/overviewCharts'
 import GhanaMap from './GhanaMap'
@@ -35,7 +36,7 @@ function HealthGauge({ score }: { score: number | null }): React.JSX.Element {
 
 /** Compact sparkline of a KPI's weekly value history — breach weeks in red,
  *  dashed line at the target. Pure SVG, no chart library overhead. */
-function KpiSparkline({ trend, target }: { trend: KpiTrendPoint[]; target: number | null }): React.JSX.Element {
+const KpiSparkline = React.memo(function KpiSparkline({ trend, target }: { trend: KpiTrendPoint[]; target: number | null }): React.JSX.Element {
   if (trend.length === 0) return <span className="card-note">no weekly history</span>
   const W = 280
   const H = 34
@@ -84,7 +85,7 @@ function KpiSparkline({ trend, target }: { trend: KpiTrendPoint[]; target: numbe
       {bars}
     </svg>
   )
-}
+})
 
 function CompBar({ label, value }: { label: string; value: number }): React.JSX.Element {
   return (
@@ -107,7 +108,7 @@ const SECTION_META: Array<{ key: SectionKey; label: string; icon: string }> = [
 ]
 
 /** Collapsible subsection — clicking the header expands/collapses it. */
-function OverviewSection({
+const OverviewSection = React.memo(function OverviewSection({
   id,
   icon,
   label,
@@ -132,10 +133,23 @@ function OverviewSection({
       {open && <div className="ov-section-body">{children}</div>}
     </section>
   )
+})
+
+const GRAIN_LABEL: Record<Grain, string> = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' }
+const PERIOD_LABEL: Record<PeriodId, string> = {
+  '7d': 'Last 7 days', '4w': 'Last 4 weeks', '12w': 'Last 12 weeks', mtd: 'Month to date', '3m': 'Last 3 months'
+}
+function grainLabel(g: Grain): string {
+  return GRAIN_LABEL[g]
+}
+function periodLabel(p: PeriodId): string {
+  return PERIOD_LABEL[p]
 }
 
 export default function Overview(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const period = useAppStore((s) => s.period)
+  const grain = useAppStore((s) => s.grain)
   const summary = useAppStore((s) => s.summary)
   const setSummary = useAppStore((s) => s.setSummary)
   const [health, setHealth] = useState<HealthResult | null>(null)
@@ -152,8 +166,8 @@ export default function Overview(): React.JSX.Element {
         // summary is workspace-global but re-read here so the KPI strip tracks
         // the active technology's data (switching 2G/3G/4G re-seeds KPIs)
         const [sum, h, m, p, ko] = await Promise.all([
-          window.api.analytics.summary(),
-          window.api.analytics.health(),
+          window.api.analytics.summary({ period, grain }),
+          window.api.analytics.health(grain),
           window.api.analytics.ncMovement(8),
           window.api.analytics.priorityQueue('balanced', 8),
           window.api.analytics.kpiOverview(8)
@@ -173,16 +187,17 @@ export default function Overview(): React.JSX.Element {
     }
     // technology is part of the workspace — reload when the switcher changes
     // so every card reflects the active technology's imported KPIs
-  }, [workspace?.path, workspace?.readOnly, workspace?.technology, setSummary])
+  }, [workspace?.path, workspace?.readOnly, workspace?.technology, period, grain, setSummary])
 
+  const profile = techProfile(workspace?.technology)
   const kpis: { label: string; value: string }[] = [
     { label: 'Cells', value: fmt(s?.cells, 0) },
-    { label: 'Sites', value: fmt(s?.sites, 0) },
+    { label: profile.siteCountLabel, value: fmt(s?.sites, 0) },
     { label: 'Districts', value: fmt(s?.districts, 0) },
     { label: 'Regions', value: fmt(s?.regions, 0) },
     { label: 'Observed rows', value: fmt(s?.rowCount, 0) },
     { label: 'Weekly NC cells', value: fmt(s?.weeklyNcCells, 0) },
-    { label: 'Avg PRB', value: s?.avgPrb == null ? '—' : fmt(s.avgPrb) + '%' },
+    { label: profile.utilizationLabel, value: s?.avgPrb == null ? '—' : fmt(s.avgPrb) + '%' },
     { label: 'Traffic', value: s?.totalVolumeMb == null ? '—' : fmt(s.totalVolumeMb / 1024, 1) + ' GB' },
     { label: 'Connected users', value: s?.totalUsers == null ? '—' : fmt(s.totalUsers, 0) },
     { label: 'DL throughput', value: s?.avgThroughputKbps == null ? '—' : fmt(s.avgThroughputKbps / 1024, 1) + ' Mbps' },
@@ -220,6 +235,7 @@ export default function Overview(): React.JSX.Element {
         </div>
         <div className="ov-head-right">
           <span className="module-workspace">{workspace?.name}</span>
+          <span className="module-workspace ov-grain">{grainLabel(grain)} · {periodLabel(period)}</span>
           {s?.minDate && s?.maxDate && (
             <span className="module-workspace">{s.minDate} → {s.maxDate}</span>
           )}

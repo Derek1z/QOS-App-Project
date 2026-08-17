@@ -1,5 +1,5 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
-import type { HealthComponentRow, Lifecycle } from '../../../shared/api'
+import type { HealthComponentRow, Lifecycle, Grain } from '../../../shared/api'
 import { getRules } from './rules'
 import { cellKpiBreachByCell } from './kpiBreach'
 
@@ -27,19 +27,22 @@ const NC_HEALTH: Record<Lifecycle, number> = {
 }
 
 /** Network Health Score series, most recent last. */
-export async function computeNetworkHealth(conn: DuckDBConnection): Promise<HealthComponentRow[]> {
+export async function computeNetworkHealth(
+  conn: DuckDBConnection,
+  grain: Grain = 'weekly'
+): Promise<HealthComponentRow[]> {
   const rules = await getRules(conn)
   if (!rules) return []
   const r = await conn.runAndReadAll(`
     WITH vol AS (
       SELECT period_start, data_volume_mb_sum,
         lag(data_volume_mb_sum) OVER (ORDER BY period_start) AS prev_volume
-      FROM agg_network_weekly
+      FROM agg_network_${grain}
     )
     SELECT CAST(n.period_start AS VARCHAR) AS as_of,
       n.prb_avg, n.nc_rate, n.dl_throughput_kbps_avg, n.availability_pct_avg,
       v.data_volume_mb_sum, v.prev_volume
-    FROM agg_network_weekly n JOIN vol v USING (period_start)
+    FROM agg_network_${grain} n JOIN vol v USING (period_start)
     ORDER BY n.period_start
   `)
   const out: HealthComponentRow[] = []

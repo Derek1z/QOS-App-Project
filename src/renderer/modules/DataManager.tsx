@@ -5,11 +5,19 @@ import type {
   FileAnalysis, MappingConfig, PreviewResult, ImportResult,
   ImportAuditRow, CoverageRow, QualityRow, CanonicalField, ValidationIssue, ImportProgress,
   RawArchiveResult, MaintenanceAction, MaintenanceResult,
-  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition
+  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition, GeoStatsResult
 } from '../../../shared/api'
 import { FIELD_LABELS, FIELD_ORDER } from '../../../shared/api'
 
 type Tab = 'import' | 'coverage' | 'audit' | 'quality' | 'archive' | 'maintenance'
+
+// application-field-first geo mapping (spec §13): Region and District drive the
+// geographic analysis, Site/Cell tie rows to cells — all user-overridable.
+const GEO_FIELDS: CanonicalField[] = ['region', 'district', 'site', 'cell']
+
+function geoFieldLabel(f: CanonicalField): string {
+  return FIELD_LABELS[f] ?? f
+}
 
 const CADENCE_OPTIONS: Array<{ hours: number; label: string }> = [
   { hours: 6, label: 'Every 6 hours' },
@@ -82,6 +90,8 @@ export default function DataManager(): React.JSX.Element {
   const [archive, setArchive] = useState<RawArchiveResult>(EMPTY_ARCHIVE)
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [exportMsg, setExportMsg] = useState<Record<string, string>>({})
+  const [geo, setGeo] = useState<Record<string, GeoStatsResult | null>>({})
+  const [geoBusy, setGeoBusy] = useState<Record<string, boolean>>({})
   const [maintLog, setMaintLog] = useState<MaintenanceResult[]>([])
   const [maintAction, setMaintAction] = useState<MaintenanceAction | null>(null)
   const [sched, setSched] = useState<MaintenanceScheduleSettings | null>(null)
@@ -308,6 +318,51 @@ export default function DataManager(): React.JSX.Element {
     }
   }
 
+  /** Application-field-first override: point a geo field at a source column. */
+  function changeFieldColumn(id: string, field: CanonicalField, column: string): void {
+    setMappings((prev) => {
+      const cur = prev[id] ?? { columns: {}, kpiColumns: {} }
+      const cols: Record<string, CanonicalField> = { ...cur.columns }
+      for (const [k, v] of Object.entries(cols)) {
+        if (v === field) delete cols[k]
+      }
+      if (column) cols[column] = field
+      return { ...prev, [id]: { columns: cols, kpiColumns: { ...(cur.kpiColumns ?? {}) }, valueAliases: cur.valueAliases } }
+    })
+  }
+
+  /** Match stats for the mapped geo fields against the workspace dimensions. */
+  async function checkGeo(id: string, mapping: MappingConfig): Promise<void> {
+    setGeoBusy((p) => ({ ...p, [id]: true }))
+    try {
+      const g = await window.api.imports.geoStats(id, mapping)
+      setGeo((prev) => ({ ...prev, [id]: g }))
+    } catch {
+      setGeo((prev) => ({ ...prev, [id]: null }))
+    } finally {
+      setGeoBusy((p) => ({ ...p, [id]: false }))
+    }
+  }
+
+  function columnFor(mapping: MappingConfig, field: CanonicalField): string {
+    return Object.entries(mapping.columns).find(([, f]) => f === field)?.[0] ?? ''
+  }
+
+  /** One-click accept of a fuzzy geo suggestion: an unmatched source value is
+   *  remapped onto the existing dimension name so the import re-points it
+   *  instead of creating a new (misspelled) dimension row. */
+  function applySuggestion(id: string, field: CanonicalField, value: string, suggestion: string): void {
+    const cur = mappings[id] ?? { columns: {}, kpiColumns: {} }
+    const aliases = { ...(cur.valueAliases ?? {}) }
+    const fieldAliases = { ...(aliases[field] ?? {}) }
+    fieldAliases[value] = suggestion
+    aliases[field] = fieldAliases
+    const next: MappingConfig = { ...cur, valueAliases: aliases }
+    setMappings((prev) => ({ ...prev, [id]: next }))
+    // re-check immediately so the matched/unmatched counts reflect the remap
+    void checkGeo(id, next)
+  }
+
   function changeMapping(id: string, header: string, field: CanonicalField | ''): void {
     setMappings((prev) => {
       const cur = prev[id] ?? { columns: {}, kpiColumns: {} }
@@ -322,7 +377,7 @@ export default function DataManager(): React.JSX.Element {
       } else {
         delete cols[header]
       }
-      return { ...prev, [id]: { columns: cols, kpiColumns: kcols } }
+      return { ...prev, [id]: { columns: cols, kpiColumns: kcols, valueAliases: cur.valueAliases } }
     })
   }
 
@@ -334,7 +389,7 @@ export default function DataManager(): React.JSX.Element {
       if (kpiKey) kcols[header] = kpiKey
       else delete kcols[header]
       delete cols[header]
-      return { ...prev, [id]: { columns: cols, kpiColumns: kcols } }
+      return { ...prev, [id]: { columns: cols, kpiColumns: kcols, valueAliases: cur.valueAliases } }
     })
   }
 
@@ -520,6 +575,9 @@ export default function DataManager(): React.JSX.Element {
                     <div className="file-head">
                       <span className="file-name">{a.filename}</span>
                       {a.knownProfile && <span className="badge badge-ok">KNOWN SOURCE</span>}
+                      {a.detectedTechnology && (
+                        <span className="badge badge-tech">TECH: {a.detectedTechnology}</span>
+                      )}
                       <span className="file-conf">
                         mapping confidence {Math.round(a.confidence * 100)}%
                       </span>
@@ -613,6 +671,97 @@ export default function DataManager(): React.JSX.Element {
                             ))}
                           </tbody>
                         </table>
+                        <div className="geo-panel">
+                          <div className="geo-head">
+                            <span className="geo-title">🌍 Geo mapping — application field → source column</span>
+                            <button
+                              className="btn btn-sm"
+                              disabled={busy || geoBusy[a.id]}
+                              onClick={() => void checkGeo(a.id, mapping)}
+                            >
+                              {geo[a.id] ? '⟳ Re-check location matches' : 'Check location matches'}
+                            </button>
+                          </div>
+                          <table className="geo-table">
+                            <thead>
+                              <tr>
+                                <th>Application field</th>
+                                <th>Source column</th>
+                                <th>Distinct values</th>
+                                <th>Matched / unmatched</th>
+                                <th>Unmatched values</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {GEO_FIELDS.map((f) => {
+                                const st = geo[a.id]?.fields.find((x) => x.field === f)
+                                return (
+                                  <tr key={f}>
+                                    <td className="geo-field">{geoFieldLabel(f)}</td>
+                                    <td>
+                                      <select
+                                        className="sel"
+                                        value={columnFor(mapping, f)}
+                                        onChange={(e) => changeFieldColumn(a.id, f, e.target.value)}
+                                      >
+                                        <option value="">— unmapped —</option>
+                                        {a.header.map((h) => (
+                                          <option key={h} value={h}>
+                                            {h}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="geo-num">{st ? st.distinct : '—'}</td>
+                                    <td className="geo-num">
+                                      {st
+                                        ? `${st.matched} / ${st.unmatched}`
+                                        : '—'}
+                                    </td>
+                                    <td className="geo-um">
+                                      {st && st.topUnmatched.length > 0
+                                        ? st.topUnmatched.map((v) => {
+                                            const sugg = st.suggestions?.[v]
+                                            const applied = mapping.valueAliases?.[f]?.[v]
+                                            return (
+                                              <span key={v} className="chip">
+                                                {v}
+                                                {applied ? (
+                                                  <span className="chip-sugg applied" title="Will be remapped to the existing dimension on import">
+                                                    → {applied} ✓
+                                                  </span>
+                                                ) : sugg ? (
+                                                  <span className="chip-sugg" title="Closest existing dimension name — apply to remap on import">
+                                                    → {sugg}
+                                                    <button
+                                                      className="btn btn-xs"
+                                                      disabled={busy || geoBusy[a.id]}
+                                                      onClick={() => applySuggestion(a.id, f, v, sugg)}
+                                                    >
+                                                      Apply
+                                                    </button>
+                                                  </span>
+                                                ) : null}
+                                              </span>
+                                            )
+                                          })
+                                        : st
+                                          ? <span className="card-note">all matched</span>
+                                          : '—'}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                          {geo[a.id] && (
+                            <p className="card-note">
+                              Checked {(geo[a.id] as GeoStatsResult).totalRows} source rows against the workspace
+                              dimension tables — unmatched values are shown so nothing is
+                              silently dropped.
+                            </p>
+                          )}
+                        </div>
                         {prev && <IssueList issues={prev.issues} />}
                         {prev && prev.rows.length > 0 && (
                           <div className="preview">

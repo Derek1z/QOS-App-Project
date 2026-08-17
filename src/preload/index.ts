@@ -24,7 +24,8 @@ const api: Api = {
     },
     archive: () => ipcRenderer.invoke('import:archive'),
     purgeArchive: () => ipcRenderer.invoke('import:purgeArchive'),
-    exportCsv: (sourcePath: string) => ipcRenderer.invoke('import:exportCsv', sourcePath)
+    exportCsv: (sourcePath: string) => ipcRenderer.invoke('import:exportCsv', sourcePath),
+    geoStats: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:geoStats', id, mapping)
   },
   workspace: {
     listRecent: () => ipcRenderer.invoke('workspace:listRecent'),
@@ -57,12 +58,12 @@ const api: Api = {
     scheduleHistory: (limit?: number) => ipcRenderer.invoke('maintenance:scheduleHistory', limit)
   },
   analytics: {
-    summary: () => ipcRenderer.invoke('analytics:summary'),
+    summary: (opts) => ipcRenderer.invoke('analytics:summary', opts),
     ncLifecycle: () => ipcRenderer.invoke('analytics:ncLifecycle'),
     ncMovement: (limit?: number) => ipcRenderer.invoke('analytics:ncMovement', limit),
     priorityQueue: (mode: PriorityMode, limit?: number) =>
       ipcRenderer.invoke('analytics:priorityQueue', mode, limit),
-    health: () => ipcRenderer.invoke('analytics:health'),
+    health: (grain) => ipcRenderer.invoke('analytics:health', grain),
     kpiOverview: (limit?: number) => ipcRenderer.invoke('analytics:kpiOverview', limit),
     healthMatrix: (
       scope: HealthScope,

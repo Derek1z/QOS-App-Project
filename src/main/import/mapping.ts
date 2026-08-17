@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
-import type { CanonicalField, MappingConfig } from '../../../shared/api'
+import type { CanonicalField, MappingConfig, Technology } from '../../../shared/api'
 import { FIELD_ORDER } from '../../../shared/api'
 
 export interface FieldDef {
@@ -15,7 +15,7 @@ export const FIELDS: FieldDef[] = [
     field: 'date',
     label: 'Date / Time',
     required: true,
-    aliases: ['datetime', 'date', 'day', 'time', 'timestamp', 'date/time', 'date_time', 'report date', 'day (date)']
+    aliases: ['datetime', 'date', 'day', 'time', 'timestamp', 'date/time', 'date_time', 'report date', 'reporting date', 'day (date)', 'measurement date']
   },
   {
     field: 'cell',
@@ -27,19 +27,24 @@ export const FIELDS: FieldDef[] = [
     field: 'district',
     label: 'District',
     required: false,
-    aliases: ['district', 'district name', 'districtname', 'dist']
+    aliases: ['district', 'district name', 'districtname', 'dist', 'admin district', 'municipality', 'lga']
   },
   {
     field: 'region',
     label: 'Region',
     required: false,
-    aliases: ['region', 'region name', 'regionname']
+    aliases: ['region', 'region name', 'regionname', 'admin region', 'province', 'province name']
   },
   {
     field: 'site',
     label: 'Site / Base Station',
     required: false,
-    aliases: ['basestation', 'base station', 'site', 'bts', 'site id', 'siteid', 'site name', 'site_id']
+    aliases: [
+      'basestation', 'base station', 'base station name', 'bs name', 'site', 'site id', 'siteid',
+      'site name', 'site_name', 'bts', 'bts name', 'btsname', 'bts id', 'btsid',
+      'nodeb', 'node b', 'nodeb name', 'nodeb id', 'enodeb', 'enodeb name', 'enodeb id',
+      'enb', 'enb name', 'ne name', 'nename', 'cell site'
+    ]
   },
   {
     field: 'prb',
@@ -105,12 +110,42 @@ export const FIELDS: FieldDef[] = [
   }
 ]
 
+
+/** Infer the source technology from its headers (BTS/NodeB/eNodeB/VoLTE
+ *  vocabulary, KPI names). Returns null when no signal is found — the file is
+ *  then treated under the workspace's own technology. */
+export function detectTechnology(headers: string[]): Technology | null {
+  const norm = headers.map(normalizeHeader).join(' ')
+  if (/\b(tch|sdcch|gprs|bts|cell id cgi)\b/.test(norm)) return '2G'
+  if (/\b(hsdpa|hsupa|rrc|nodeb|wcdma|umts|ce utilization)\b/.test(norm)) return '3G'
+  if (/\b(enodeb|enb|lte|e-utran|prb utilization|volte|mos|vqi|rtp jitter|ims)\b/.test(norm)) return '4G'
+  return null
+}
+
 export function normalizeHeader(h: string): string {
   return h
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ')
+}
+
+/** Normalize a raw geo value the way matching does (trim, lowercase, collapse whitespace). */
+export function normalizeGeoValue(v: string): string {
+  return v.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** Apply user-accepted value aliases for a geo field: returns the remapped
+ *  value, or the original when no alias matches. Alias keys are normalized
+ *  values (see normalizeGeoValue). */
+export function aliasGeoValue(
+  aliases: Partial<Record<CanonicalField, Record<string, string>>> | undefined,
+  field: CanonicalField,
+  raw: string
+): string {
+  const m = aliases?.[field]
+  if (!m) return raw
+  return m[normalizeGeoValue(raw)] ?? raw
 }
 
 const aliasIndex = new Map<string, CanonicalField>()

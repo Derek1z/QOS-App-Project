@@ -1,6 +1,6 @@
 import type {
   Api, WorkspaceInfo, FileAnalysis, MappingConfig, PreviewResult, ImportResult, ImportAuditRow,
-  CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult,
+  CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult, GeoStatsResult,
   PriorityRow, HealthResult, NcMovementRow, HealthScope, HealthMatrixResult,
   CellIntelligenceResult, CellIntelligenceRow, CellDetail, Lifecycle, Trend, Severity,
   Rules, RulesPatch, PriorityMode, PerformanceResult, MetricDistribution,
@@ -2813,7 +2813,7 @@ export const previewApi: Api & { demo: true } = {
       schedHistoryState.slice(0, limit ?? 10)
   },
   analytics: {
-    summary: async () => {
+    summary: async (opts?: { period?: string; grain?: string }) => {
       const { min, max } = factDateRange()
       return {
         rowCount: BASELINE.rowCount + demoFacts.length,
@@ -2830,7 +2830,10 @@ export const previewApi: Api & { demo: true } = {
         totalVolumeMb: 4_125_000,
         totalUsers: 1_258_000,
         avgThroughputKbps: 21_200,
-        avgAvailability: 99.6
+        avgAvailability: 99.6,
+        grain: (opts?.grain as 'daily' | 'weekly' | 'monthly') ?? 'weekly',
+        periodStart: null,
+        periodEnd: null
       }
     },
     ncLifecycle: async (): Promise<NcLifecycleResult> => demoNcLifecycle(),
@@ -2867,7 +2870,7 @@ export const previewApi: Api & { demo: true } = {
     forecast: async (opts?: ForecastOpts): Promise<ForecastResult> => demoForecast(opts),
     priorityQueue: async (mode: PriorityMode, limit = 10): Promise<PriorityRow[]> =>
       demoPriority(mode).slice(0, limit),
-    health: async (): Promise<HealthResult> => demoHealth(),
+    health: async (_grain?: string): Promise<HealthResult> => demoHealth(),
     kpiOverview: async (limit = 8): Promise<KpiOverviewResult> => {
       const tech = demoTech
       const cells = demoNcLifecycle().cells
@@ -3406,6 +3409,14 @@ export const previewApi: Api & { demo: true } = {
       return demoArchiveStatus(demoArchiveRows)
     },
     exportCsv: async (_sourcePath: string): Promise<{ path: string } | null> => null,
+    geoStats: async (_id: string, mapping: MappingConfig): Promise<GeoStatsResult | null> => ({
+      totalRows: 30,
+      fields: (['region', 'district', 'site', 'cell'] as CanonicalField[]).map((field) => ({
+        field,
+        column: Object.entries(mapping).find(([, f]) => f === field)?.[0] ?? null,
+        distinct: 0, matched: 0, unmatched: 0, topUnmatched: [], suggestions: {}
+      }))
+    }), 
     onProgress: (cb: (p: ImportProgress) => void): (() => void) => {
       importProgressCbs.add(cb)
       return () => importProgressCbs.delete(cb)

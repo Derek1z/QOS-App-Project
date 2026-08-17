@@ -10,14 +10,16 @@ import { readCsvSample } from './csv'
 import { isExcelPath, readExcelSample } from './excel'
 import {
   autoMap, makeFingerprint, loadProfileConn, mappingConfidence,
-  orderedMappedRows, normalizeHeader
+  orderedMappedRows, normalizeHeader, detectTechnology, headersForField,
+  aliasGeoValue
 } from './mapping'
 import { validateSample } from './validator'
 import { discoverKpiDefs } from '../services/kpiService'
+import { invalidateSummaryCache } from '../services/queryService'
 import createImportWorker from './importWorker?nodeWorker'
 import type { ImportCoreJob } from './importCore'
 import type {
-  CanonicalField, FileAnalysis, ImportProgress, ImportResult, MappingConfig, PreviewResult,
+  CanonicalField, FileAnalysis, GeoFieldStats, GeoStatsResult, ImportProgress, ImportResult, MappingConfig, PreviewResult,
   RawArchiveResult, RawArchiveRow, RawArchiveStatus, RawArchiveStatusKind
 } from '../../../shared/api'
 
@@ -67,6 +69,7 @@ export async function analyzeFiles(
       }
       onProgress?.({ phase: 'Scanning columns', detail: fname })
       const suggested = autoMap(header)
+      const detectedTechnology = detectTechnology(header)
       const fingerprint = makeFingerprint(header)
       onProgress?.({ phase: 'Checking saved profile', detail: fname })
       const profile = await loadProfileConn(ws.connection, fingerprint)
@@ -86,6 +89,7 @@ export async function analyzeFiles(
         suggestedMapping: mapping,
         suggestedKpiMapping: profile ? profile.kpiColumns : kpiDiscovery.mapping,
         confidence, knownProfile: !!profile,
+        detectedTechnology,
         errors: issues.filter((i) => i.severity === 'error').map((i) => i.message)
       })
     } catch (e) {
@@ -93,6 +97,7 @@ export async function analyzeFiles(
         id: `${path}::err`, path, filename: basename(path), header: [], sample: [],
         fingerprint: '', suggestedMapping: {}, suggestedKpiMapping: {},
         confidence: 0, knownProfile: false,
+        detectedTechnology: null,
         errors: [errMessage(e)]
       })
     }
@@ -239,9 +244,122 @@ export async function runImport(
   }
   if (workerError) throw workerError instanceof Error ? workerError : new Error(String(workerError))
 
+  // freshly imported rows change every aggregate — drop the TTL cache
+  invalidateSummaryCache()
   // cellsAfter is only observable on the fresh main handle
   const cellsAfter = await count(getCurrent()!.connection, `SELECT count(*) n FROM dim_cell`)
   return { ...result!, newCells: Math.max(0, cellsAfter - cellsBefore) }
+}
+
+
+/** Geo mapping review: for each mapped geographic field (region/district/site/
+ *  cell) count distinct values and how many match the workspace's dimension
+ *  tables, and list the most common unmatched values so nothing is silently
+ *  dropped (spec §13). Reads a capped window of the source file. */
+export async function geoStats(
+  id: string,
+  mapping: MappingConfig
+): Promise<GeoStatsResult | null> {
+  const ws = wsRequired()
+  const path = id.split('|')[0]
+  if (!existsSync(path)) return null
+  const sample = isExcelPath(path)
+    ? await readExcelSample(path, 20000)
+    : readCsvSample(path, 20000)
+  const { header, rows } = sample
+
+  const geoFields: CanonicalField[] = ['region', 'district', 'site', 'cell']
+  const norm = (v: string): string => v.trim().toLowerCase().replace(/\s+/g, ' ')
+
+  const dims = await ws.connection.runAndReadAll(
+    `SELECT 'region' AS f, name FROM dim_region
+       UNION ALL SELECT 'district', name FROM dim_district
+       UNION ALL SELECT 'site', name FROM dim_site
+       UNION ALL SELECT 'cell', name FROM dim_cell`
+  )
+  const dimSets = new Map<string, Set<string>>()
+  const dimNames = new Map<string, string[]>()
+  const dimNamesNorm = new Map<string, string[]>()
+  for (const x of dims.getRowObjects()) {
+    const f = String(x.f)
+    if (!dimSets.has(f)) dimSets.set(f, new Set())
+    dimSets.get(f)!.add(norm(String(x.name)))
+    if (!dimNames.has(f)) { dimNames.set(f, []); dimNamesNorm.set(f, []) }
+    dimNames.get(f)!.push(String(x.name))
+    dimNamesNorm.get(f)!.push(norm(String(x.name)))
+  }
+
+  const fields: GeoFieldStats[] = geoFields.map((field) => {
+    const column = headersForField(header, mapping.columns, field)
+    return { field, column, distinct: 0, matched: 0, unmatched: 0, topUnmatched: [], suggestions: {} }
+  })
+  const seen = new Map<string, Set<string>>()
+  const unmatchedSets = new Map<string, Set<string>>()
+  for (const f of geoFields) seen.set(f, new Set())
+  for (const f of geoFields) unmatchedSets.set(f, new Set())
+
+  // user-accepted value remaps are applied before matching so the counts
+  // reflect what the import will actually store (spec §13)
+  const aliases = mapping.valueAliases ?? {}
+  for (const row of rows) {
+    for (const st of fields) {
+      if (!st.column) continue
+      const idx = header.indexOf(st.column)
+      if (idx < 0) continue
+      const raw = row[idx]
+      if (raw == null || raw.trim() === '') continue
+      const v = norm(aliasGeoValue(aliases, st.field, raw))
+      seen.get(st.field)!.add(v)
+      if (dimSets.get(st.field)?.has(v)) st.matched++
+      else unmatchedSets.get(st.field)!.add(v)
+    }
+  }
+
+  for (const st of fields) {
+    st.distinct = seen.get(st.field)!.size
+    st.unmatched = unmatchedSets.get(st.field)!.size
+    st.topUnmatched = [...unmatchedSets.get(st.field)!]
+      .sort((x, y) => x.localeCompare(y))
+      .slice(0, 8)
+    st.suggestions = {}
+    const raw = dimNames.get(st.field) ?? []
+    const rn = dimNamesNorm.get(st.field) ?? []
+    for (const v of st.topUnmatched) {
+      const sugg = bestSuggestion(v, raw, rn)
+      if (sugg) st.suggestions[v] = sugg
+    }
+  }
+  return { totalRows: rows.length, fields }
+}
+
+/** Normalized Levenshtein distance (0-1 similarity) for name matching. */
+function editSimilarity(a: string, b: string): number {
+  const al = a.length
+  const bl = b.length
+  if (al === 0 || bl === 0) return 0
+  let prev = new Array(bl + 1).fill(0).map((_, j) => j)
+  let cur = new Array(bl + 1)
+  for (let i = 1; i <= al; i++) {
+    cur[0] = i
+    for (let j = 1; j <= bl; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+    }
+    const t = prev
+    prev = cur
+    cur = t
+  }
+  return 1 - prev[bl] / Math.max(al, bl)
+}
+
+/** Best fuzzy match of a normalized value against a list of raw dim names. */
+function bestSuggestion(value: string, rawNames: string[], normNames: string[]): string | null {
+  let best: { name: string; sim: number } | null = null
+  for (let i = 0; i < normNames.length; i++) {
+    const sim = editSimilarity(value, normNames[i])
+    if (sim >= 0.55 && (!best || sim > best.sim)) best = { name: rawNames[i], sim }
+  }
+  return best?.name ?? null
 }
 
 // --- history / coverage / quality queries ---

@@ -19,8 +19,9 @@ export type ModuleId =
   | 'workspace'
   | 'kpi-definitions'
 
-export type PeriodId = '7d' | '4w' | '12w' | 'mtd' | '3m'
-export type Grain = 'daily' | 'weekly' | 'monthly'
+import type { PeriodId, Grain } from '../../shared/api'
+
+export type { PeriodId, Grain } from '../../shared/api'
 
 interface AppStore {
   module: ModuleId

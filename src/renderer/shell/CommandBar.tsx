@@ -55,7 +55,7 @@ export default function CommandBar(): React.JSX.Element {
     try {
       const w = await window.api.workspace.setTechnology(tech)
       useAppStore.getState().setWorkspace(w)
-      const s = await window.api.analytics.summary()
+      const s = await window.api.analytics.summary({ period, grain })
       useAppStore.getState().setSummary(s)
       emit('WORKSPACE_CHANGED')
       emit('RULESET_CHANGED')

@@ -157,7 +157,7 @@ async function describe(connection: DuckDBConnection): Promise<Omit<WorkspaceInf
       cells: Number(row.cells ?? 0)
     },
     rulesetVersion: row.ruleset_version == null ? null : Number(row.ruleset_version),
-    technology: techRaw === '2G' || techRaw === '3G' ? techRaw : '4G'
+    technology: techRaw === '2G' || techRaw === '3G' ? (techRaw as Technology) : '4G'
   }
 }
 

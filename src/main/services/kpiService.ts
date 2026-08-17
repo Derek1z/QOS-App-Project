@@ -43,8 +43,18 @@ const SEEDS: Record<Technology, SeedDef[]> = {
     { key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'rrc connected ues', 'rrc connected ues (avg)', 'active users'] },
     { key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', '4g data volume', 'volume'] },
     { key: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['availability', 'cell availability', 'availability (%)', '4g cell availability'] },
-    { key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] }
+    { key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] },
+    { key: 'volte_drop_call_rate', label: 'VoLTE Drop Call Rate', unit: '%', worseIsHigher: true, target: 1, agg: 'avg', aliases: ['volte drop call rate', 'volte call drop rate', 'ims drop rate'] },
+    { key: 'volte_setup_success', label: 'VoLTE Setup Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['volte setup success', 'ims setup success', 'volte cssr'] },
+    { key: 'mos', label: 'MOS (Voice Quality)', unit: 'MOS', worseIsHigher: false, target: 3.5, agg: 'avg', aliases: ['mos', 'mean opinion score', 'voice quality (mos)', 'mos score'] },
+    { key: 'vqi', label: 'VQI (Voice Quality Index)', unit: '', worseIsHigher: false, target: 3.5, agg: 'avg', aliases: ['vqi', 'voice quality index', 'voice quality'] },
+    { key: 'rtp_jitter', label: 'RTP Jitter', unit: 'ms', worseIsHigher: true, target: 30, agg: 'avg', aliases: ['rtp jitter', 'jitter', 'jitter (ms)'] },
+    { key: 'rtp_packet_loss', label: 'RTP Packet Loss', unit: '%', worseIsHigher: true, target: 1, agg: 'avg', aliases: ['rtp packet loss', 'packet loss', 'packet loss (%)'] },
   ]
+}
+
+export function normalizeTechnology(v: string | null | undefined): Technology {
+  return v === '2G' || v === '3G' ? (v as Technology) : '4G'
 }
 
 export function builtInSeeds(technology: Technology): SeedDef[] {
@@ -69,7 +79,7 @@ function rowToDef(x: Record<string, unknown>): KpiDefinition {
   }
   return {
     kpiId: Number(x.kpi_id),
-    technology: (String(x.technology) === '2G' || String(x.technology) === '3G') ? (String(x.technology) as Technology) : '4G',
+    technology: normalizeTechnology(String(x.technology)),
     key: String(x.kpi_key),
     label: String(x.label),
     unit: String(x.unit ?? ''),
@@ -91,7 +101,7 @@ export async function workspaceTechnology(conn: DuckDBConnection): Promise<Techn
     `SELECT value FROM workspace_meta WHERE key = 'technology'`
   )
   const v = r.getRowObjects()[0]?.value
-  return v === '2G' || v === '3G' ? (String(v) as Technology) : '4G'
+  return normalizeTechnology(v == null ? null : String(v))
 }
 
 /** Insert the built-in seed set for one technology (idempotent per key). */

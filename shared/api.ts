@@ -9,6 +9,13 @@ export interface RecentWorkspace {
 
 export type Technology = '2G' | '3G' | '4G'
 
+/** Aggregation bucket for analytics. The underlying fact store is daily, so
+ *  hourly is not representable; daily/weekly/monthly all derive from the same
+ *  facts at different bucketing (spec §13 grain). */
+export type Grain = 'daily' | 'weekly' | 'monthly'
+
+export type PeriodId = '7d' | '4w' | '12w' | 'mtd' | '3m'
+
 export interface WorkspaceInfo {
   path: string
   name: string
@@ -90,6 +97,11 @@ export interface Summary {
   totalUsers: number | null
   avgThroughputKbps: number | null
   avgAvailability: number | null
+  /** the aggregation bucket the numbers were computed at */
+  grain: Grain
+  /** selected period window (inclusive) the KPI numbers cover */
+  periodStart: string | null
+  periodEnd: string | null
 }
 
 export interface CreatedWorkspaceEntry {
@@ -158,6 +170,8 @@ export interface FileAnalysis {
   suggestedKpiMapping: Record<string, string>
   confidence: number
   knownProfile: boolean
+  /** technology inferred from the source headers (BTS/NodeB/eNodeB signals) */
+  detectedTechnology?: Technology | null
   errors: string[]
 }
 
@@ -166,6 +180,11 @@ export interface MappingConfig {
   /** extra columns mapped to per-technology KPI keys (spec §54a):
    *  source header -> KpiDefinition.key */
   kpiColumns?: Record<string, string>
+  /** value-level remaps for geo fields (spec §13): field -> normalized source
+   *  value -> canonical dimension name. An unmatched value like "Greter Accra"
+   *  is re-pointed to the existing "Greater Accra" dimension during import
+   *  instead of creating a new (misspelled) dimension row. */
+  valueAliases?: Partial<Record<CanonicalField, Record<string, string>>>
 }
 
 /** One week of a KPI's value history on the KPI Watch card. */
@@ -223,6 +242,23 @@ export interface PreviewResult {
   rows: Array<Record<string, string | null>>
   issues: ValidationIssue[]
   canImport: boolean
+}
+
+export interface GeoFieldStats {
+  field: CanonicalField
+  column: string | null
+  distinct: number
+  matched: number
+  unmatched: number
+  topUnmatched: string[]
+  /** unmatched value -> nearest existing dimension name (fuzzy match) */
+  suggestions: Record<string, string>
+}
+
+export interface GeoStatsResult {
+  /** rows examined (capped read of the source file) */
+  totalRows: number
+  fields: GeoFieldStats[]
 }
 
 export interface ImportResult {
@@ -1105,6 +1141,8 @@ export interface Api {
     purgeArchive(): Promise<RawArchiveStatus>
     /** convert an Excel workbook (.xlsx/.xls) to CSV at a user-chosen path */
     exportCsv(sourcePath: string): Promise<{ path: string } | null>
+    /** geo-field match stats against the workspace dimensions (spec §13 mapping) */
+    geoStats(id: string, mapping: MappingConfig): Promise<GeoStatsResult | null>
   }
   workspace: {
     listRecent(): Promise<RecentWorkspace[]>
@@ -1139,11 +1177,15 @@ export interface Api {
     scheduleHistory(limit?: number): Promise<ScheduledMaintenanceRun[]>
   }
   analytics: {
-    summary(): Promise<Summary | null>
+    summary(opts?: {
+      period?: PeriodId
+      grain?: Grain
+      technology?: Technology
+    }): Promise<Summary | null>
     ncLifecycle(): Promise<NcLifecycleResult>
     ncMovement(limit?: number): Promise<NcMovementRow[]>
     priorityQueue(mode: PriorityMode, limit?: number): Promise<PriorityRow[]>
-    health(): Promise<HealthResult>
+    health(grain?: Grain): Promise<HealthResult>
     healthMatrix(
       scope: HealthScope,
       opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }

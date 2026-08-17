@@ -58,14 +58,28 @@ export function readCsvSample(path: string, maxRows = 30): CsvSample {
       const chunk = Buffer.alloc(CHUNK)
       const n = readSync(fd, chunk, 0, CHUNK, offset)
       offset += n
-      if (n === 0) eof = true
-      buf = Buffer.concat([buf, chunk.subarray(0, n)])
+      if (n === 0) {
+        eof = true
+      } else {
+        // a short read means the file ends inside this chunk, so any
+        // unterminated record parsed below is genuinely the last one
+        if (n < CHUNK) eof = true
+        buf = Buffer.concat([buf, chunk.subarray(0, n)])
+      }
       const text = buf.toString('utf8')
       let start = 0
       // parse as many complete records as available
       for (;;) {
+        const recStart = start
         const rec = parseRecord(text, start)
         if (!rec.complete) {
+          // a record that runs to the end of the buffer is only dropped if
+          // the file ended there without a trailing newline — re-parse it
+          // with a synthetic newline so the final row is never lost
+          if (eof && recStart < text.length && text.slice(recStart).trim() !== '') {
+            const rec2 = parseRecord(text + '\n', recStart)
+            if (rec2.complete) records.push(rec2.fields)
+          }
           start = rec.next
           break
         }
@@ -73,11 +87,6 @@ export function readCsvSample(path: string, maxRows = 30): CsvSample {
         parsed++
         start = rec.next
         if (records.length >= want) break
-      }
-      if (eof && start < text.length && text.slice(start).trim() !== '') {
-        // trailing record without newline
-        const rec = parseRecord(text + '\n', start)
-        if (rec.complete) records.push(rec.fields)
       }
       // keep only the unparsed tail
       buf = Buffer.from(text.slice(start), 'utf8')

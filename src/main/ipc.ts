@@ -17,12 +17,12 @@ import {
 } from './services/reportingService'
 import type {
   ActionStatus, CompareMetric, CompareScope, ComparisonType, ExplorerLevel, ForecastOpts,
-  HealthScope, InvestigationScope, Lifecycle, PriorityMode, PriorityCenterOpts, ReportOpts,
+  Grain, HealthScope, InvestigationScope, Lifecycle, PeriodId, PriorityMode, PriorityCenterOpts, ReportOpts,
   ReportChartConfig, ReportSectionId, ReportType, RulesPatch, Severity, Trend
 } from '../../shared/api'
 import { dirs } from './paths'
 import {
-  analyzeFiles, previewImport, runImport, importHistory, importCoverage, importQuality,
+  analyzeFiles, previewImport, runImport, geoStats, importHistory, importCoverage, importQuality,
   rawArchive, purgeRawArchive, isImportBusy
 } from './import/importer'
 import { isExcelPath, excelToCsvFile } from './import/excel'
@@ -111,13 +111,15 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     discoverCurrent(headers, technology))
   ipcMain.handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
 
-  ipcMain.handle('analytics:summary', () => getSummary())
+  ipcMain.handle('analytics:summary', (_e, opts?: { period?: string; grain?: string }) =>
+    getSummary(opts as { period?: PeriodId; grain?: Grain } | undefined))
   ipcMain.handle('analytics:ncLifecycle', () => getNcLifecycle())
   ipcMain.handle('analytics:ncMovement', (_e, limit?: number) => getNcMovement(limit))
   ipcMain.handle('analytics:priorityQueue', (_e, mode: PriorityMode, limit?: number) =>
     getPriorityQueue(mode, limit)
   )
-  ipcMain.handle('analytics:health', () => getHealth())
+  ipcMain.handle('analytics:health', (_e, grain?: string) =>
+    getHealth((grain as Grain) ?? 'weekly'))
   ipcMain.handle('analytics:kpiOverview', (_e, limit?: number) => getKpiOverview(limit))
   ipcMain.handle(
     'analytics:healthMatrix',
@@ -216,6 +218,8 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('import:archive', () => rawArchive())
   ipcMain.handle('import:purgeArchive', () => purgeRawArchive())
 
+  ipcMain.handle('import:geoStats', (_e, id: string, mapping: MappingConfig) =>
+    geoStats(id, mapping))
   ipcMain.handle('import:exportCsv', async (_e, sourcePath: string) => {
     if (!isExcelPath(sourcePath)) throw new Error('Not an Excel workbook: ' + sourcePath)
     if (!existsSync(sourcePath)) throw new Error('File no longer exists: ' + sourcePath)

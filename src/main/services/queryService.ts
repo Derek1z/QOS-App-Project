@@ -2,6 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import { getCurrent } from '../workspace/manager'
 import type {
   Summary, NcLifecycleResult, NcLifecycleRow, NcMovementRow, PriorityMode, PriorityRow,
+  Grain, PeriodId,
   HealthResult, CellHealthRow, HealthScope, HealthMatrixResult,
   CellIntelligenceResult, CellIntelligenceRow, CellDetail, CellWeekPoint, Lifecycle,
   Trend, Severity,  Rules, RulesPatch, PerformanceResult, MetricDistribution,
@@ -638,9 +639,9 @@ export async function getCellDetail(cellId: number): Promise<CellDetail | null> 
 }
 
 /** Network health series + current cell health snapshot (worst first). */
-export async function getHealth(): Promise<HealthResult> {
+export async function getHealth(grain: Grain = 'weekly'): Promise<HealthResult> {
   const conn = ws().connection
-  const network = await computeNetworkHealth(conn)
+  const network = await computeNetworkHealth(conn, grain)
   const r = await conn.runAndReadAll(`
     SELECT CAST(h.cell_id AS DOUBLE) AS cell_id, c.name AS cell_name,
       s.name AS site, d.name AS district, rg.name AS region,
@@ -1731,29 +1732,56 @@ function round1(v: number): number {
   return Math.round(v * 10) / 10
 }
 
-export async function getSummary(): Promise<Summary | null> {
+function summaryWindow(period: PeriodId): { startSql: string; label: string } {
+  switch (period) {
+    case '7d': return { startSql: `(SELECT max(date) - INTERVAL 6 DAY FROM dim_date)`, label: '7d' }
+    case '4w': return { startSql: `(SELECT max(date) - INTERVAL 27 DAY FROM dim_date)`, label: '4w' }
+    case '12w': return { startSql: `(SELECT max(date) - INTERVAL 83 DAY FROM dim_date)`, label: '12w' }
+    case 'mtd': return { startSql: `(SELECT date_trunc('month', max(date)) FROM dim_date)`, label: 'mtd' }
+    case '3m': return { startSql: `(SELECT max(date) - INTERVAL 89 DAY FROM dim_date)`, label: '3m' }
+  }
+}
+
+// tiny TTL cache: summaries are read on module mount and grain/period switch;
+// aggregates only change on import, so a few seconds of staleness is safe.
+const summaryCache = new Map<string, { at: number; value: Summary | null }>()
+const SUMMARY_TTL_MS = 5000
+
+export function invalidateSummaryCache(): void {
+  summaryCache.clear()
+}
+
+export async function getSummary(
+  opts: { period?: PeriodId; grain?: Grain; technology?: Technology } = {}
+): Promise<Summary | null> {
+  const period = opts.period ?? '4w'
+  const grain = opts.grain ?? 'weekly'
+  const key = period + '|' + grain + '|' + (opts.technology ?? '')
+  const hit = summaryCache.get(key)
+  if (hit && Date.now() - hit.at < SUMMARY_TTL_MS) return hit.value
   const ws = getCurrent()
   if (!ws) return null
+    const win = summaryWindow(period)
   const r = await ws.connection.runAndReadAll(`
     SELECT
-      (SELECT count(*) FROM fact_cell_daily) AS row_count,
-      (SELECT CAST(min(d.date) AS VARCHAR) FROM fact_cell_daily f JOIN dim_date d USING (date_id)) AS min_date,
-      (SELECT CAST(max(d.date) AS VARCHAR) FROM fact_cell_daily f JOIN dim_date d USING (date_id)) AS max_date,
       (SELECT count(*) FROM dim_cell) AS cells,
       (SELECT count(*) FROM dim_site) AS sites,
       (SELECT count(*) FROM dim_district) AS districts,
       (SELECT count(*) FROM dim_region) AS regions,
       (SELECT max(version) FROM ruleset) AS ruleset_version,
-      (SELECT count(*) FROM agg_cell_weekly WHERE is_nc) AS weekly_nc_cells,
-      (SELECT count(*) FROM agg_cell_weekly) AS weekly_total_rows,
-      (SELECT avg(prb_utilization) FROM fact_cell_daily) AS avg_prb,
-      (SELECT sum(data_volume_mb) FROM fact_cell_daily) AS total_volume_mb,
-      (SELECT sum(connected_users) FROM fact_cell_daily) AS total_users,
-      (SELECT avg(dl_throughput_kbps) FROM fact_cell_daily) AS avg_throughput_kbps,
-      (SELECT avg(availability_pct) FROM fact_cell_daily) AS avg_availability
-  `)
+      (SELECT count(*) FROM agg_cell_weekly WHERE is_nc) AS nc_cells,
+      (SELECT count(*) FROM fact_cell_daily) AS row_count,
+      (SELECT CAST(min(d.date) AS VARCHAR) FROM fact_cell_daily f JOIN dim_date d USING (date_id)) AS min_date,
+      (SELECT CAST(max(d.date) AS VARCHAR) FROM fact_cell_daily f JOIN dim_date d USING (date_id)) AS max_date,
+      CASE '${grain}' WHEN 'daily' THEN (SELECT count(*) FROM fact_cell_daily f JOIN dim_date d USING (date_id) WHERE d.date >= ${win.startSql}) WHEN 'weekly' THEN COALESCE((SELECT sum(observed_days) FROM agg_cell_weekly WHERE week_start >= ${win.startSql}), 0) ELSE COALESCE((SELECT sum(observed_days) FROM agg_cell_monthly WHERE month_start >= ${win.startSql}), 0) END AS observed_rows,
+      COALESCE((SELECT avg(prb_avg) FROM agg_network_${grain} WHERE period_start >= ${win.startSql}), (SELECT avg(prb_utilization) FROM fact_cell_daily)) AS avg_prb,
+      COALESCE((SELECT sum(data_volume_mb_sum) FROM agg_network_${grain} WHERE period_start >= ${win.startSql}), (SELECT sum(data_volume_mb) FROM fact_cell_daily)) AS total_volume_mb,
+      COALESCE((SELECT sum(connected_users_sum) FROM agg_network_${grain} WHERE period_start >= ${win.startSql}), (SELECT sum(connected_users) FROM fact_cell_daily)) AS total_users,
+      COALESCE((SELECT avg(dl_throughput_kbps_avg) FROM agg_network_${grain} WHERE period_start >= ${win.startSql}), (SELECT avg(dl_throughput_kbps) FROM fact_cell_daily)) AS avg_throughput_kbps,
+      COALESCE((SELECT avg(availability_pct_avg) FROM agg_network_${grain} WHERE period_start >= ${win.startSql}), (SELECT avg(availability_pct) FROM fact_cell_daily)) AS avg_availability
+  `, [])
   const row = r.getRowObjects()[0]
-  return {
+  const value: Summary | null = {
     rowCount: Number(row.row_count ?? 0),
     minDate: row.min_date ? String(row.min_date) : null,
     maxDate: row.max_date ? String(row.max_date) : null,
@@ -1762,12 +1790,17 @@ export async function getSummary(): Promise<Summary | null> {
     districts: Number(row.districts ?? 0),
     regions: Number(row.regions ?? 0),
     rulesetVersion: row.ruleset_version == null ? null : Number(row.ruleset_version),
-    weeklyNcCells: Number(row.weekly_nc_cells ?? 0),
-    weeklyTotalRows: Number(row.weekly_total_rows ?? 0),
+    weeklyNcCells: Number(row.nc_cells ?? 0),
+    weeklyTotalRows: Number(row.observed_rows ?? 0),
     avgPrb: row.avg_prb == null ? null : Number(row.avg_prb),
     totalVolumeMb: row.total_volume_mb == null ? null : Number(row.total_volume_mb),
     totalUsers: row.total_users == null ? null : Number(row.total_users),
     avgThroughputKbps: row.avg_throughput_kbps == null ? null : Number(row.avg_throughput_kbps),
-    avgAvailability: row.avg_availability == null ? null : Number(row.avg_availability)
+    avgAvailability: row.avg_availability == null ? null : Number(row.avg_availability),
+    grain,
+    periodStart: null,
+    periodEnd: null
   }
+  summaryCache.set(key, { at: Date.now(), value })
+  return value
 }

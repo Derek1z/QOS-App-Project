@@ -89,6 +89,26 @@ async function stageCsv(
     FROM read_csv('${esc(path)}', header = true, columns = { ${dict} },
       ignore_errors = true, store_rejects = true, rejects_table = 'stg_rejects')
   `)
+
+  // value-level geo remaps (spec §13): an unmatched value the user pointed at
+  // an existing dimension is rewritten before cleaning/upserts, so no new
+  // (misspelled) dimension row is created and references resolve to the
+  // intended one. Keys are normalized values; the WHEN clause normalizes the
+  // staged column the same way (trim + lowercase + collapse whitespace).
+  const aliasCols: Record<string, string> = {
+    region: 'region_raw', district: 'district_raw', site: 'site_raw', cell: 'cell_raw'
+  }
+  const aliases = mapping.valueAliases ?? {}
+  for (const [field, col] of Object.entries(aliasCols)) {
+    const map = aliases[field as CanonicalField]
+    if (!map || Object.keys(map).length === 0) continue
+    const cases = Object.entries(map)
+      .map(([k, v]) => `WHEN lower(trim(regexp_replace(${col}, '\s+', ' '))) = '${esc(k)}' THEN '${esc(v)}'`)
+      .join(' ')
+    await conn.run(
+      `UPDATE stg_import SET ${col} = CASE ${cases} ELSE ${col} END WHERE ${col} IS NOT NULL`
+    )
+  }
 }
 
 const CANDIDATE_DATE_PATTERNS = [

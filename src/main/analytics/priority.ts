@@ -133,9 +133,10 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         JSON.stringify(components)
       )
     }
-    for (let i = 0; i < inserts.length; i += 500) {
-      const chunk = inserts.slice(i, i + 500)
-      const chunkParams = params.slice(i * 4, (i + 500) * 4)
+    const BATCH_SIZE = 2500
+    for (let i = 0; i < inserts.length; i += BATCH_SIZE) {
+      const chunk = inserts.slice(i, i + BATCH_SIZE)
+      const chunkParams = params.slice(i * 4, (i + BATCH_SIZE) * 4)
       await conn.run(
         `INSERT INTO cell_priority_history
            (cell_id, as_of, score, band, mode, weights, ruleset_version)

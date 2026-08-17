@@ -80,6 +80,7 @@ export default function Chart({
       disposed = true
       ro.disconnect()
       try {
+        chart.clear()
         chart.dispose()
       } catch {
         /* already disposed */

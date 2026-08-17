@@ -12,7 +12,10 @@ import { runSmokeTest } from './smoke'
 let mainWindow: BrowserWindow | null = null
 
 // M0 uses an app-level single instance; per-workspace multi-instance arrives later.
-const gotLock = app.requestSingleInstanceLock()
+// Skip single-instance lock during smoke runs — the verify-portable script launches
+// the exe headlessly and there may be a stale lock from a previous build session.
+const isSmokeRun = process.argv.includes('--smoke') || process.env.SMOKE_TEST === '1' || process.env.QOS_SMOKE === '1'
+const gotLock = isSmokeRun ? true : app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
@@ -26,12 +29,12 @@ if (!gotLock) {
   app.on('window-all-closed', () => {
     // the smoke run creates (and destroys) a hidden PDF window; the run's
     // own app.exit() handles termination, so a quit here would race it
-    if (!process.argv.includes('--smoke')) app.quit()
+    if (!isSmokeRun) app.quit()
   })
 }
 
 function bootstrap(): void {
-  if (process.argv.includes('--smoke')) {
+  if (isSmokeRun) {
     void runSmokeTest(mkdtempSync(join(tmpdir(), 'qos-smoke-')))
       .then(() => app.exit(0))
       .catch((e) => {

@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { useAppStore, emit, type PeriodId, type Grain } from '../store'
-import type { Technology } from '../../../shared/api'
+import { useEffect, useState } from 'react'
+import { useAppStore, emit, on, type PeriodId, type Grain, type ModuleId } from '../store'
+import type { Technology, Rules } from '../../../shared/api'
 
 const PERIODS: { id: PeriodId; label: string }[] = [
   { id: '7d', label: 'Last 7 days' },
@@ -25,6 +25,29 @@ export default function CommandBar(): React.JSX.Element {
   const setPeriod = useAppStore((s) => s.setPeriod)
   const setGrain = useAppStore((s) => s.setGrain)
   const [switching, setSwitching] = useState(false)
+  const [rules, setRules] = useState<Rules | null>(null)
+
+  useEffect(() => {
+    if (!workspace) {
+      setRules(null)
+      return
+    }
+    let alive = true
+    const loadRules = async () => {
+      try {
+        const r = await window.api.rules.get()
+        if (alive) setRules(r)
+      } catch {
+        if (alive) setRules(null)
+      }
+    }
+    void loadRules()
+    const off = on('RULESET_CHANGED', () => void loadRules())
+    return () => {
+      alive = false
+      off()
+    }
+  }, [workspace?.path])
 
   async function switchTech(tech: Technology): Promise<void> {
     if (!workspace || workspace.technology === tech || switching) return
@@ -32,6 +55,8 @@ export default function CommandBar(): React.JSX.Element {
     try {
       const w = await window.api.workspace.setTechnology(tech)
       useAppStore.getState().setWorkspace(w)
+      const s = await window.api.analytics.summary()
+      useAppStore.getState().setSummary(s)
       emit('WORKSPACE_CHANGED')
       emit('RULESET_CHANGED')
     } catch (e) {
@@ -39,6 +64,11 @@ export default function CommandBar(): React.JSX.Element {
     } finally {
       setSwitching(false)
     }
+  }
+
+  function goTo(m: ModuleId): void {
+    useAppStore.getState().setModule(m)
+    emit('MODULE_CHANGED')
   }
 
   return (
@@ -92,23 +122,54 @@ export default function CommandBar(): React.JSX.Element {
         </div>
       </div>
       <div className="bar-right">
-        <button className="btn btn-ghost" disabled title="Milestone 2 — ruleset editing">
-          PRB ≥ 80%
-        </button>
-        <button className="btn btn-ghost" disabled title="Milestone 2 — ruleset editing">
-          Breach ≥ 1d
-        </button>
-        <button className="btn btn-ghost" disabled title="Milestone 3 — comparison mode">
+        {rules && (
+          <>
+            <button
+              className="btn btn-ghost"
+              title={`Active ruleset v${rules.version}: PRB utilization threshold is ${rules.prbThresholdPct}%. Click to view in Workspace.`}
+              onClick={() => goTo('workspace')}
+            >
+              PRB ≥ {rules.prbThresholdPct}%
+            </button>
+            <button
+              className="btn btn-ghost"
+              title={`Active ruleset v${rules.version}: Weekly NC requires breach on ≥ ${rules.weeklyBreachDays} distinct day(s). Click to view in Workspace.`}
+              onClick={() => goTo('workspace')}
+            >
+              Breach ≥ {rules.weeklyBreachDays}d
+            </button>
+          </>
+        )}
+        <button
+          className="btn btn-ghost"
+          disabled={!workspace}
+          title="Open Comparison Lab to benchmark periods and regions"
+          onClick={() => goTo('comparison-lab')}
+        >
           Compare
         </button>
-        <button className="btn btn-ghost" disabled title="Milestone 1 — import pipeline">
+        <button
+          className="btn btn-ghost"
+          disabled={!workspace}
+          title="Open Data Manager to import CSV/Excel and review quality"
+          onClick={() => goTo('data-manager')}
+        >
           Import
         </button>
-        <button className="btn btn-ghost" disabled title="Milestone 5 — report builder">
+        <button
+          className="btn btn-ghost"
+          disabled={!workspace}
+          title="Open Reporting Center to generate Excel, PowerPoint, PDF and HTML report packs"
+          onClick={() => goTo('reports')}
+        >
           Export
         </button>
-        <button className="btn btn-ghost" disabled title="Milestone 3 — saved views">
-          Views
+        <button
+          className="btn btn-ghost"
+          title="Open Command Palette (Ctrl+K)"
+          onClick={() => useAppStore.getState().setPaletteOpen(true)}
+        >
+          Palette
         </button>
         <span className="kbd-hint">Ctrl K</span>
       </div>

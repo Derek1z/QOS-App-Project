@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useAppStore } from '../store'
+import { useAppStore, emit } from '../store'
 import type { HealthResult, NcMovementRow, PriorityRow, KpiOverviewResult, KpiTrendPoint } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { healthLineOption, ncMovementOption, weekLabel } from '../lib/overviewCharts'
@@ -98,26 +98,68 @@ function CompBar({ label, value }: { label: string; value: number }): React.JSX.
   )
 }
 
+type SectionKey = 'health' | 'movement' | 'other'
+
+const SECTION_META: Array<{ key: SectionKey; label: string; icon: string }> = [
+  { key: 'health', label: 'Network Health Score', icon: '🩺' },
+  { key: 'movement', label: 'NC Movement', icon: '📈' },
+  { key: 'other', label: 'Other Metrics', icon: '🧮' }
+]
+
+/** Collapsible subsection — clicking the header expands/collapses it. */
+function OverviewSection({
+  id,
+  icon,
+  label,
+  open,
+  onToggle,
+  children
+}: {
+  id: SectionKey
+  icon: string
+  label: string
+  open: boolean
+  onToggle: (id: SectionKey) => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <section className={`ov-section${open ? ' open' : ''}`} id={`ov-${id}`}>
+      <button className="ov-section-head" onClick={() => onToggle(id)} aria-expanded={open}>
+        <span className="ov-section-icon">{icon}</span>
+        <span className="ov-section-title">{label}</span>
+        <span className="ov-chevron">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && <div className="ov-section-body">{children}</div>}
+    </section>
+  )
+}
+
 export default function Overview(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const summary = useAppStore((s) => s.summary)
+  const setSummary = useAppStore((s) => s.setSummary)
   const [health, setHealth] = useState<HealthResult | null>(null)
   const [movement, setMovement] = useState<NcMovementRow[]>([])
   const [priority, setPriority] = useState<PriorityRow[]>([])
   const [kpiOverview, setKpiOverview] = useState<KpiOverviewResult | null>(null)
+  const [open, setOpen] = useState<Record<SectionKey, boolean>>({ health: true, movement: true, other: true })
   const s = summary
 
   useEffect(() => {
     let alive = true
     void (async () => {
       try {
-        const [h, m, p, ko] = await Promise.all([
+        // summary is workspace-global but re-read here so the KPI strip tracks
+        // the active technology's data (switching 2G/3G/4G re-seeds KPIs)
+        const [sum, h, m, p, ko] = await Promise.all([
+          window.api.analytics.summary(),
           window.api.analytics.health(),
           window.api.analytics.ncMovement(8),
           window.api.analytics.priorityQueue('balanced', 8),
           window.api.analytics.kpiOverview(8)
         ])
         if (!alive) return
+        if (sum) setSummary(sum)
         setHealth(h)
         setMovement(m)
         setPriority(p)
@@ -130,8 +172,8 @@ export default function Overview(): React.JSX.Element {
       alive = false
     }
     // technology is part of the workspace — reload when the switcher changes
-    // so the KPI watch reflects the active technology's imported KPIs
-  }, [workspace?.path, workspace?.readOnly, workspace?.technology])
+    // so every card reflects the active technology's imported KPIs
+  }, [workspace?.path, workspace?.readOnly, workspace?.technology, setSummary])
 
   const kpis: { label: string; value: string }[] = [
     { label: 'Cells', value: fmt(s?.cells, 0) },
@@ -148,19 +190,40 @@ export default function Overview(): React.JSX.Element {
     { label: 'Ruleset', value: s?.rulesetVersion == null ? '—' : 'v' + s.rulesetVersion }
   ]
 
-  const hasData = (s?.rowCount ?? 0) > 0
   const network = health?.network ?? []
   const latest = network.length > 0 ? network[network.length - 1] : null
   const maxPrio = Math.max(1, ...priority.map((p) => p.score))
+  const tech = workspace?.technology ?? '4G'
+
+  function toggleSection(id: SectionKey): void {
+    setOpen((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  function openInvestigation(cellId: number, cellName: string, site?: string | null, district?: string | null, region?: string | null): void {
+    const path = [region, district, site, cellName].filter((p): p is string => Boolean(p))
+    useAppStore.getState().setInvestigationTarget({ scope: 'cell', id: cellId, name: cellName, path })
+    useAppStore.getState().setModule('investigation')
+    emit('MODULE_CHANGED')
+  }
+
+  function openPriorityCenter(): void {
+    useAppStore.getState().setModule('priority-center')
+    emit('MODULE_CHANGED')
+  }
 
   return (
     <div className="module">
-      <div className="module-head">
-        <h2>Executive Overview</h2>
-        <span className="module-workspace">{workspace?.name}</span>
-        {s?.minDate && s?.maxDate && (
-          <span className="module-workspace">{s.minDate} → {s.maxDate}</span>
-        )}
+      <div className="module-head ov-module-head">
+        <div className="ov-head-left">
+          <h2>Executive Overview</h2>
+          <span className="badge ov-tech-badge">{tech}</span>
+        </div>
+        <div className="ov-head-right">
+          <span className="module-workspace">{workspace?.name}</span>
+          {s?.minDate && s?.maxDate && (
+            <span className="module-workspace">{s.minDate} → {s.maxDate}</span>
+          )}
+        </div>
       </div>
 
       <div className="kpi-strip">
@@ -172,16 +235,14 @@ export default function Overview(): React.JSX.Element {
         ))}
       </div>
 
-      {!hasData && (
-        <div className="notice">
-          No data yet. Import a CSV from <b>Data Manager</b> or drag files onto the window — the
-          analytics engine classifies every cell-week automatically.
-        </div>
-      )}
-
-      <div className="cards">
-        <div className="card">
-          <h3>Network Health Score</h3>
+      <div className="ov-stack">
+        <OverviewSection
+          id="health"
+          icon="🩺"
+          label="Network Health Score"
+          open={open.health}
+          onToggle={toggleSection}
+        >
           {latest ? (
             <>
               <div className="health-flex">
@@ -205,10 +266,15 @@ export default function Overview(): React.JSX.Element {
           ) : (
             <p className="placeholder-text">—</p>
           )}
-        </div>
+        </OverviewSection>
 
-        <div className="card">
-          <h3>NC Movement</h3>
+        <OverviewSection
+          id="movement"
+          icon="📈"
+          label="NC Movement"
+          open={open.movement}
+          onToggle={toggleSection}
+        >
           {movement.length === 0 ? (
             <p className="card-note">No NC classifications yet — import data first.</p>
           ) : (
@@ -221,102 +287,49 @@ export default function Overview(): React.JSX.Element {
               </p>
             </>
           )}
-        </div>
+        </OverviewSection>
 
-        <div className="card">
-          <div className="file-head">
-            <h3>Top Priorities</h3>
-            <span className="badge">Balanced</span>
-          </div>
-          {priority.length === 0 ? (
-            <p className="card-note">No priority scores yet — import data first.</p>
-          ) : (
-            <div className="prio-list">
-              {priority.map((p, i) => (
-                <div key={p.cellId} className="prio-row">
-                  <span className="prio-rank">{i + 1}</span>
-                  <div className="prio-main">
-                    <div className="prio-head">
-                      <span className="prio-name">{p.cellName}</span>
-                      <span className="prio-score" style={{ color: BAND_COLOR[p.band] ?? 'var(--text)' }}>
-                        {p.score}
-                      </span>
-                    </div>
-                    <div className="dist-track">
-                      <div
-                        className="dist-fill"
-                        style={{ width: `${Math.round((p.score / maxPrio) * 100)}%`, background: BAND_COLOR[p.band] ?? 'var(--accent)' }}
-                      />
-                    </div>
-                    <div className="prio-meta">
-                      {p.site ?? '—'} · {p.district ?? '—'} · <span style={{ color: BAND_COLOR[p.band] }}>{p.band}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="card-note">
-            Transparent 0–100 Priority Score (PRB, persistence, users, traffic, throughput, trend).
-            The full queue with action workflow arrives with the Priority Center (M4).
-          </p>
-        </div>
-
-        <div className="card">
-          <div className="file-head">
-            <h3>KPI Watch — {kpiOverview?.technology ?? workspace?.technology ?? '4G'}</h3>
-            {kpiOverview?.weekStart && (
-              <span className="badge">{weekLabel(kpiOverview.weekStart)}</span>
-            )}
-          </div>
-          {!kpiOverview || (kpiOverview.kpis.length === 0 && kpiOverview.worstCells.length === 0) ? (
-            <p className="card-note">
-              No imported KPI breaches for {kpiOverview?.technology ?? workspace?.technology ?? '4G'} yet —
-              map extra columns to KPIs in Data Manager and import data.
-            </p>
-          ) : (
-            <>
-              {kpiOverview.kpis.length > 0 && (
-                <div className="kpi-breach-list">
-                  {kpiOverview.kpis.slice(0, 5).map((k) => (
-                    <div key={k.key} className="kpi-breach-item">
-                      <div className="kpi-breach-row">
-                        <span className="prio-name">
-                          {k.label}
-                          {k.unit ? <span className="kpi-breach-unit"> ({k.unit})</span> : null}
-                        </span>
-                        <span className="kpi-breach-meta">
-                          <b>{k.breachedCells}</b>/{k.observedCells} cells breached
-                          {k.target != null && (
-                            <span className="card-note"> target {k.target}{k.unit ? ` ${k.unit}` : ''}</span>
-                          )}
-                        </span>
-                        <span
-                          className={`badge ${k.avgSeverity != null && k.avgSeverity >= 50 ? 'badge-ro' : 'badge-warn'}`}
-                        >
-                          {k.avgSeverity == null ? '—' : `sev ${Math.round(k.avgSeverity)}`}
-                        </span>
-                      </div>
-                      <KpiSparkline trend={k.trend} target={k.target} />
-                    </div>
-                  ))}
-                </div>
-              )}
-              {kpiOverview.worstCells.length > 0 && (
-                <div className="worst-cells">
-                  <div className="worst-cells-title">Worst cells</div>
-                  {kpiOverview.worstCells.slice(0, 5).map((c) => (
-                    <div key={c.cellId} className="prio-row">
-                      <span className="prio-rank">{c.breachScore == null ? '—' : Math.round(c.breachScore)}</span>
+        <OverviewSection
+          id="other"
+          icon="🧮"
+          label="Other Metrics"
+          open={open.other}
+          onToggle={toggleSection}
+        >
+          <div className="cards">
+            <div className="card">
+              <div className="file-head">
+                <h3>Top Priorities</h3>
+                <span className="badge">Balanced</span>
+              </div>
+              {priority.length === 0 ? (
+                <p className="card-note">No priority scores yet — import data first.</p>
+              ) : (
+                <div className="prio-list">
+                  {priority.map((p, i) => (
+                    <div
+                      key={p.cellId}
+                      className="prio-row"
+                      style={{ cursor: 'pointer' }}
+                      title={`Click to investigate ${p.cellName} (score ${p.score})`}
+                      onClick={() => openInvestigation(p.cellId, p.cellName, p.site, p.district, p.region)}
+                    >
+                      <span className="prio-rank">{i + 1}</span>
                       <div className="prio-main">
                         <div className="prio-head">
-                          <span className="prio-name">{c.cellName}</span>
-                          <span className="prio-score" style={{ color: 'var(--danger)' }}>
-                            {c.breachedKpis} breached
+                          <span className="prio-name">{p.cellName}</span>
+                          <span className="prio-score" style={{ color: BAND_COLOR[p.band] ?? 'var(--text)' }}>
+                            {p.score}
                           </span>
                         </div>
+                        <div className="dist-track">
+                          <div
+                            className="dist-fill"
+                            style={{ width: `${Math.round((p.score / maxPrio) * 100)}%`, background: BAND_COLOR[p.band] ?? 'var(--accent)' }}
+                          />
+                        </div>
                         <div className="prio-meta">
-                          {c.site ?? '—'} · {c.district ?? '—'}
+                          {p.site ?? '—'} · {p.district ?? '—'} · <span style={{ color: BAND_COLOR[p.band] }}>{p.band}</span>
                         </div>
                       </div>
                     </div>
@@ -324,14 +337,96 @@ export default function Overview(): React.JSX.Element {
                 </div>
               )}
               <p className="card-note">
-                Breaches of the {kpiOverview?.technology ?? 'active'} technology's editable KPI
-                targets — switch 2G/3G/4G above to re-run this against that technology's imported KPIs.
+                Transparent 0–100 Priority Score (PRB, persistence, users, traffic, throughput, trend).{' '}
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                  onClick={openPriorityCenter}
+                >
+                  Open Priority Center
+                </button>{' '}
+                or click any cell to investigate.
               </p>
-            </>
-          )}
-        </div>
+            </div>
 
-        <GhanaMap />
+            <div className="card">
+              <div className="file-head">
+                <h3>KPI Watch — {kpiOverview?.technology ?? tech}</h3>
+                {kpiOverview?.weekStart && (
+                  <span className="badge">{weekLabel(kpiOverview.weekStart)}</span>
+                )}
+              </div>
+              {!kpiOverview || (kpiOverview.kpis.length === 0 && kpiOverview.worstCells.length === 0) ? (
+                <p className="card-note">
+                  No imported KPI breaches for {kpiOverview?.technology ?? tech} yet —
+                  map extra columns to KPIs in Data Manager and import data.
+                </p>
+              ) : (
+                <>
+                  {kpiOverview.kpis.length > 0 && (
+                    <div className="kpi-breach-list">
+                      {kpiOverview.kpis.slice(0, 5).map((k) => (
+                        <div key={k.key} className="kpi-breach-item">
+                          <div className="kpi-breach-row">
+                            <span className="prio-name">
+                              {k.label}
+                              {k.unit ? <span className="kpi-breach-unit"> ({k.unit})</span> : null}
+                            </span>
+                            <span className="kpi-breach-meta">
+                              <b>{k.breachedCells}</b>/{k.observedCells} cells breached
+                              {k.target != null && (
+                                <span className="card-note"> target {k.target}{k.unit ? ` ${k.unit}` : ''}</span>
+                              )}
+                            </span>
+                            <span
+                              className={`badge ${k.avgSeverity != null && k.avgSeverity >= 50 ? 'badge-ro' : 'badge-warn'}`}
+                            >
+                              {k.avgSeverity == null ? '—' : `sev ${Math.round(k.avgSeverity)}`}
+                            </span>
+                          </div>
+                          <KpiSparkline trend={k.trend} target={k.target} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {kpiOverview.worstCells.length > 0 && (
+                    <div className="worst-cells">
+                      <div className="worst-cells-title">Worst cells</div>
+                      {kpiOverview.worstCells.slice(0, 5).map((c) => (
+                        <div
+                          key={c.cellId}
+                          className="prio-row"
+                          style={{ cursor: 'pointer' }}
+                          title={`Click to investigate ${c.cellName}`}
+                          onClick={() => openInvestigation(c.cellId, c.cellName, c.site, c.district)}
+                        >
+                          <span className="prio-rank">{c.breachScore == null ? '—' : Math.round(c.breachScore)}</span>
+                          <div className="prio-main">
+                            <div className="prio-head">
+                              <span className="prio-name">{c.cellName}</span>
+                              <span className="prio-score" style={{ color: 'var(--danger)' }}>
+                                {c.breachedKpis} breached
+                              </span>
+                            </div>
+                            <div className="prio-meta">
+                              {c.site ?? '—'} · {c.district ?? '—'}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="card-note">
+                    Breaches of the {kpiOverview?.technology ?? tech} technology's editable KPI
+                    targets — click any cell to investigate.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <GhanaMap />
+          </div>
+        </OverviewSection>
       </div>
     </div>
   )

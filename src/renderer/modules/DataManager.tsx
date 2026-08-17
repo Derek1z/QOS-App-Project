@@ -81,13 +81,29 @@ export default function DataManager(): React.JSX.Element {
   const [quality, setQuality] = useState<QualityRow[]>([])
   const [archive, setArchive] = useState<RawArchiveResult>(EMPTY_ARCHIVE)
   const [archiveBusy, setArchiveBusy] = useState(false)
+  const [exportMsg, setExportMsg] = useState<Record<string, string>>({})
   const [maintLog, setMaintLog] = useState<MaintenanceResult[]>([])
   const [maintAction, setMaintAction] = useState<MaintenanceAction | null>(null)
   const [sched, setSched] = useState<MaintenanceScheduleSettings | null>(null)
   const [schedDraft, setSchedDraft] = useState<MaintenanceScheduleSettings | null>(null)
   const [schedHistory, setSchedHistory] = useState<ScheduledMaintenanceRun[]>([])
   const [schedBusy, setSchedBusy] = useState(false)
+  const [elapsedSec, setElapsedSec] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (busy) {
+      setElapsedSec(0)
+      timerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000)
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setElapsedSec(0)
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [busy])
 
   async function loadTabs(): Promise<void> {
     setCoverage(await window.api.imports.coverage())
@@ -189,6 +205,8 @@ export default function DataManager(): React.JSX.Element {
     setBusy(true)
     setError(null)
     setResult(null)
+    setProgress(null)
+    const off = window.api.imports.onProgress((p) => setProgress(p))
     try {
       const as = await window.api.imports.analyze(paths)
       setAnalyses(as)
@@ -205,9 +223,40 @@ export default function DataManager(): React.JSX.Element {
       setMappings(next)
       for (const a of as) {
         if (a.errors.length === 0) {
-          const p = await window.api.imports.preview(a.id, next[a.id])
-          setPreviews((prev) => ({ ...prev, [a.id]: p }))
+          // Fast path: synthesize preview directly from the sample rows already parsed during analysis
+          const sampleRows = a.sample ?? []
+          if (sampleRows.length > 0) {
+            const mapped = sampleRows.slice(0, 20).map((row) => {
+              const obj: Record<string, string> = {}
+              Object.entries(next[a.id].columns).forEach(([h, field]) => {
+                const idx = a.header.indexOf(h)
+                if (idx !== -1 && row[idx] != null) obj[field] = row[idx]
+              })
+              return obj
+            })
+            setPreviews((prev) => ({
+              ...prev,
+              [a.id]: { rows: mapped, issues: [], canImport: true }
+            }))
+          }
         }
+      }
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      off()
+      setBusy(false)
+      setProgress(null)
+    }
+  }
+
+  async function exportAsCsv(a: FileAnalysis): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await window.api.imports.exportCsv(a.path)
+      if (res) {
+        setExportMsg((prev) => ({ ...prev, [a.id]: `Exported to ${res.path}` }))
       }
     } catch (e) {
       setError(errMsg(e))
@@ -395,9 +444,16 @@ export default function DataManager(): React.JSX.Element {
             <div className="import-progress-fill" />
           </div>
           <div className="import-progress-label">
-            {progress
-              ? `${progress.phase}${progress.detail ? ` — ${progress.detail}` : ''}`
-              : 'Working…'}
+            <span>
+              {progress
+                ? `${progress.phase}${progress.detail ? ` — ${progress.detail}` : ''}`
+                : 'Working…'}
+            </span>
+            {elapsedSec > 0 && (
+              <span className="import-elapsed" style={{ marginLeft: 12, opacity: 0.75, fontVariantNumeric: 'tabular-nums' }}>
+                ⏱ {elapsedSec}s elapsed
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -423,7 +479,7 @@ export default function DataManager(): React.JSX.Element {
             >
               <div className="dropzone-inner">
                 <div className="dropzone-icon">⬇️</div>
-                <p>Drop CSV files here, or</p>
+                <p>Drop CSV or Excel files here, or</p>
                 <button className="btn btn-primary" onClick={() => fileInput.current?.click()}>
                   Choose files…
                 </button>
@@ -436,7 +492,7 @@ export default function DataManager(): React.JSX.Element {
                   ref={fileInput}
                   type="file"
                   multiple
-                  accept=".csv,.txt"
+                  accept=".csv,.txt,.xlsx,.xls"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const paths = Array.from(e.target.files ?? []).map((f) => window.api.files.path(f))
@@ -591,7 +647,13 @@ export default function DataManager(): React.JSX.Element {
                           <button className="btn" disabled={busy} onClick={() => void preview(a.id, mapping)}>
                             Validate &amp; Preview
                           </button>
+                          {/\.(xlsx|xls)$/i.test(a.path) && (
+                            <button className="btn" disabled={busy} onClick={() => void exportAsCsv(a)}>
+                              Export as CSV…
+                            </button>
+                          )}
                         </div>
+                        {exportMsg[a.id] && <p className="card-note export-ok">✓ {exportMsg[a.id]}</p>}
                       </>
                     )}
                   </div>
@@ -959,7 +1021,7 @@ export default function DataManager(): React.JSX.Element {
               )}
             </div>
             <p className="card-note">
-              Every imported CSV is gzip-archived beside the workspace and kept for{' '}
+              Every imported raw data file (CSV / Excel) is gzip-archived beside the workspace and kept for{' '}
               <b>90 days</b>. After that the raw copy is purged automatically on open — processed
               data, filenames, checksums and import metadata always remain.
             </p>

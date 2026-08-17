@@ -3185,6 +3185,8 @@ export const previewApi: Api & { demo: true } = {
           })
           continue
         }
+        emitImportProgress({ phase: 'Reading file', detail: file.name })
+        await delay(100)
         const rows = parseCsv(await file.text())
         if (rows.length === 0) {
           out.push({
@@ -3202,9 +3204,13 @@ export const previewApi: Api & { demo: true } = {
           })
           continue
         }
+        emitImportProgress({ phase: 'Scanning columns', detail: file.name })
+        await delay(80)
         const header = rows[0].map((h) => h.trim())
         const suggested = autoMap(header)
         const fingerprint = makeFingerprint(header)
+        emitImportProgress({ phase: 'Checking saved profile', detail: file.name })
+        await delay(60)
         const remembered = profiles.get(fingerprint) ?? null
         const id = `demo-${++idCounter}`
         analysisRegistry.set(id, { file, header, sample: rows.slice(1, 21), fingerprint })
@@ -3399,6 +3405,7 @@ export const previewApi: Api & { demo: true } = {
       demoArchiveRows.splice(0, demoArchiveRows.length, ...kept)
       return demoArchiveStatus(demoArchiveRows)
     },
+    exportCsv: async (_sourcePath: string): Promise<{ path: string } | null> => null,
     onProgress: (cb: (p: ImportProgress) => void): (() => void) => {
       importProgressCbs.add(cb)
       return () => importProgressCbs.delete(cb)

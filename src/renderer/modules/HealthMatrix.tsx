@@ -175,7 +175,7 @@ export default function HealthMatrix(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>{SCOPES.find((s) => s.id === scope)?.label}</th>
-                    {matrix.weeks.length > 0 && <th>{weekLabel(matrix.weeks[matrix.weeks.length - 1])}</th>}
+                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{weekLabel(matrix.weeks[matrix.weeks.length - 1])}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -185,7 +185,7 @@ export default function HealthMatrix(): React.JSX.Element {
                     return (
                       <tr key={r.id}>
                         <td>{r.name}</td>
-                        <td style={{ color, fontWeight: 700 }}>{latest ?? '—'}</td>
+                        <td className="num" style={{ color, fontWeight: 700 }}>{latest ?? '—'}</td>
                       </tr>
                     )
                   })}

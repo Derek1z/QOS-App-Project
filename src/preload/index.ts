@@ -23,7 +23,8 @@ const api: Api = {
       return () => ipcRenderer.removeListener('import:progress', l)
     },
     archive: () => ipcRenderer.invoke('import:archive'),
-    purgeArchive: () => ipcRenderer.invoke('import:purgeArchive')
+    purgeArchive: () => ipcRenderer.invoke('import:purgeArchive'),
+    exportCsv: (sourcePath: string) => ipcRenderer.invoke('import:exportCsv', sourcePath)
   },
   workspace: {
     listRecent: () => ipcRenderer.invoke('workspace:listRecent'),

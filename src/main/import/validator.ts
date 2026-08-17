@@ -9,16 +9,34 @@ const KPI_COLS: Array<{ col: string; label: string }> = [
   { col: 'thrpt_raw', label: 'DL throughput' }
 ]
 
+function dmValid(a: number, b: number): boolean {
+  // a date is valid if (day, month) or (month, day) makes sense — mirrors the
+  // staging coalesce which tries day-first then month-first formats
+  return (a >= 1 && a <= 31 && b >= 1 && b <= 12) || (b >= 1 && b <= 31 && a >= 1 && a <= 12)
+}
+
 export function parseDateOk(raw: string | null | undefined): boolean {
   const s = (raw ?? '').trim()
   if (!s) return false
+  // ISO 8601 with optional time / timezone (e.g. 2026-08-14T10:30:00+00:00)
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return !Number.isNaN(Date.parse(s.slice(0, 10)))
-  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)
-  if (mdy) {
-    const m = Number(mdy[2])
-    const d = Number(mdy[1])
-    return m >= 1 && m <= 12 && d >= 1 && d <= 31
+  // slash-separated day-first or month-first, 2- or 4-digit year, optionally
+  // with a time-of-day component (NCA exports write DD/MM/YY HH:MM)
+  const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
+  if (slash) {
+    return dmValid(Number(slash[1]), Number(slash[2]))
   }
+  // dash-separated day-first (e.g. 05-07-26)
+  const dash = /^(\d{1,2})-(\d{1,2})-(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
+  if (dash) {
+    return dmValid(Number(dash[1]), Number(dash[2]))
+  }
+  // dot-separated (e.g. 14.08.2026)
+  const dot = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
+  if (dot) {
+    return dmValid(Number(dot[1]), Number(dot[2]))
+  }
+  // year-first slash (e.g. 2026/08/14)
   const ymd = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s)
   if (ymd) {
     const m = Number(ymd[2])

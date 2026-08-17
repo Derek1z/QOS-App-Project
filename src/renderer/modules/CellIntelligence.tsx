@@ -190,13 +190,13 @@ export default function CellIntelligence(): React.JSX.Element {
                   <th>Severity</th>
                   {workspace?.technology === '4G' && (
                     <>
-                      <th>PRB avg</th>
-                      <th>Breach</th>
+                      <th style={{ textAlign: 'right' }}>PRB avg</th>
+                      <th style={{ textAlign: 'right' }}>Breach</th>
                     </>
                   )}
-                  <th>Priority</th>
+                  <th style={{ textAlign: 'right' }}>Priority</th>
                   {data.rows[0]?.kpis.map((k) => (
-                    <th key={k.key} title={`${k.label} target ${k.target ?? '—'}`}>
+                    <th key={k.key} style={{ textAlign: 'right' }} title={`${k.label} target ${k.target ?? '—'}`}>
                       {k.label}
                       {k.breached && ' ⚠'}
                     </th>
@@ -223,11 +223,11 @@ export default function CellIntelligence(): React.JSX.Element {
                     </td>
                     {workspace?.technology === '4G' && (
                       <>
-                        <td>{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
-                        <td>{r.breachDays}</td>
+                        <td className="num">{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
+                        <td className="num">{r.breachDays}</td>
                       </>
                     )}
-                    <td>
+                    <td className="num">
                       {r.priorityScore != null ? (
                         <span style={{ color: BAND_COLOR[r.priorityBand ?? 'Low'] ?? 'var(--text)', fontWeight: 700 }}>
                           {r.priorityScore}
@@ -237,7 +237,7 @@ export default function CellIntelligence(): React.JSX.Element {
                       )}
                     </td>
                     {r.kpis.map((k) => (
-                      <td key={k.key}>
+                      <td key={k.key} className="num">
                         {k.value != null ? (
                           <span className={k.breached ? 'kpi-breached' : ''} title={k.breached ? `Breaches ${k.target}` : k.target != null ? `Within ${k.target}` : undefined}>
                             {Number(k.value).toFixed(1)}

@@ -79,6 +79,13 @@ export default function NcIntelligence(): React.JSX.Element {
   const critical = nc ? nc.bySeverity.Critical : 0
   const latestHealth = health && health.network.length > 0 ? health.network[health.network.length - 1] : null
 
+  const [page, setPage] = useState(1)
+  const pageSize = 50
+
+  useEffect(() => {
+    setPage(1)
+  }, [fLifecycle, fTrend, fSeverity, fQ])
+
   const cells = (nc?.cells ?? []).filter(
     (c) =>
       (!fLifecycle || c.lifecycle === fLifecycle) &&
@@ -86,6 +93,12 @@ export default function NcIntelligence(): React.JSX.Element {
       (!fSeverity || c.severity === fSeverity) &&
       (!fQ || c.cellName.toLowerCase().includes(fQ.toLowerCase()) || (c.site ?? '').toLowerCase().includes(fQ.toLowerCase()))
   )
+
+  const totalPages = Math.max(1, Math.ceil(cells.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pageRows = cells.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const startIdx = cells.length > 0 ? (currentPage - 1) * pageSize + 1 : 0
+  const endIdx = Math.min(cells.length, currentPage * pageSize)
 
   return (
     <div className="module">
@@ -169,7 +182,14 @@ export default function NcIntelligence(): React.JSX.Element {
       </div>
 
       <div className="card">
-        <h3>Cells — {nc?.weekStart ? `week of ${nc.weekStart}` : 'latest week'}</h3>
+        <div className="file-head">
+          <h3>Classified cell directory ({cells.length.toLocaleString()})</h3>
+          <span className="card-note">
+            {cells.length > 0
+              ? `Showing ${startIdx}–${endIdx} of ${cells.length.toLocaleString()} cells (Page ${currentPage} of ${totalPages})`
+              : '0 cells'}
+          </span>
+        </div>
         <div className="row-actions filter-row">
           <select className="sel" value={fLifecycle} onChange={(e) => setFLifecycle(e.target.value)}>
             <option value="">All lifecycles</option>
@@ -199,45 +219,68 @@ export default function NcIntelligence(): React.JSX.Element {
         {cells.length === 0 ? (
           <p className="card-note">No cells match the current filters.</p>
         ) : (
-          <div className="preview-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Cell</th>
-                  <th>Site</th>
-                  <th>District</th>
-                  <th>PRB avg</th>
-                  <th>Breach days</th>
-                  <th>Lifecycle</th>
-                  <th>Trend</th>
-                  <th>Severity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cells.map((c) => (
-                  <tr key={c.cellId}>
-                    <td>{c.cellName}</td>
-                    <td>{c.site ?? '—'}</td>
-                    <td>{c.district ?? '—'}</td>
-                    <td>{c.prbAvg != null ? `${c.prbAvg.toFixed(1)}%` : '—'}</td>
-                    <td>{c.breachDays}</td>
-                    <td>
-                      <Chip
-                        text={c.lifecycle}
-                        tone={c.lifecycle === 'Persistent NC' ? 'bad' : c.lifecycle === 'Recurring NC' ? 'warn' : c.lifecycle === 'New NC' ? 'ok' : 'dim'}
-                      />
-                    </td>
-                    <td>
-                      <Chip text={c.trend} tone={c.trend === 'Worsening' ? 'bad' : c.trend === 'Improving' ? 'ok' : 'dim'} />
-                    </td>
-                    <td>
-                      <Chip text={c.severity} tone={c.severity === 'Critical' ? 'bad' : c.severity === 'High' ? 'warn' : 'dim'} />
-                    </td>
+          <>
+            <div className="preview-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Cell</th>
+                    <th>Site</th>
+                    <th>District</th>
+                    <th>PRB avg</th>
+                    <th>Breach days</th>
+                    <th>Lifecycle</th>
+                    <th>Trend</th>
+                    <th>Severity</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pageRows.map((c) => (
+                    <tr key={c.cellId}>
+                      <td>{c.cellName}</td>
+                      <td>{c.site ?? '—'}</td>
+                      <td>{c.district ?? '—'}</td>
+                      <td>{c.prbAvg != null ? `${c.prbAvg.toFixed(1)}%` : '—'}</td>
+                      <td>{c.breachDays}</td>
+                      <td>
+                        <Chip
+                          text={c.lifecycle}
+                          tone={c.lifecycle === 'Persistent NC' ? 'bad' : c.lifecycle === 'Recurring NC' ? 'warn' : c.lifecycle === 'New NC' ? 'ok' : 'dim'}
+                        />
+                      </td>
+                      <td>
+                        <Chip text={c.trend} tone={c.trend === 'Worsening' ? 'bad' : c.trend === 'Improving' ? 'ok' : 'dim'} />
+                      </td>
+                      <td>
+                        <Chip text={c.severity} tone={c.severity === 'Critical' ? 'bad' : c.severity === 'High' ? 'warn' : 'dim'} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalPages > 1 && (
+              <div className="file-head" style={{ marginTop: '0.75rem', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  ← Previous
+                </button>
+                <span className="card-note" style={{ alignSelf: 'center' }}>
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  className="btn btn-sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

@@ -5,6 +5,7 @@ import { SCHEMA_SQL } from './schema'
 import { acquireLock, releaseLock } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
+import { repairDuplicateDimensions } from '../services/dimRepair'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
 
 interface OpenWorkspace {
@@ -204,6 +205,9 @@ export async function createWorkspace(dir: string, name: string, technology?: st
     instance = await DuckDBInstance.create(path)
     const connection = await instance.connect()
     try {
+      try {
+        await connection.run(`PRAGMA memory_limit = '512MB'; PRAGMA threads = auto; PRAGMA preserve_insertion_order = false;`)
+      } catch {}
       for (const sql of SCHEMA_SQL) await connection.run(sql)
       const now = new Date().toISOString()
       const esc = safe.replace(/'/g, "''")
@@ -265,11 +269,28 @@ export async function openWorkspace(
     instance = await DuckDBInstance.create(path, config)
     const connection = await instance.connect()
     try {
+      try {
+        await connection.run(`PRAGMA memory_limit = '512MB'; PRAGMA threads = auto; PRAGMA preserve_insertion_order = false;`)
+      } catch {}
       if (!readOnly) {
         await ensureUpgradeSchema(connection)
         // spec §54a: every workspace ships with its technology's KPI set
         const tech = await workspaceTechnology(connection)
         await seedKpiDefs(connection, tech)
+        // legacy workspaces may hold duplicate dimension names (pre-import
+        // dedupe fix); merge them so lookups/joins stay unambiguous — this is
+        // best-effort and never blocks opening the workspace
+        try {
+          const repaired = await repairDuplicateDimensions(connection)
+          if (repaired.mergedCells > 0 || repaired.mergedSites > 0 || repaired.mergedDistricts > 0) {
+            console.log(
+              '[dimRepair] merged ' + repaired.mergedDistricts + ' district(s), ' +
+              repaired.mergedSites + ' site(s), ' + repaired.mergedCells + ' cell(s)'
+            )
+          }
+        } catch (e) {
+          console.error('[dimRepair] failed (workspace still opens): ' + (e instanceof Error ? e.message : String(e)))
+        }
       }
       const info = await describe(connection)
       const ws: OpenWorkspace = {

@@ -1,5 +1,8 @@
-import { openSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { openSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import ExcelJS from 'exceljs'
+import * as XLSX from 'xlsx'
+import { excelToCsvFile } from './import/excel'
 import * as ws from './workspace/manager'
 import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
@@ -865,13 +868,210 @@ export async function runSmokeTest(dir: string): Promise<void> {
   const backTo4G = await ws.setWorkspaceTechnology('4G')
   if (backTo4G.technology !== '4G') throw new Error('switch back to 4G failed')
 
+  // 27f. Excel (.xlsx) import: real NCA dashboards ship as xlsx (spec §9 keeps
+  // the raw source), so the first sheet is converted and staged like a CSV
+  await ws.createWorkspace(dir, 'Xlsx Test')
+  const xlsxImportPath = join(dir, 'import.xlsx')
+  {
+    const wb = new ExcelJS.Workbook()
+    const sh = wb.addWorksheet('Data')
+    sh.addRow(['DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', '4G Peak Hour Traffic Utilization_NCA', 'RRC Connected UEs (Avg)_STD(#)', '4G Data Volume_STD(MB)', '4G Cell Availability_STD(%)', 'E-UTRAN IP Throughput UE DL_STD(kbps)'])
+    sh.addRow([new Date(Date.UTC(2026, 6, 5)), 'Accra Metro', 'Greater Accra', 'ACC-001-A', 'ACC-001', 88.0, 52, 1400.0, 99.7, 19500])
+    sh.addRow([new Date(Date.UTC(2026, 6, 5)), 'Accra Metro', 'Greater Accra', 'ACC-001-B', 'ACC-001', 76.0, 33, 900.0, 99.6, 16000])
+    sh.addRow([new Date(Date.UTC(2026, 6, 5)), 'Kumasi', 'Ashanti', 'KUM-001-A', 'KUM-001', 92.0, 68, 1700.0, 98.8, 24000])
+    sh.addRow([new Date(Date.UTC(2026, 6, 6)), 'Accra Metro', 'Greater Accra', 'ACC-001-A', 'ACC-001', 89.0, 55, 1450.0, 99.8, 19800])
+    sh.addRow([new Date(Date.UTC(2026, 6, 6)), 'Accra Metro', 'Greater Accra', 'ACC-001-B', 'ACC-001', 74.0, 31, 850.0, 99.5, 15500])
+    sh.addRow([new Date(Date.UTC(2026, 6, 6)), 'Kumasi', 'Ashanti', 'KUM-001-A', 'KUM-001', 93.0, 70, 1750.0, 98.9, 24500])
+    await wb.xlsx.writeFile(xlsxImportPath)
+  }
+  const analyzePhases: string[] = []
+  const [xa] = await analyzeFiles([xlsxImportPath], (p) => analyzePhases.push(p.phase))
+  if (!analyzePhases.includes('Reading workbook (fast scan)')) {
+    throw new Error('xlsx analyze did not report the fast-scan phase: ' + JSON.stringify(analyzePhases))
+  }
+  if (!xa || xa.errors.length > 0) throw new Error('xlsx analyze failed: ' + JSON.stringify(xa?.errors))
+  if (xa.suggestedMapping['DATETIME'] !== 'date' || xa.suggestedMapping['CELL'] !== 'cell') {
+    throw new Error('xlsx mapping missing date/cell: ' + JSON.stringify(xa.suggestedMapping))
+  }
+  const xaPrev = await previewImport(xa.id, { columns: xa.suggestedMapping })
+  if (!xaPrev.canImport) throw new Error('xlsx preview blocked: ' + JSON.stringify(xaPrev.issues))
+  const xaRes = await runImport(xa.id, { columns: xa.suggestedMapping }, { backupDir: join(dir, 'backups') })
+  if (xaRes.insertedRows !== 6) throw new Error('xlsx import inserted ' + xaRes.insertedRows)
+  if (xaRes.rejectedRows !== 0) throw new Error('xlsx import rejected ' + xaRes.rejectedRows)
+  if (!xaRes.archivePath || !xaRes.archivePath.endsWith('.xlsx.gz')) {
+    throw new Error('xlsx archive must keep the original workbook: ' + xaRes.archivePath)
+  }
+  if (!existsSync(xaRes.archivePath)) throw new Error('xlsx archived workbook missing: ' + xaRes.archivePath)
+  // the source profile is remembered for Excel sources too
+  const [xa2] = await analyzeFiles([xlsxImportPath])
+  if (!xa2 || !xa2.knownProfile) throw new Error('xlsx source profile not remembered')
+  // 2-digit-year CSV (NCA CSV exports write DD/MM/YY)
+  const dmyCsv = join(dir, 'dmy.csv')
+  writeFileSync(dmyCsv, [
+    'DATETIME,DISTRICT,REGION,CELL,BASESTATION,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps)',
+    '05/07/26,Accra Metro,Greater Accra,ACC-003-A,ACC-003,88.0,52,1400.0,99.7,19500',
+    '05/07/26,Accra Metro,Greater Accra,ACC-003-B,ACC-003,76.0,33,900.0,99.6,16000',
+    '05/07/26,Kumasi,Ashanti,KUM-003-A,KUM-003,92.0,68,1700.0,98.8,24000',
+    '06/07/26,Accra Metro,Greater Accra,ACC-003-A,ACC-003,89.0,55,1450.0,99.8,19800',
+    '06/07/26,Accra Metro,Greater Accra,ACC-003-B,ACC-003,74.0,31,850.0,99.5,15500',
+    '06/07/26,Kumasi,Ashanti,KUM-003-A,KUM-003,93.0,70,1750.0,98.9,24500'
+  ].join('\n'))
+  const [da] = await analyzeFiles([dmyCsv])
+  if (!da || da.errors.length > 0) throw new Error('dmy analyze failed: ' + JSON.stringify(da?.errors))
+  const daRes = await runImport(da.id, { columns: da.suggestedMapping }, { backupDir: join(dir, 'backups') })
+  if (daRes.insertedRows !== 6) throw new Error('dmy import inserted ' + daRes.insertedRows)
+
+  // legacy .xls (BIFF) import via SheetJS — same first-sheet conversion path
+  const xlsImportPath = join(dir, 'import.xls')
+  {
+    const wb = XLSX.utils.book_new()
+    const rows = [
+      ['DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', 'PRB Utilization', 'Connected Users', 'Data Volume (MB)', 'Availability', 'DL Throughput (kbps)'],
+      ['2026-07-05', 'Accra Metro', 'Greater Accra', 'ACC-004-A', 'ACC-004', 87.0, 51, 1390.0, 99.7, 19400],
+      ['2026-07-05', 'Accra Metro', 'Greater Accra', 'ACC-004-B', 'ACC-004', 75.0, 32, 890.0, 99.6, 15900],
+      ['2026-07-06', 'Kumasi', 'Ashanti', 'KUM-004-A', 'KUM-004', 91.0, 67, 1690.0, 98.8, 23900]
+    ]
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Data')
+    XLSX.writeFile(wb, xlsImportPath, { bookType: 'biff8' })
+  }
+  const [xla] = await analyzeFiles([xlsImportPath])
+  if (!xla || xla.errors.length > 0) throw new Error('xls analyze failed: ' + JSON.stringify(xla?.errors))
+  if (xla.suggestedMapping['DATETIME'] !== 'date' || xla.suggestedMapping['CELL'] !== 'cell') {
+    throw new Error('xls mapping missing date/cell: ' + JSON.stringify(xla.suggestedMapping))
+  }
+  const xlaPrev = await previewImport(xla.id, { columns: xla.suggestedMapping })
+  if (!xlaPrev.canImport) throw new Error('xls preview blocked: ' + JSON.stringify(xlaPrev.issues))
+  const xlaRes = await runImport(xla.id, { columns: xla.suggestedMapping }, { backupDir: join(dir, 'backups') })
+  if (xlaRes.insertedRows !== 3) throw new Error('xls import inserted ' + xlaRes.insertedRows)
+  if (!xlaRes.archivePath || !xlaRes.archivePath.endsWith('.xls.gz')) {
+    throw new Error('xls archive must keep the original workbook: ' + xlaRes.archivePath)
+  }
+
+  // duplicate dimension names within one file: the same SITE under two
+  // DISTRICTS and the same DISTRICT under two REGIONS used to crash the import
+  // ("More than one row returned by a subquery") because the NOT EXISTS guard
+  // cannot see same-statement inserts — the upserts must dedupe by name
+  // (majority parent wins) instead of failing.
+  const dupCsv = join(dir, 'dup-dims.csv')
+  writeFileSync(dupCsv, [
+    'DATETIME,DISTRICT,REGION,CELL,BASESTATION,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps)',
+    '2026-07-05,Accra Metro,Greater Accra,ACC-006-A,SITE-X,88.0,52,1400.0,99.7,19500',
+    '2026-07-05,Tema,Greater Accra,ACC-006-B,SITE-X,76.0,33,900.0,99.6,16000',
+    '2026-07-05,Accra Metro,GA,ACC-006-C,SITE-Y,92.0,68,1700.0,98.8,24000'
+  ].join('\n'))
+  const [dua] = await analyzeFiles([dupCsv])
+  if (!dua || dua.errors.length > 0) throw new Error('dup-dims analyze failed: ' + JSON.stringify(dua?.errors))
+  const duaRes = await runImport(dua.id, { columns: dua.suggestedMapping }, { backupDir: join(dir, 'backups') })
+  if (duaRes.insertedRows !== 3) throw new Error('dup-dims import inserted ' + duaRes.insertedRows)
+  const dupSites = await ws.getCurrent()!.connection.runAndReadAll(
+    "SELECT count(*) n FROM dim_site WHERE name = 'SITE-X'"
+  )
+  if (Number(dupSites.getRowObjects()[0].n) !== 1) {
+    throw new Error('dup-dims SITE-X must be a single dim_site row, got ' + dupSites.getRowObjects()[0].n)
+  }
+  const dupDistricts = await ws.getCurrent()!.connection.runAndReadAll(
+    "SELECT count(*) n FROM dim_district WHERE name = 'Accra Metro'"
+  )
+  if (Number(dupDistricts.getRowObjects()[0].n) !== 1) {
+    throw new Error(
+      'dup-dims Accra Metro must be a single dim_district row, got ' + dupDistricts.getRowObjects()[0].n
+    )
+  }
+  const dupCells = await ws.getCurrent()!.connection.runAndReadAll("SELECT count(*) n FROM dim_cell WHERE name = 'ACC-006-A'")
+  if (Number(dupCells.getRowObjects()[0].n) !== 1) {
+    throw new Error('dup-dims ACC-006-A must be a single dim_cell row, got ' + dupCells.getRowObjects()[0].n)
+  }
+
+  // startup repair: a legacy workspace holding duplicate dimension rows (from
+  // pre-fix imports) is merged automatically on open — double-counted facts,
+  // extra metrics and derived rows are re-pointed, aggregates regenerated
+  const repairWsPath = join(dir, 'repair-ws')
+  mkdirSync(repairWsPath, { recursive: true })
+  await ws.createWorkspace(repairWsPath, 'Repair Test')
+  {
+    const conn = ws.getCurrent()!.connection
+    await conn.run(`INSERT INTO dim_region (region_id, name) VALUES (1, 'GR')`)
+    await conn.run(`INSERT INTO dim_district (district_id, name, region_id) VALUES (10, 'Accra Metro', 1), (11, 'Accra Metro', 1)`)
+    await conn.run(`INSERT INTO dim_site (site_id, name, district_id) VALUES (20, 'SITE-A', 10), (21, 'SITE-A', 11)`)
+    await conn.run(`INSERT INTO dim_cell (cell_id, name, site_id, district_id, region_id) VALUES (30, 'CELL-A', 20, 10, 1), (31, 'CELL-A', 21, 11, 1)`)
+    await conn.run(`INSERT INTO fact_cell_daily (date_id, cell_id, prb_utilization, data_volume_mb, connected_users, dl_throughput_kbps, availability_pct, source_import_id)
+       VALUES (20260705, 30, 50.0, 100.0, 10, 1000.0, 99.0, 999001), (20260705, 31, 60.0, 200.0, 20, 2000.0, 98.0, 999001)`)
+    const kpiRow = await conn.runAndReadAll(`SELECT kpi_id FROM kpi_defs ORDER BY kpi_id LIMIT 1`)
+    const kpiId = Number(kpiRow.getRowObjects()[0].kpi_id)
+    await conn.run(`INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value) VALUES (20260705, 30, ${kpiId}, 5.0), (20260705, 31, ${kpiId}, 6.0)`)
+    await conn.run(`INSERT INTO cell_anomalies (cell_id, date_id, metric, score, detail) VALUES (30, 20260705, 'prb', 0.5, '{}'), (31, 20260705, 'prb', 0.9, '{}')`)
+    await conn.run(`INSERT INTO entity_action_status (entity_type, entity_id, status, owner) VALUES ('cell', 30, 'watch', 'x'), ('cell', 31, 'watch', 'y'), ('site', 21, 'watch', 'z')`)
+  }
+  await ws.closeWorkspace()
+  await ws.openWorkspace(join(repairWsPath, 'Repair Test.qosdb')) // the repair hook runs on open
+  {
+    const c = ws.getCurrent()!.connection
+    const one = async (sql: string): Promise<number> =>
+      Number((await c.runAndReadAll(sql)).getRowObjects()[0].n)
+    if ((await one(`SELECT count(*) n FROM dim_cell WHERE name = 'CELL-A'`)) !== 1) throw new Error('repair: cells not merged')
+    if ((await one(`SELECT count(*) n FROM dim_site WHERE name = 'SITE-A'`)) !== 1) throw new Error('repair: sites not merged')
+    if ((await one(`SELECT count(*) n FROM dim_district WHERE name = 'Accra Metro'`)) !== 1) throw new Error('repair: districts not merged')
+    if ((await one(`SELECT count(*) n FROM fact_cell_daily WHERE date_id = 20260705 AND cell_id IN (30, 31)`)) !== 1) {
+      throw new Error('repair: double-counted facts not merged')
+    }
+    if ((await one(`SELECT count(*) n FROM fact_cell_daily WHERE cell_id = 31`)) !== 0) throw new Error('repair: dup cell facts remain')
+    if ((await one(`SELECT count(*) n FROM fact_extra_metrics WHERE date_id = 20260705 AND cell_id IN (30, 31)`)) !== 1) {
+      throw new Error('repair: extra metrics not merged')
+    }
+    if ((await one(`SELECT count(*) n FROM cell_anomalies WHERE cell_id IN (30, 31)`)) !== 1) throw new Error('repair: anomalies not merged')
+    if ((await one(`SELECT count(*) n FROM entity_action_status WHERE entity_type = 'cell'`)) !== 1) throw new Error('repair: action status not deduped')
+    if ((await one(`SELECT count(*) n FROM entity_action_status WHERE entity_type = 'site' AND entity_id = 20`)) !== 1) {
+      throw new Error('repair: site action status not re-pointed')
+    }
+    if ((await one(`SELECT count(*) n FROM agg_cell_weekly WHERE cell_id = 31`)) !== 0) throw new Error('repair: stale aggregate remains')
+    if ((await one(`SELECT count(*) n FROM agg_cell_weekly WHERE cell_id = 30`)) < 1) throw new Error('repair: canonical aggregate missing')
+    // second open must be a clean no-op (idempotent)
+    await ws.closeWorkspace()
+    await ws.openWorkspace(join(repairWsPath, 'Repair Test.qosdb'))
+    const c2 = ws.getCurrent()!.connection
+    if (
+      Number((await c2.runAndReadAll(`SELECT count(*) n FROM dim_cell WHERE name = 'CELL-A'`)).getRowObjects()[0].n) !== 1
+    ) {
+      throw new Error('repair: not idempotent')
+    }
+  }
+
+  // expanded date formats: ISO with timezone, MM/DD/YYYY, dot-separated
+  const fmtCsv = join(dir, 'formats.csv')
+  writeFileSync(fmtCsv, [
+    'DATETIME,DISTRICT,REGION,CELL,BASESTATION,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps)',
+    '2026-07-05T06:00:00+00:00,Accra Metro,Greater Accra,ACC-005-A,ACC-005,86.0,50,1380.0,99.7,19300',
+    '07/05/2026,Accra Metro,Greater Accra,ACC-005-B,ACC-005,74.0,31,880.0,99.6,15800',
+    '06.07.2026,Kumasi,Ashanti,KUM-005-A,KUM-005,90.0,66,1680.0,98.8,23800',
+    '05/07/26 06:30:00,Accra Metro,Greater Accra,ACC-005-C,ACC-005,73.0,30,870.0,99.5,15700',
+    '05-07-26,Accra Metro,Greater Accra,ACC-005-D,ACC-005,72.0,29,860.0,99.4,15600'
+  ].join('\n'))
+  const [fa] = await analyzeFiles([fmtCsv])
+  if (!fa || fa.errors.length > 0) throw new Error('formats analyze failed: ' + JSON.stringify(fa?.errors))
+  const fmtRes = await runImport(fa.id, { columns: fa.suggestedMapping }, { backupDir: join(dir, 'backups') })
+  if (fmtRes.insertedRows !== 5) throw new Error('formats import inserted ' + fmtRes.insertedRows)
+
+  // xlsx -> CSV export (user-facing "Export as CSV" writes the first sheet)
+  const exportDest = join(dir, 'exported.csv')
+  await excelToCsvFile(xlsxImportPath, exportDest)
+  const exportedCsv = readFileSync(exportDest, 'utf8')
+  if (!exportedCsv.includes('DATETIME') || !exportedCsv.includes('ACC-001-A')) {
+    throw new Error('exported CSV missing header/data: ' + exportedCsv.slice(0, 200))
+  }
+  if (!exportedCsv.includes('2026-07-05')) throw new Error('exported CSV date not ISO: ' + exportedCsv.slice(0, 200))
+
+  await ws.closeWorkspace()
+
   // file-based success marker for packaged runs: the portable 7z SFX wrapper
-  // swallows the child's stdout, so verify-portable checks for this file
+  // swallows the child's stdout, so verify-portable checks for this file.
   if (app.isPackaged) {
-    try {
-      writeFileSync(join(dirs.root, 'smoke_ok.marker'), 'SMOKE_OK')
-    } catch {
-      /* ignore — marker is best-effort */
+    const targets = new Set<string>()
+    try { targets.add(join(process.cwd(), 'smoke_ok.marker')) } catch {}
+    try { targets.add(join(dirs.root, 'smoke_ok.marker')) } catch {}
+    try { if (process.env.PORTABLE_EXECUTABLE_DIR) targets.add(join(process.env.PORTABLE_EXECUTABLE_DIR, 'smoke_ok.marker')) } catch {}
+    try { targets.add(join(dirname(process.execPath), 'smoke_ok.marker')) } catch {}
+    for (const markerPath of targets) {
+      try { writeFileSync(markerPath, 'SMOKE_OK') } catch {}
     }
   }
 
@@ -887,6 +1087,11 @@ export async function runSmokeTest(dir: string): Promise<void> {
         reopenOk: true,
         invalidRejected: true,
         importOk: true,
+        xlsxImport: true,
+        dmyDates: true,
+        xlsImport: true,
+        dateFormats: true,
+        exportCsv: true,
         importInserted: 6,
         importDedupe: true,
         profileRemembered: true,

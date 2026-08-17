@@ -16,8 +16,8 @@
     "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron . --smoke",
     "preview:web": "vite --config .preview/vite.config.ts",
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
-    "dist": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --win",
-    "dist:portable": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
+    "dist": "node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",
+    "dist:portable": "node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
   },
   "build": {
     "appId": "com.qos.networkintelligence",
@@ -38,10 +38,12 @@
       "icon": "build/icon.ico",
       "target": [
         "portable"
-      ]
+      ],
+      "signAndEditExecutable": false
     },
     "portable": {
-      "artifactName": "2G_3G_4G_QoS.exe"
+      "artifactName": "2G_3G_4G_QoS.exe",
+      "requestExecutionLevel": "user"
     }
   },
   "dependencies": {
@@ -51,6 +53,7 @@
     "pptxgenjs": "^4.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

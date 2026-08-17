@@ -47,7 +47,10 @@ export const FIELDS: FieldDef[] = [
     required: false,
     aliases: [
       '4g peak hour traffic utilization_nca', 'prb utilization', 'prb', 'prb util',
-      'peak hour traffic utilization', 'prb_utilization', 'prb utilisation', '4g prb'
+      'peak hour traffic utilization', 'prb_utilization', 'prb utilisation', '4g prb',
+      '4g peak hour traffic utilization',
+      'peak hour traffic utilization nca',
+      '4g peak hour traffic utilization std',
     ]
   },
   {
@@ -56,7 +59,10 @@ export const FIELDS: FieldDef[] = [
     required: false,
     aliases: [
       'rrc connected ues (avg)_std(#)', 'connected users', 'rrc connected ues',
-      'rrc connected users', 'users', 'connected_users', 'rrc connected ues (avg)'
+      'rrc connected users', 'users', 'connected_users', 'rrc connected ues (avg)',
+      'rrc connected ues avg',
+      'rrc connected ues (avg) std',
+      'connected ues (avg)',
     ]
   },
   {
@@ -65,7 +71,10 @@ export const FIELDS: FieldDef[] = [
     required: false,
     aliases: [
       '4g data volume_std(mb)', 'data volume', 'data volume (mb)', 'data_volume_mb',
-      'traffic', 'volume mb', '4g data volume', 'traffic (mb)'
+      'traffic', 'volume mb', '4g data volume', 'traffic (mb)',
+      '4g data volume std',
+      '4g data volume (mb)',
+      'data volume std',
     ]
   },
   {
@@ -74,7 +83,10 @@ export const FIELDS: FieldDef[] = [
     required: false,
     aliases: [
       '4g cell availability_std(%)', 'availability', 'cell availability',
-      'availability_pct', 'cell availability (%)', '4g cell availability'
+      'availability_pct', 'cell availability (%)', '4g cell availability',
+      '4g cell availability std',
+      'cell availability std',
+      '4g cell availability (%)',
     ]
   },
   {
@@ -84,7 +96,11 @@ export const FIELDS: FieldDef[] = [
     aliases: [
       'e-utran ip throughput ue dl_std(kbps)', 'dl throughput', 'throughput',
       'e-utran ip throughput ue dl', 'dl_throughput_kbps', 'throughput dl',
-      'eutran ip throughput ue dl', 'ip throughput'
+      'eutran ip throughput ue dl', 'ip throughput',
+      'e-utran ip throughput ue dl std',
+      'eutran ip throughput ue dl std',
+      'e-utran ip throughput ue dl (kbps)',
+      'ip throughput ue dl',
     ]
   }
 ]

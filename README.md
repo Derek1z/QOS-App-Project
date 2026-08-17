@@ -1,8 +1,8 @@
-# 4G QoS Network Intelligence
+# 2G/3G/4G QoS Network Intelligence
 
 Portable Windows desktop application for telecom QoS analytics, built on **Electron + DuckDB**.
-One `.qosdb` DuckDB workspace per network; fully offline; no installation required —
-ships as a **portable `4G_QoS.exe`** (electron-builder portable target) that keeps
+One `.qosdb` DuckDB workspace per network; multi-technology (2G/3G/4G); fully offline; no installation required —
+ships as a **portable `2G_3G_4G_QoS.exe`** (electron-builder portable target) that keeps
 workspaces, backups, snapshots and exports beside the executable via
 `PORTABLE_EXECUTABLE_DIR`.
 

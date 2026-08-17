@@ -327,18 +327,34 @@ export async function getHealthMatrix(
   const sel = scopeSel[scope]
 
   const r = await conn.runAndReadAll(
-    `SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,
+    `WITH target_weeks AS (
+       SELECT DISTINCT date_id FROM cell_health_history ORDER BY date_id DESC LIMIT ?
+     ),
+     latest_week AS (
+       SELECT max(date_id) AS max_date_id FROM target_weeks
+     ),
+     ranked_entities AS (
+       SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,
+              avg(CASE WHEN h.date_id = (SELECT max_date_id FROM latest_week) THEN h.health_score END) AS latest_score
+       FROM cell_health_history h
+       JOIN dim_cell c ON c.cell_id = h.cell_id
+       ${sel.join}
+       WHERE h.date_id IN (SELECT date_id FROM target_weeks)
+       GROUP BY ${sel.id}, ${sel.name}
+       ORDER BY ${sort === 'worst' ? 'latest_score ASC NULLS LAST, entity_name ASC' : 'entity_name ASC'}
+       LIMIT ?
+     )
+     SELECT r.entity_id, r.entity_name,
             CAST(h.date_id AS DOUBLE) AS date_id,
             ROUND(avg(h.health_score), 1) AS score
      FROM cell_health_history h
      JOIN dim_cell c ON c.cell_id = h.cell_id
      ${sel.join}
-     WHERE h.date_id IN (
-       SELECT DISTINCT date_id FROM cell_health_history
-       ORDER BY date_id DESC LIMIT ?
-     )
-     GROUP BY ${sel.id}, ${sel.name}, h.date_id`,
-    [weeksN]
+     JOIN ranked_entities r ON r.entity_id = ${sel.id}
+     WHERE h.date_id IN (SELECT date_id FROM target_weeks)
+     GROUP BY r.entity_id, r.entity_name, h.date_id
+     ORDER BY r.entity_name, h.date_id`,
+    [weeksN, limit]
   )
 
   const rows = r.getRowObjects()
@@ -1141,18 +1157,20 @@ export async function getRegionMap(): Promise<RegionMapRow[]> {
     SELECT r.region_id AS id, r.name AS name,
       count(DISTINCT c.cell_id) AS cells,
       sum(CASE WHEN w.is_nc THEN 1 ELSE 0 END) AS nc,
-      round(avg(h.health_score), 1) AS health,
-      round(avg(w.prb_avg), 1) AS prb,
-      round(avg(w.dl_throughput_kbps_avg), 1) AS thr,
-      sum(w.connected_users_sum) AS usr,
-      sum(w.data_volume_mb_sum) AS vol,
-      round(avg(w.availability_pct_avg), 1) AS avail
+      round(COALESCE(avg(h.health_score), avg(CASE WHEN f.prb_utilization IS NOT NULL THEN GREATEST(0.0, 100.0 - f.prb_utilization) END)), 1) AS health,
+      round(COALESCE(avg(w.prb_avg), avg(f.prb_utilization)), 1) AS prb,
+      round(COALESCE(avg(w.dl_throughput_kbps_avg), avg(f.dl_throughput_kbps)), 1) AS thr,
+      sum(COALESCE(w.connected_users_sum, f.connected_users, 0)) AS usr,
+      sum(COALESCE(w.data_volume_mb_sum, f.data_volume_mb, 0)) AS vol,
+      round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail
     FROM dim_region r
     LEFT JOIN dim_cell c ON c.region_id = r.region_id
     LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
       AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
     LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
       AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+    LEFT JOIN fact_cell_daily f ON f.cell_id = c.cell_id
+      AND f.date_id = (SELECT max(date_id) FROM fact_cell_daily)
     GROUP BY r.region_id, r.name
     ORDER BY r.name
   `)
@@ -1177,12 +1195,12 @@ export async function getRegionDistricts(regionId: number): Promise<DistrictMapR
     `SELECT d.district_id AS id, d.name AS name, rg.name AS region,
        count(DISTINCT c.cell_id) AS cells,
        sum(CASE WHEN w.is_nc THEN 1 ELSE 0 END) AS nc,
-       round(avg(h.health_score), 1) AS health,
-       round(avg(w.prb_avg), 1) AS prb,
-       round(avg(w.dl_throughput_kbps_avg), 1) AS thr,
-       sum(w.connected_users_sum) AS usr,
-       sum(w.data_volume_mb_sum) AS vol,
-       round(avg(w.availability_pct_avg), 1) AS avail
+       round(COALESCE(avg(h.health_score), avg(CASE WHEN f.prb_utilization IS NOT NULL THEN GREATEST(0.0, 100.0 - f.prb_utilization) END)), 1) AS health,
+       round(COALESCE(avg(w.prb_avg), avg(f.prb_utilization)), 1) AS prb,
+       round(COALESCE(avg(w.dl_throughput_kbps_avg), avg(f.dl_throughput_kbps)), 1) AS thr,
+       sum(COALESCE(w.connected_users_sum, f.connected_users, 0)) AS usr,
+       sum(COALESCE(w.data_volume_mb_sum, f.data_volume_mb, 0)) AS vol,
+       round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail
      FROM dim_district d
      JOIN dim_region rg ON rg.region_id = d.region_id
      LEFT JOIN dim_cell c ON c.district_id = d.district_id
@@ -1190,6 +1208,8 @@ export async function getRegionDistricts(regionId: number): Promise<DistrictMapR
        AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
      LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
        AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+     LEFT JOIN fact_cell_daily f ON f.cell_id = c.cell_id
+       AND f.date_id = (SELECT max(date_id) FROM fact_cell_daily)
      WHERE d.region_id = ?
      GROUP BY d.district_id, d.name, rg.name
      ORDER BY health ASC NULLS LAST, d.name`,

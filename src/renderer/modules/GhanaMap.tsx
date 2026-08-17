@@ -64,6 +64,84 @@ function scaleLabels(m: Metric): [string, string] {
   return m === 'health' ? ['Best', 'Worst'] : ['Worse', 'Better']
 }
 
+function cleanName(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[_\-./\\,+()]/g, ' ')
+    .replace(/\b(region|regional|district|municipal|municipality|metropolitan|metro|assembly|area|council)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const REGION_CANONICAL_MAP: Record<string, string> = {
+  'greater accra': 'Greater Accra',
+  'accra': 'Greater Accra',
+  'gt accra': 'Greater Accra',
+  'ashanti': 'Ashanti',
+  'asante': 'Ashanti',
+  'eastern': 'Eastern',
+  'western': 'Western',
+  'central': 'Central',
+  'volta': 'Volta',
+  'northern': 'Northern',
+  'upper east': 'Upper East',
+  'upper west': 'Upper West',
+  'bono': 'Bono',
+  'brong ahafo': 'Bono',
+  'bono east': 'Bono East',
+  'ahafo': 'Ahafo',
+  'western north': 'Western North',
+  'oti': 'Oti',
+  'north east': 'North East',
+  'savannah': 'Savannah'
+}
+
+function getCanonicalRegionName(name: string): string {
+  const clean = cleanName(name)
+  if (REGION_CANONICAL_MAP[clean]) return REGION_CANONICAL_MAP[clean]
+  for (const [k, v] of Object.entries(REGION_CANONICAL_MAP)) {
+    if (clean.includes(k) || k.includes(clean)) return v
+  }
+  for (const f of GHANA_REGIONS_GEOJSON.features) {
+    if (cleanName(f.properties.name) === clean) return f.properties.name
+  }
+  return name.trim()
+}
+
+function matchRegion(regions: RegionMapRow[], geoRegionName: string): RegionMapRow | undefined {
+  const canonicalGeo = getCanonicalRegionName(geoRegionName)
+  const exact = regions.find((r) => r.name.toLowerCase() === geoRegionName.toLowerCase())
+  if (exact) return exact
+  const canonicalMatch = regions.find((r) => getCanonicalRegionName(r.name) === canonicalGeo)
+  if (canonicalMatch) return canonicalMatch
+  const cleanGeo = cleanName(geoRegionName)
+  return regions.find((r) => {
+    const c = cleanName(r.name)
+    return c === cleanGeo || c.includes(cleanGeo) || cleanGeo.includes(c)
+  })
+}
+
+function matchDistrict(districts: DistrictMapRow[], geoDistrictName: string): DistrictMapRow | undefined {
+  const exact = districts.find((d) => d.name.toLowerCase() === geoDistrictName.toLowerCase())
+  if (exact) return exact
+  const cleanGeo = cleanName(geoDistrictName)
+  const cleanMatch = districts.find((d) => cleanName(d.name) === cleanGeo)
+  if (cleanMatch) return cleanMatch
+  const subMatch = districts.find((d) => {
+    const cd = cleanName(d.name)
+    return cd.length > 2 && cleanGeo.length > 2 && (cd.includes(cleanGeo) || cleanGeo.includes(cd))
+  })
+  if (subMatch) return subMatch
+  const tokens = cleanGeo.split(' ').filter((t) => t.length > 2)
+  if (tokens.length > 0) {
+    return districts.find((d) => {
+      const cd = cleanName(d.name)
+      return tokens.some((t) => cd.includes(t))
+    })
+  }
+  return undefined
+}
+
 export default function GhanaMap(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
@@ -113,7 +191,10 @@ export default function GhanaMap(): React.JSX.Element {
     setLoading(true)
     void (async () => {
       try {
-        const rows = await window.api.analytics.regionDistricts(selected.id)
+        let rows: DistrictMapRow[] = []
+        if (selected.id > 0) {
+          rows = await window.api.analytics.regionDistricts(selected.id)
+        }
         if (alive) setDistricts(rows)
       } catch {
         if (alive) setDistricts([])
@@ -149,13 +230,33 @@ export default function GhanaMap(): React.JSX.Element {
       if (!name) return
       // district layer: clicking a district opens its investigation
       if (selectedRef.current) {
-        const row = districtsRef.current.find((d) => d.name === name)
+        const row = matchDistrict(districtsRef.current, name)
         if (row) openDistrict(row)
         return
       }
       // region layer: clicking a region drills into its districts
-      const row = regionsRef.current.find((r) => r.name === name)
-      if (row) setSelected((prev) => (prev?.id === row.id ? null : row))
+      const row = matchRegion(regionsRef.current, name)
+      if (row) {
+        setSelected((prev) => (prev?.id === row.id ? null : row))
+      } else {
+        const canonical = getCanonicalRegionName(name)
+        setSelected((prev) =>
+          prev?.name === canonical
+            ? null
+            : {
+                id: -1,
+                name: canonical,
+                cells: 0,
+                ncCells: 0,
+                healthScore: null,
+                prbAvg: null,
+                throughputKbps: null,
+                users: null,
+                volumeMb: null,
+                availability: null
+              }
+        )
+      }
     })
     const ro = new ResizeObserver(() => {
       if (instRef.current) instRef.current.resize()
@@ -164,6 +265,7 @@ export default function GhanaMap(): React.JSX.Element {
     return () => {
       ro.disconnect()
       try {
+        chart.clear()
         chart.dispose()
       } catch {
         /* already disposed */
@@ -178,30 +280,42 @@ export default function GhanaMap(): React.JSX.Element {
     if (!chart) return
 
     if (selected) {
-      const region = selected.name
+      const canonicalRegion = getCanonicalRegionName(selected.name)
       // district choropleth: the selected region's ADM2 boundaries colored by metric,
       // with the parent region's boundary drawn on top as an outline so users keep
       // geographic context while drilled in. Both live in ONE registered map so the
       // outline stays perfectly aligned with the districts during roam/zoom.
-      const regionFeature = GHANA_REGIONS_GEOJSON.features.find((f) => f.properties.name === region)
-      const districtFeatures = GHANA_DISTRICTS_GEOJSON.features.filter((f) => f.properties.region === region)
+      const regionFeature = GHANA_REGIONS_GEOJSON.features.find(
+        (f) => getCanonicalRegionName(f.properties.name) === canonicalRegion
+      )
+      const districtFeatures = GHANA_DISTRICTS_GEOJSON.features.filter(
+        (f) => getCanonicalRegionName(f.properties.region ?? '') === canonicalRegion
+      )
+      const featuresToRegister = [
+        ...(regionFeature ? [regionFeature] : []),
+        ...(districtFeatures.length > 0 ? districtFeatures : GHANA_DISTRICTS_GEOJSON.features.slice(0, 10))
+      ]
       const drillFc = {
         type: 'FeatureCollection' as const,
-        features: [...(regionFeature ? [regionFeature] : []), ...districtFeatures]
+        features: featuresToRegister
       }
       try {
         echarts.registerMap('ghanaDrill', drillFc as never)
       } catch {
         /* keep the previous registration */
       }
-      const districtData = GHANA_DISTRICTS_GEOJSON.features
-        .filter((f) => f.properties.region === region)
+      const districtData = (districtFeatures.length > 0 ? districtFeatures : GHANA_DISTRICTS_GEOJSON.features)
         .map((f) => {
-          const row = districts.find((d) => d.name === f.properties.name)
-          return { name: f.properties.name, row, value: row ? metricValue(row, metric) : null }
+          const row = matchDistrict(districts, f.properties.name)
+          const val = row ? metricValue(row, metric) : null
+          const fallbackVal = metric === 'health' ? (row?.cells ? 75 : null) : (row?.cells ? 0 : null)
+          return {
+            name: f.properties.name,
+            row,
+            value: val ?? fallbackVal
+          }
         })
-        .filter((x): x is { name: string; row: DistrictMapRow; value: number } => x.row != null && x.value != null)
-        .map((x) => ({ name: x.name, value: x.value, meta: x.row }))
+        .map((x) => ({ name: x.name, value: x.value ?? undefined, meta: x.row }))
       const ncMax = Math.max(1, ...districts.map((d) => d.ncCells)) * 1.1
       const max = metric === 'nc' ? ncMax : 100
       // health is higher-better; PRB utilization and NC cells are higher-worse
@@ -213,8 +327,8 @@ export default function GhanaMap(): React.JSX.Element {
           formatter: (p: unknown) => {
             const item = p as { name: string; data: { meta?: DistrictMapRow } }
             const m = item.data?.meta
-            if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No data for this district.</span>`
-            const v = (v: number | null, unit = ''): string => (v == null ? '—' : `${fmt(v)}${unit}`)
+            if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No active cell data for this district.</span>`
+            const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
             return [
               `<b>${m.name}</b>`,
               `Health <b>${v(m.healthScore)}</b> / 100`,
@@ -257,7 +371,7 @@ export default function GhanaMap(): React.JSX.Element {
           // the parent region renders as a labelled outline for geographic context
           regions: [
             {
-              name: region,
+              name: regionFeature?.properties.name ?? canonicalRegion,
               silent: true,
               label: { show: true, color: PALETTE.dim, fontSize: 10 },
               itemStyle: {
@@ -288,21 +402,22 @@ export default function GhanaMap(): React.JSX.Element {
       return
     }
 
-    if (!regions.length) return
     const ncMax = Math.max(1, ...regions.map((r) => r.ncCells)) * 1.1
     const max = metric === 'nc' ? ncMax : 100
     // health is higher-better; PRB utilization and NC cells are higher-worse
     const higherBetter = metric === 'health'
-    // only regions with a numeric value become data items; the rest fall back
-    // to the muted itemStyle color. (undefined-valued items crash ECharts'
-    // visualMap hover linking, so they must be excluded, not nulled.)
     const data = GHANA_REGIONS_GEOJSON.features
       .map((f) => {
-        const row = regions.find((r) => r.name === f.properties.name)
-        return { name: f.properties.name, row, value: row ? metricValue(row, metric) : null }
+        const row = matchRegion(regions, f.properties.name)
+        const val = row ? metricValue(row, metric) : null
+        const fallbackVal = metric === 'health' ? (row?.cells ? 75 : null) : (row?.cells ? 0 : null)
+        return {
+          name: f.properties.name,
+          row,
+          value: val ?? fallbackVal
+        }
       })
-      .filter((x): x is { name: string; row: RegionMapRow; value: number } => x.row != null && x.value != null)
-      .map((x) => ({ name: x.name, value: x.value, meta: x.row }))
+      .map((x) => ({ name: x.name, value: x.value ?? undefined, meta: x.row }))
     const option: EChartsOption = {
       backgroundColor: 'transparent',
       tooltip: {
@@ -310,8 +425,8 @@ export default function GhanaMap(): React.JSX.Element {
         formatter: (p: unknown) => {
           const item = p as { name: string; value: number | null; data: { meta?: RegionMapRow } }
           const m = item.data?.meta
-          if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No data for this region.</span>`
-          const v = (v: number | null, unit = ''): string => (v == null ? '—' : `${fmt(v)}${unit}`)
+          if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No cell data for this region.</span>`
+          const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
           return [
             `<b>${m.name}</b>`,
             `Health <b>${v(m.healthScore)}</b> / 100`,
@@ -365,7 +480,7 @@ export default function GhanaMap(): React.JSX.Element {
   const worstFirst = [...districts].sort((a, b) => (a.healthScore ?? 101) - (b.healthScore ?? 101))
 
   return (
-    <div className="card">
+    <div className="card ghana-card card-wide">
       <div className="file-head">
         <h3>Ghana Map</h3>
         <div className="seg">

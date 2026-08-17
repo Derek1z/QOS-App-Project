@@ -11,12 +11,24 @@ export default function StatusBar(): React.JSX.Element {
       <span className="status-path" title={workspace?.path}>
         {workspace ? workspace.path : 'No workspace open'}
       </span>
-      {summary && <span>{summary.rowCount.toLocaleString()} rows</span>}
-      {summary?.rulesetVersion != null && <span>Ruleset v{summary.rulesetVersion}</span>}
+      {summary && (
+        <>
+          <span className="status-sep">·</span>
+          <span className="status-stat">{summary.rowCount.toLocaleString()} rows</span>
+        </>
+      )}
+      {summary?.rulesetVersion != null && (
+        <>
+          <span className="status-sep">·</span>
+          <span className="status-stat">Ruleset v{summary.rulesetVersion}</span>
+        </>
+      )}
+      <span className="status-sep">·</span>
       <span className="status-grain">Grain: {grain}</span>
       <span className="status-spacer" />
       {error && <span className="status-error">⚠ {error}</span>}
       <span>DuckDB · offline</span>
+      <span className="status-sep">·</span>
       <span>v0.1.0</span>
       <span className="status-credit">Developed by Derrick Baalaboore ™</span>
     </footer>

@@ -1103,6 +1103,8 @@ export interface Api {
     archive(): Promise<RawArchiveResult>
     /** delete raw copies past their 90-day retention window */
     purgeArchive(): Promise<RawArchiveStatus>
+    /** convert an Excel workbook (.xlsx/.xls) to CSV at a user-chosen path */
+    exportCsv(sourcePath: string): Promise<{ path: string } | null>
   }
   workspace: {
     listRecent(): Promise<RecentWorkspace[]>

@@ -29,7 +29,6 @@ export default function Nav(): React.JSX.Element {
             >
               <span className="nav-icon">{m.icon}</span>
               <span className="nav-label">{m.label}</span>
-              {m.milestone > 0 && <span className="nav-milestone">M{m.milestone}</span>}
             </button>
           ))}
         </div>

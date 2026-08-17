@@ -25,6 +25,7 @@ import {
   analyzeFiles, previewImport, runImport, importHistory, importCoverage, importQuality,
   rawArchive, purgeRawArchive, isImportBusy
 } from './import/importer'
+import { isExcelPath, excelToCsvFile } from './import/excel'
 import {
   createSnapshot, listSnapshots, restoreSnapshot, removeSnapshot, compareSnapshots
 } from './services/snapshotService'
@@ -189,7 +190,12 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('appState:get', () => appState.load())
   ipcMain.handle('appState:set', (_e, patch: Partial<appState.AppState>) => appState.patch(patch))
 
-  ipcMain.handle('import:analyze', (_e, paths: string[]) => analyzeFiles(paths))
+  ipcMain.handle('import:analyze', (_e, paths: string[]) =>
+    analyzeFiles(paths, (p) => {
+      const w = win()
+      if (w && !w.isDestroyed()) w.webContents.send('import:progress', p)
+    })
+  )
   ipcMain.handle('import:preview', (_e, id: string, mapping: MappingConfig) => previewImport(id, mapping))
   ipcMain.handle('import:run', (_e, id: string, mapping: MappingConfig) =>
     runImport(id, mapping, {
@@ -209,6 +215,19 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('import:quality', () => importQuality())
   ipcMain.handle('import:archive', () => rawArchive())
   ipcMain.handle('import:purgeArchive', () => purgeRawArchive())
+
+  ipcMain.handle('import:exportCsv', async (_e, sourcePath: string) => {
+    if (!isExcelPath(sourcePath)) throw new Error('Not an Excel workbook: ' + sourcePath)
+    if (!existsSync(sourcePath)) throw new Error('File no longer exists: ' + sourcePath)
+    const res = await dialog.showSaveDialog({
+      title: 'Export workbook as CSV',
+      defaultPath: sourcePath.replace(/\.(xlsx|xls)$/i, '') + '.csv',
+      filters: [{ name: 'CSV files', extensions: ['csv'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    await excelToCsvFile(sourcePath, res.filePath)
+    return { path: res.filePath }
+  })
 
   ipcMain.handle('workspace:snapshots', () => listSnapshots())
   ipcMain.handle('workspace:snapshotCreate', (_e, name: string, opts?: CreateSnapshotOpts) =>

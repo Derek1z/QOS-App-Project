@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, emit, type PeriodId, type Grain } from '../store'
 import { ALL_MODULES } from '../modules'
 import { openWorkspaceFlow, createWorkspaceFlow, closeWorkspaceFlow } from '../lib/flows'
+import type { Technology } from '../../../shared/api'
 
 interface Cmd {
   id: string
@@ -26,6 +27,77 @@ export default function CommandPalette(): React.JSX.Element | null {
     ]
     if (workspace) {
       cmds.push({ id: 'close', label: 'Close Workspace', keywords: 'close exit workspace', run: () => void closeWorkspaceFlow() })
+
+      // quick technology switching
+      if (!workspace.readOnly) {
+        for (const t of ['2G', '3G', '4G'] as Technology[]) {
+          cmds.push({
+            id: `tech:${t}`,
+            label: `Switch Technology: ${t}`,
+            keywords: `technology rat mode 2g 3g 4g switch ${t.toLowerCase()}`,
+            run: async () => {
+              try {
+                const w = await window.api.workspace.setTechnology(t)
+                st.setWorkspace(w)
+                st.setSummary(await window.api.analytics.summary())
+                emit('WORKSPACE_CHANGED')
+                emit('RULESET_CHANGED')
+              } catch (e) {
+                st.setError(e instanceof Error ? e.message : String(e))
+              }
+            }
+          })
+        }
+      }
+
+      // quick workflow actions
+      cmds.push(
+        {
+          id: 'act:import',
+          label: 'Import Data Files (CSV / Excel)',
+          keywords: 'import upload data csv excel xlsx file add',
+          run: () => {
+            st.setModule('data-manager')
+            emit('MODULE_CHANGED')
+          }
+        },
+        {
+          id: 'act:export',
+          label: 'Generate Reports (Excel, PowerPoint, PDF)',
+          keywords: 'export report pack pdf excel pptx csv download schedule',
+          run: () => {
+            st.setModule('reports')
+            emit('MODULE_CHANGED')
+          }
+        },
+        {
+          id: 'act:compare',
+          label: 'Compare Periods or Regions',
+          keywords: 'compare lab diff delta baseline benchmark wow mom',
+          run: () => {
+            st.setModule('comparison-lab')
+            emit('MODULE_CHANGED')
+          }
+        },
+        {
+          id: 'act:rules',
+          label: 'Configure Ruleset & Thresholds',
+          keywords: 'rules threshold prb breach weights settings config',
+          run: () => {
+            st.setModule('workspace')
+            emit('MODULE_CHANGED')
+          }
+        },
+        {
+          id: 'act:priority',
+          label: 'Open Priority Action Queue',
+          keywords: 'priority action queue triage urgent critical investigate',
+          run: () => {
+            st.setModule('priority-center')
+            emit('MODULE_CHANGED')
+          }
+        }
+      )
     }
     for (const m of ALL_MODULES) {
       cmds.push({

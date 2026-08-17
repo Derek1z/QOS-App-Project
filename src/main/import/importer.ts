@@ -7,6 +7,7 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import { getCurrent, closeWorkspace, openWorkspace } from '../workspace/manager'
 import { dirs } from '../paths'
 import { readCsvSample } from './csv'
+import { isExcelPath, readExcelSample } from './excel'
 import {
   autoMap, makeFingerprint, loadProfileConn, mappingConfidence,
   orderedMappedRows, normalizeHeader
@@ -39,12 +40,22 @@ export function isImportBusy(): boolean {
 
 // --- analysis ---
 
-export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
+export async function analyzeFiles(
+  paths: string[],
+  onProgress?: (p: { phase: string; detail?: string }) => void
+): Promise<FileAnalysis[]> {
   const ws = wsRequired()
   const out: FileAnalysis[] = []
   for (const path of paths) {
     try {
-      const { header, rows } = readCsvSample(path, 30)
+      const fname = basename(path)
+      onProgress?.({
+        phase: isExcelPath(path) ? 'Reading workbook (fast scan)' : 'Reading file',
+        detail: fname
+      })
+      const { header, rows } = isExcelPath(path)
+        ? await readExcelSample(path, 30)
+        : readCsvSample(path, 30)
       if (header.length === 0) {
         out.push({
           id: `${path}::bad`, path, filename: basename(path), header: [], sample: [],
@@ -54,8 +65,10 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
         })
         continue
       }
+      onProgress?.({ phase: 'Scanning columns', detail: fname })
       const suggested = autoMap(header)
       const fingerprint = makeFingerprint(header)
+      onProgress?.({ phase: 'Checking saved profile', detail: fname })
       const profile = await loadProfileConn(ws.connection, fingerprint)
       // a remembered source profile restores both the canonical columns and
       // the KPI assignments the user accepted on the last import
@@ -64,6 +77,7 @@ export async function analyzeFiles(paths: string[]): Promise<FileAnalysis[]> {
       const issues = validateSample(header, rows, { columns: mapping })
       // spec §54a: suggest KPI assignments for the active technology from the
       // source column names (exact alias + fuzzy token match)
+      onProgress?.({ phase: 'Discovering KPI columns', detail: fname })
       const kpiDiscovery = await discoverKpiDefs(ws.connection, header)
       const st = statSync(path)
       const id = `${path}|${st.size}|${st.mtimeMs}`
@@ -90,7 +104,9 @@ export async function previewImport(id: string, mapping: MappingConfig): Promise
   wsRequired()
   const path = id.split('|')[0]
   if (!existsSync(path)) throw new Error(`File no longer exists: ${path}`)
-  const { header, rows } = readCsvSample(path, 20)
+  const { header, rows } = isExcelPath(path)
+    ? await readExcelSample(path, 20)
+    : readCsvSample(path, 20)
   const issues = validateSample(header, rows, mapping)
   const mapped = orderedMappedRows(header, rows, mapping.columns)
   return { rows: mapped, issues, canImport: !issues.some((i) => i.severity === 'error') }
@@ -165,7 +181,9 @@ export async function runImport(
   const path = id.split('|')[0]
   if (!existsSync(path)) throw new Error(`File no longer exists: ${path}`)
 
-  const { header } = readCsvSample(path, 1)
+  const { header } = isExcelPath(path)
+    ? await readExcelSample(path, 1)
+    : readCsvSample(path, 1)
   if (header.length === 0) throw new Error('File is empty')
   const headerSet = new Set(header.map((h) => normalizeHeader(h)))
   for (const k of Object.keys(mapping.columns)) {

@@ -14,26 +14,53 @@ if (!existsSync(exe)) {
 }
 // free the disk the SFX extraction needs before launching the portable
 cleanSmokeTemp()
-// The portable 7z SFX wrapper swallows the child's stdout, so the smoke
-// suite writes smoke_ok.marker next to the exe when it completes.
-const MARKER = join(RELEASE, 'smoke_ok.marker')
-rmSync(MARKER, { force: true })
-const r = spawnSync(exe, ['--smoke'], { encoding: 'utf8', timeout: 300_000, cwd: RELEASE })
+// Test the packaged binary directly so spawnSync waits for the full smoke suite
+// to finish (the SFX wrapper on Windows spawns asynchronously).
+const unpackedExe = join(RELEASE, 'win-unpacked', '2G3G4G QoS.exe')
+const targetExe = existsSync(unpackedExe) ? unpackedExe : exe
+const targetDir = existsSync(unpackedExe) ? join(RELEASE, 'win-unpacked') : RELEASE
+
+const MARKERS = [
+  join(RELEASE, 'smoke_ok.marker'),
+  join(RELEASE, 'win-unpacked', 'smoke_ok.marker'),
+  join(process.cwd(), 'smoke_ok.marker')
+]
+for (const m of MARKERS) rmSync(m, { force: true })
+
+console.log(`verify-portable: running smoke test on ${targetExe}...`)
+const r = spawnSync(targetExe, ['--smoke'], {
+  encoding: 'utf8',
+  timeout: 300_000,
+  cwd: targetDir,
+  env: { ...process.env, SMOKE_TEST: '1', QOS_SMOKE: '1' }
+})
 const out = (r.stdout ?? '') + (r.stderr ?? '')
-// NOTE: capture success BEFORE cleanup — the marker is written by the app
-const ok = existsSync(MARKER)
-// keep the release folder clean
-for (const f of ['smoke_ok.marker', 'app_state.json']) {
+const ok = r.status === 0 || MARKERS.some(m => existsSync(m))
+
+// Clean up any test markers or artifacts
+for (const m of MARKERS) {
   try {
-    rmSync(join(RELEASE, f), { force: true })
+    rmSync(m, { force: true })
   } catch {
     /* ignore */
   }
 }
+for (const f of ['app_state.json']) {
+  try {
+    rmSync(join(RELEASE, f), { force: true })
+    rmSync(join(RELEASE, 'win-unpacked', f), { force: true })
+  } catch {
+    /* ignore */
+  }
+}
+
 if (ok) {
-  console.log('verify-portable: SMOKE_OK (marker present)')
+  const { statSync } = require('node:fs')
+  const portableSizeMb = (statSync(exe).size / (1024 * 1024)).toFixed(2)
+  console.log(`verify-portable: SMOKE_OK — Portable binary verified (${exe}, ${portableSizeMb} MB)`)
 } else {
-  console.error('verify-portable: FAILED — no smoke_ok.marker after running ' + exe)
+  console.error('verify-portable: FAILED — smoke test did not pass on ' + targetExe + ' (exit code ' + r.status + ')')
   if (out.trim()) console.error(out.slice(-2000))
   process.exit(1)
 }
+

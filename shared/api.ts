@@ -34,8 +34,18 @@ export interface WorkspaceInfo {
 
 // --- per-technology KPI definition registry (spec §54a) ---------------------
 
-/** How an extra (non-canonical) KPI is rolled up from daily facts. */
+/** How an extra KPI is rolled up from daily facts. */
 export type KpiAgg = 'avg' | 'sum' | 'max' | 'min'
+
+export type KpiCategory =
+  | 'Congestion'
+  | 'Accessibility'
+  | 'Retainability'
+  | 'Integrity'
+  | 'Availability'
+  | 'Mobility'
+
+export type BetterDirection = 'higher_is_better' | 'lower_is_better'
 
 export interface KpiDefinition {
   kpiId: number
@@ -46,17 +56,126 @@ export interface KpiDefinition {
   unit: string
   /** true = higher values are worse (congestion, drop rate); false = higher is better */
   worseIsHigher: boolean
+  betterDirection: BetterDirection
+  category: KpiCategory
   /** editable target/objective for breach flags and scoring */
   target: number | null
+  warningThreshold: number | null
+  criticalThreshold: number | null
   agg: KpiAgg
+  isCore: boolean
+  supportsCongestionAnalysis: boolean
+  supportsPersistentNc: boolean
+  showInExecutiveView: boolean
+  decimalPrecision: number
   /** source header aliases matched during import auto-mapping */
   sourceHeaders: string[]
+  aliases: string[]
   isCustom: boolean
+  isDerived?: boolean
+  formulaJson?: string
   active: boolean
   sortOrder: number
   createdAt: string
   updatedAt: string
 }
+
+export type DerivedOperation = 'SUM' | 'AVERAGE' | 'RATIO' | 'CUSTOM'
+
+export interface DerivedKPI {
+  id: string
+  name: string
+  technology: Technology
+  operation: DerivedOperation
+  sourceKPIs: string[]
+  unit?: string
+  target?: number | null
+  warningThreshold?: number | null
+  criticalThreshold?: number | null
+  direction?: BetterDirection
+  category?: KpiCategory
+  isCore?: boolean
+  isDerived?: boolean
+  enabled?: boolean
+  treatMissingAsZero?: boolean
+  description?: string
+}
+
+export interface DerivedKpiSuggestion {
+  derivedKpi: DerivedKPI
+  canCalculate: boolean
+  matchedSources: string[]
+  missingSources: string[]
+}
+
+export const BUILTIN_DERIVED_KPIS: DerivedKPI[] = [
+  {
+    id: '3g_dl_power_congestion',
+    name: 'DL Power Congestion',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RRC.Rej.DLPower.Cong',
+      'VS.RAB.FailEstabPS.DLPower.Cong',
+      'VS.RAB.FailEstabCS.DLPower.Cong'
+    ],
+    direction: 'lower_is_better',
+    category: 'Congestion',
+    unit: 'events',
+    target: 100,
+    warningThreshold: 80,
+    criticalThreshold: 200,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Downlink Power Congestion from RRC Rejections and PS/CS RAB Establishment Failures'
+  },
+  {
+    id: '3g_ul_ce_congestion',
+    name: 'UL CE Congestion',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RRC.Rej.ULCE.Cong',
+      'VS.RAB.FailEstabPS.ULCE.Cong',
+      'VS.RAB.FailEstabCS.ULCE.Cong'
+    ],
+    direction: 'lower_is_better',
+    category: 'Congestion',
+    unit: 'events',
+    target: 50,
+    warningThreshold: 40,
+    criticalThreshold: 100,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Uplink Channel Element (CE) Congestion from RRC Rejections and RAB Establishment Failures'
+  },
+  {
+    id: '3g_phych_failures',
+    name: 'PhyCh Failures',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RAB.FailEstabPS.PhyChFail',
+      'VS.FailRBRecfg.PhyChFail',
+      'VS.FailRBSetup.PhyChFail'
+    ],
+    direction: 'lower_is_better',
+    category: 'Accessibility',
+    unit: 'events',
+    target: 30,
+    warningThreshold: 25,
+    criticalThreshold: 60,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Physical Channel Failures across RAB establishment, RB reconfiguration and RB setup'
+  }
+]
 
 export type KpiDefPatch = Partial<
   Omit<KpiDefinition, 'createdAt' | 'updatedAt'>
@@ -172,6 +291,8 @@ export interface FileAnalysis {
   knownProfile: boolean
   /** technology inferred from the source headers (BTS/NodeB/eNodeB signals) */
   detectedTechnology?: Technology | null
+  /** auto-detected derived KPIs possible from the source counters */
+  derivedSuggestions?: DerivedKpiSuggestion[]
   errors: string[]
 }
 
@@ -425,7 +546,7 @@ export interface ScheduledRunResult {
 
 // --- M2 analytics engine contracts (spec §20-§22, §35-§39, §43, §29) ---
 
-export type Lifecycle = 'Healthy' | 'New NC' | 'Recurring NC' | 'Persistent NC' | 'Recovering'
+export type Lifecycle = 'Healthy' | 'New NC' | 'Recurring NC' | 'Persistent NC' | 'Chronic NC' | 'Recovering'
 export type Trend = 'Improving' | 'Stable' | 'Worsening'
 export type Severity = 'Normal' | 'Watch' | 'High' | 'Critical'
 export type PriorityMode = 'balanced' | 'customer' | 'congestion' | 'persistence' | 'deterioration'
@@ -780,11 +901,21 @@ export interface DiagnosisFinding {
 export interface Hypothesis {
   id: string
   title: string
+  confidence: 'High' | 'Medium' | 'Low'
   score: number
   verdict: 'consistent' | 'suggests' | 'not supported'
   supporting: string[]
   contradicting: string[]
+  evidence?: string[]
+  affectedKpis?: string[]
+  duration?: string
+  severity?: Severity
+  recommendedChecks?: string[]
+  possibleActions?: string[]
+  recommendations?: string[]
 }
+
+export type DiagnosticHypothesis = Hypothesis
 
 export interface InvestigationEvent {
   id: number
@@ -858,6 +989,10 @@ export interface EntityOption {
   id: number
   name: string
   path: string[]
+  severity?: Severity
+  lifecycle?: Lifecycle
+  score?: number
+  issue?: string
 }
 
 // --- forecasting & early warning (§45–46) ----------------------------------
@@ -932,6 +1067,8 @@ export interface ForecastOpts {
   entityId?: number | null
   metric?: ForecastMetric
   horizon?: ForecastHorizon
+  grain?: Grain
+  period?: PeriodId
 }
 
 // --- reporting center (§51–56) ---------------------------------------------
@@ -1105,16 +1242,130 @@ export interface Rules {
   version: number
   createdAt: string
   prbThresholdPct: number
+  tchCongestionThresholdPct: number
+  sdcchCongestionThresholdPct: number
+  cssrThresholdPct: number
+  callDropThresholdPct: number
+  dataAccessThresholdPct: number
+  dataServiceFailureThresholdPct: number
   weeklyBreachDays: number
   persistentWeeks: number
+  chronicWeeks: number
   districtNcThresholdPct: number
   priorityWeights: number[]
+  kpiThresholds?: Record<string, number>
   notes: string | null
 }
 
 export type RulesPatch = Partial<
   Omit<Rules, 'version' | 'createdAt'>
 >
+
+// --- Executive Overview & Cross-Tech Contracts ---
+
+export interface DynamicKpiCardData {
+  kpiId: number
+  key: string
+  label: string
+  technology: Technology
+  unit: string
+  category: KpiCategory
+  isCore: boolean
+  isDerived: boolean
+  currentValue: number | null
+  previousValue?: number | null
+  formattedValue: string // e.g. "98.7%" or "Data unavailable"
+  target: number | null
+  warningThreshold?: number | null
+  criticalThreshold?: number | null
+  betterDirection: BetterDirection
+  worseIsHigher: boolean
+  complianceStatus: 'compliant' | 'warning' | 'non_compliant' | 'unavailable'
+  trend: 'improving' | 'worsening' | 'stable' | 'unknown'
+  delta?: number | null
+  deltaPct?: number | null
+  nonCompliantCellCount: number
+  nonCompliantCellPct: number | null
+  persistentNcCount: number
+  sparkline?: number[]
+  missingSources?: string[]
+  isBreached: boolean
+}
+
+export type ExecutiveKpiCardData = DynamicKpiCardData
+
+export interface TechHealthCard {
+  technology: Technology
+  healthScore: number
+  previousHealthScore?: number
+  healthDelta?: number
+  cellCount: number
+  ncCellCount: number
+  compliancePct: number
+  primaryKpis: DynamicKpiCardData[]
+  availableKpiCards: DynamicKpiCardData[]
+}
+
+export interface ExecutiveProblemSummary {
+  topProblemCategory?: string
+  criticalCellCount: number
+  chronicCellCount: number
+  persistentCellCount: number
+  degradingDistricts: string[]
+  keyRecommendations: string[]
+}
+
+export interface ExecutiveOverviewResult {
+  asOf: string | null
+  periodLabel?: string
+  overallHealthScore: number
+  overallHealthDelta?: number | null
+  activeTechnology: Technology
+  technologies: TechHealthCard[]
+  problemSummary: ExecutiveProblemSummary
+  availableKpiCards: DynamicKpiCardData[]
+  networkKpiCards?: DynamicKpiCardData[]
+}
+
+// --- Synthetic Telecom Data Generator Contracts ---
+
+export type SyntheticFaultScenario =
+  | 'lte_congestion'
+  | '2g_tch_congestion'
+  | '2g_sdcch_congestion'
+  | '3g_data_accessibility'
+  | 'sleeping_cell'
+  | 'transport_bottleneck'
+  | 'high_drop_rate'
+  | 'intermittent_degradation'
+
+export interface SyntheticDataConfig {
+  technology?: Technology | 'All'
+  technologies?: Technology[]
+  durationDays?: number
+  weeks?: number
+  siteCount?: number
+  cellsPerSite?: number
+  cellsPerTech?: number
+  interval?: 'hourly' | 'daily' | 'peak_hour'
+  injectedScenarios?: SyntheticFaultScenario[]
+  faultScenarios?: string[]
+  outputPath?: string
+  destDir?: string
+}
+
+export interface SyntheticGenerateResult {
+  path: string
+  outputPath?: string
+  filename: string
+  rowCount: number
+  rowsCount?: number
+  technology?: Technology | 'All'
+  technologies: Technology[]
+  weeksCount?: number
+  cellsCount?: number
+  injectedFaultsCount: number
+}
 
 /** Progress event streamed from the import worker while a CSV is being staged,
  *  validated, merged and re-aggregated (M5 background-import hardening). */
@@ -1182,16 +1433,20 @@ export interface Api {
       grain?: Grain
       technology?: Technology
     }): Promise<Summary | null>
-    ncLifecycle(): Promise<NcLifecycleResult>
-    ncMovement(limit?: number): Promise<NcMovementRow[]>
+    executiveOverview(opts?: {
+      period?: PeriodId
+      grain?: Grain
+    }): Promise<ExecutiveOverviewResult>
+    ncLifecycle(grain?: Grain): Promise<NcLifecycleResult>
+    ncMovement(limit?: number, grain?: Grain): Promise<NcMovementRow[]>
     priorityQueue(mode: PriorityMode, limit?: number): Promise<PriorityRow[]>
     health(grain?: Grain): Promise<HealthResult>
     healthMatrix(
       scope: HealthScope,
-      opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }
+      opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name'; grain?: Grain }
     ): Promise<HealthMatrixResult>
     /** Per-technology KPI breach summary + worst cells (spec §54a). */
-    kpiOverview(limit?: number): Promise<KpiOverviewResult>
+    kpiOverview(limit?: number, grain?: Grain): Promise<KpiOverviewResult>
     cellIntelligence(opts?: {
       search?: string
       lifecycle?: Lifecycle | ''
@@ -1201,12 +1456,14 @@ export interface Api {
       limit?: number
       offset?: number
     }): Promise<CellIntelligenceResult>
-    cellDetail(cellId: number): Promise<CellDetail | null>
-    performance(): Promise<PerformanceResult>
+    cellDetail(cellId: number, grain?: Grain): Promise<CellDetail | null>
+    performance(opts?: { grain?: Grain; period?: PeriodId }): Promise<PerformanceResult>
     comparison(opts?: {
       type?: ComparisonType
       scope?: CompareScope
       metric?: CompareMetric
+      grain?: Grain
+      period?: PeriodId
     }): Promise<ComparisonResult>
     explorer(
       level: ExplorerLevel,
@@ -1234,13 +1491,23 @@ export interface Api {
     discover(headers: string[], technology?: Technology): Promise<KpiDiscovery>
     /** (re)create the built-in per-technology seed sets */
     seed(technology?: Technology): Promise<KpiDefinition[]>
+    /** reset targets and thresholds to default values */
+    resetDefaults(technology?: Technology): Promise<KpiDefinition[]>
+  }
+  derived: {
+    /** list derived KPI definitions */
+    list(technology?: Technology): Promise<DerivedKPI[]>
+    /** save or update a derived KPI configuration */
+    save(def: DerivedKPI): Promise<DerivedKPI>
+    /** detect which derived KPIs can be formed from given headers */
+    detect(headers: string[], technology?: Technology): Promise<DerivedKpiSuggestion[]>
   }
   investigation: {
     search(scope: InvestigationScope, q?: string): Promise<EntityOption[]>
     get(
       scope: InvestigationScope,
       entityId: number,
-      opts?: { interventionWeek?: string }
+      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }
     ): Promise<InvestigationResult | null>
     setStatus(
       scope: InvestigationScope,
@@ -1268,6 +1535,9 @@ export interface Api {
     due(): Promise<DueReport[]>
     history(): Promise<ReportHistoryRow[]>
     reveal(path: string): Promise<void>
+  }
+  synthetic: {
+    generate(config: SyntheticDataConfig): Promise<SyntheticGenerateResult>
   }
   appState: {
     get(): Promise<AppStateData>

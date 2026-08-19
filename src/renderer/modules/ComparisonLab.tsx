@@ -7,7 +7,7 @@ import type {
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { formatCompare, rankingOption, rankRows } from '../lib/comparisonCharts'
-import { weekLabel } from '../lib/overviewCharts'
+import { formatTimeLabel } from '../lib/overviewCharts'
 
 const TYPES: Array<{ id: ComparisonType; label: string }> = [
   { id: 'period', label: 'Period vs Period' },
@@ -84,6 +84,8 @@ function KpiCard({ k, mode }: { k: ComparisonKpi; mode: ComparisonType }): React
 
 export default function ComparisonLab(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
+  const period = useAppStore((s) => s.period)
   const [type, setType] = useState<ComparisonType>('period')
   const [scope, setScope] = useState<CompareScope>('cell')
   const [metric, setMetric] = useState<CompareMetric>('prb')
@@ -99,7 +101,7 @@ export default function ComparisonLab(): React.JSX.Element {
     setError(null)
     void (async () => {
       try {
-        const r = await window.api.analytics.comparison({ type, scope, metric })
+        const r = await window.api.analytics.comparison({ type, scope, metric, grain, period })
         if (alive) setResult(r)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
@@ -110,7 +112,7 @@ export default function ComparisonLab(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly, type, scope, metric])
+  }, [workspace?.path, workspace?.readOnly, type, scope, metric, grain, period])
 
   const ranked = useMemo(() => (result ? rankRows(result, sort) : []), [result, sort])
   const chartRows = ranked.slice(0, 15)
@@ -126,8 +128,8 @@ export default function ComparisonLab(): React.JSX.Element {
         <span className="module-workspace">{workspace?.name}</span>
         {result && (
           <span className="module-workspace">
-            {result.aLabel} ({weekLabel(result.aLabel)}) vs {result.bLabel}
-            {result.type === 'region' ? '' : ` (${weekLabel(result.bLabel)})`} · {result.totalRows.toLocaleString()}{' '}
+            {result.aLabel} ({formatTimeLabel(result.aLabel, grain)}) vs {result.bLabel}
+            {result.type === 'region' ? '' : ` (${formatTimeLabel(result.bLabel, grain)})`} · {result.totalRows.toLocaleString()}{' '}
             {result.scope === 'cell' ? 'cells' : result.scope === 'site' ? 'sites' : result.scope === 'district' ? 'districts' : 'regions'}
           </span>
         )}

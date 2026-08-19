@@ -15,9 +15,17 @@ interface Draft {
   key: string
   label: string
   unit: string
+  category: KpiDefinition['category']
+  betterDirection: KpiDefinition['betterDirection']
   worseIsHigher: boolean
   target: string
+  warningThreshold: string
+  criticalThreshold: string
   agg: KpiDefinition['agg']
+  isCore: boolean
+  supportsCongestion: boolean
+  supportsPersistentNc: boolean
+  showInExecutive: boolean
   aliases: string
 }
 
@@ -25,9 +33,17 @@ const EMPTY_DRAFT: Draft = {
   key: '',
   label: '',
   unit: '',
+  category: 'Congestion',
+  betterDirection: 'lower_is_better',
   worseIsHigher: true,
   target: '',
+  warningThreshold: '',
+  criticalThreshold: '',
   agg: 'avg',
+  isCore: false,
+  supportsCongestion: false,
+  supportsPersistentNc: true,
+  showInExecutive: true,
   aliases: ''
 }
 
@@ -69,10 +85,18 @@ export default function KpiDefinitions(): React.JSX.Element {
       key: d.key,
       label: d.label,
       unit: d.unit,
+      category: d.category ?? 'Congestion',
+      betterDirection: d.betterDirection ?? (d.worseIsHigher ? 'lower_is_better' : 'higher_is_better'),
       worseIsHigher: d.worseIsHigher,
       target: d.target == null ? '' : String(d.target),
+      warningThreshold: d.warningThreshold == null ? '' : String(d.warningThreshold),
+      criticalThreshold: d.criticalThreshold == null ? '' : String(d.criticalThreshold),
       agg: d.agg,
-      aliases: d.sourceHeaders.join(', ')
+      isCore: d.isCore ?? false,
+      supportsCongestion: d.supportsCongestionAnalysis ?? false,
+      supportsPersistentNc: d.supportsPersistentNc ?? true,
+      showInExecutive: d.showInExecutiveView ?? true,
+      aliases: (d.aliases ?? d.sourceHeaders).join(', ')
     })
   }
 
@@ -90,10 +114,9 @@ export default function KpiDefinitions(): React.JSX.Element {
     setError(null)
     try {
       const target = draft.target.trim() === '' ? null : Number(draft.target)
-      if (draft.target.trim() !== '' && Number.isNaN(target)) {
-        setError('Target must be a number')
-        return
-      }
+      const warningThreshold = draft.warningThreshold.trim() === '' ? null : Number(draft.warningThreshold)
+      const criticalThreshold = draft.criticalThreshold.trim() === '' ? null : Number(draft.criticalThreshold)
+
       const aliases = draft.aliases
         .split(',')
         .map((s) => s.trim())
@@ -103,10 +126,19 @@ export default function KpiDefinitions(): React.JSX.Element {
         key: draft.key.trim(),
         label: draft.label.trim(),
         unit: draft.unit.trim(),
-        worseIsHigher: draft.worseIsHigher,
+        category: draft.category,
+        betterDirection: draft.betterDirection,
+        worseIsHigher: draft.betterDirection === 'lower_is_better',
         target,
+        warningThreshold,
+        criticalThreshold,
         agg: draft.agg,
+        isCore: draft.isCore,
+        supportsCongestionAnalysis: draft.supportsCongestion,
+        supportsPersistentNc: draft.supportsPersistentNc,
+        showInExecutiveView: draft.showInExecutive,
         sourceHeaders: aliases,
+        aliases,
         active: true,
         ...(editingId != null ? { kpiId: editingId } : {})
       }
@@ -151,9 +183,9 @@ export default function KpiDefinitions(): React.JSX.Element {
   return (
     <div className="module">
       <div className="module-head">
-        <h2>KPI Definitions</h2>
+        <h2>KPI Definitions & Registry</h2>
         <span className="module-workspace">{workspace?.name}</span>
-        <span className="badge">spec §54a</span>
+        <span className="badge">Multi-Tech</span>
         {readOnly && <span className="badge badge-ro">READ ONLY</span>}
       </div>
 
@@ -171,8 +203,8 @@ export default function KpiDefinitions(): React.JSX.Element {
       <div className="card">
         <div className="kpi-page-head">
           <span className="card-note">
-            {tech} KPIs drive Cell Intelligence and analysis. Targets flag breaches —
-            higher-worse KPIs breach above the target, lower-worse below it.
+            Centralized {tech} KPI Registry — Core KPIs drive Executive View summaries, Compliance analysis,
+            and Investigations.
           </span>
           <button className="btn" disabled={seeding || readOnly} onClick={() => void seed()}>
             {seeding ? 'Seeding…' : 'Re-seed built-ins'}
@@ -190,37 +222,42 @@ export default function KpiDefinitions(): React.JSX.Element {
             <table className="data-table kpi-table">
               <thead>
                 <tr>
-                  <th>Label</th>
-                  <th>Key</th>
+                  <th>Category</th>
+                  <th>Label / Key</th>
                   <th>Unit</th>
-                  <th>Worse = higher</th>
+                  <th>Direction</th>
                   <th>Target</th>
-                  <th>Aggregation</th>
-                  <th>Source aliases</th>
+                  <th>Warning</th>
+                  <th>Critical</th>
+                  <th>Type</th>
+                  <th>Aliases</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {defs.map((d) => (
                   <tr key={d.kpiId}>
+                    <td><span className="badge">{d.category ?? 'General'}</span></td>
                     <td>
-                      {d.label}
-                      {!d.isCustom && <span className="badge">built-in</span>}
+                      <b>{d.label}</b>
+                      <br />
+                      <code>{d.key}</code>
                     </td>
-                    <td><code>{d.key}</code></td>
                     <td>{d.unit || '—'}</td>
-                    <td>{d.worseIsHigher ? '↑ worse' : '↓ worse'}</td>
+                    <td>{d.betterDirection === 'higher_is_better' ? '↑ Higher' : '↓ Lower'}</td>
                     <td>
-                      {d.target == null ? (
-                        '—'
-                      ) : (
+                      {d.target == null ? '—' : (
                         <span className={d.worseIsHigher ? 'target-high' : 'target-low'}>
                           {d.target}
                         </span>
                       )}
                     </td>
-                    <td>{d.agg}</td>
-                    <td className="map-src">{d.sourceHeaders.slice(0, 3).join(', ') || '—'}</td>
+                    <td>{d.warningThreshold == null ? '—' : d.warningThreshold}</td>
+                    <td>{d.criticalThreshold == null ? '—' : d.criticalThreshold}</td>
+                    <td>
+                      {d.isCore ? <span className="badge" style={{ background: 'rgba(37,99,235,0.2)', color: 'var(--accent)' }}>Core</span> : <span className="badge">Secondary</span>}
+                    </td>
+                    <td className="map-src">{(d.aliases ?? d.sourceHeaders).slice(0, 3).join(', ') || '—'}</td>
                     <td className="row-actions kpi-row-actions">
                       <button className="btn" disabled={readOnly} onClick={() => startEdit(d)}>Edit</button>
                       <button className="btn" disabled={readOnly} onClick={() => void remove(d)}>✕</button>
@@ -235,12 +272,12 @@ export default function KpiDefinitions(): React.JSX.Element {
 
       <div className="card">
         <div className="module-head">
-          <h3>{editingId != null ? 'Edit KPI' : 'Add KPI'}</h3>
+          <h3>{editingId != null ? 'Edit KPI Definition' : 'Add KPI Definition'}</h3>
           <span className="card-note">{tech}</span>
         </div>
         <div className="kpi-form">
           <label className="kpi-field">
-            <span>Key (machine id, e.g. tch_congestion)</span>
+            <span>Key (machine identifier, e.g. tch_congestion)</span>
             <input
               className="input"
               value={draft.key}
@@ -250,13 +287,28 @@ export default function KpiDefinitions(): React.JSX.Element {
             />
           </label>
           <label className="kpi-field">
-            <span>Label</span>
+            <span>Display Label</span>
             <input
               className="input"
               value={draft.label}
               onChange={(e) => setDraft({ ...draft, label: e.target.value })}
               placeholder="My KPI"
             />
+          </label>
+          <label className="kpi-field">
+            <span>Category</span>
+            <select
+              className="sel"
+              value={draft.category}
+              onChange={(e) => setDraft({ ...draft, category: e.target.value as KpiDefinition['category'] })}
+            >
+              <option value="Congestion">Congestion</option>
+              <option value="Accessibility">Accessibility</option>
+              <option value="Retainability">Retainability</option>
+              <option value="Integrity">Integrity</option>
+              <option value="Availability">Availability</option>
+              <option value="Mobility">Mobility</option>
+            </select>
           </label>
           <label className="kpi-field">
             <span>Unit</span>
@@ -268,27 +320,49 @@ export default function KpiDefinitions(): React.JSX.Element {
             />
           </label>
           <label className="kpi-field">
-            <span>Target (optional)</span>
+            <span>Direction of Compliance</span>
+            <select
+              className="sel"
+              value={draft.betterDirection}
+              onChange={(e) => setDraft({
+                ...draft,
+                betterDirection: e.target.value as KpiDefinition['betterDirection'],
+                worseIsHigher: e.target.value === 'lower_is_better'
+              })}
+            >
+              <option value="lower_is_better">Lower is better (Worse = Higher)</option>
+              <option value="higher_is_better">Higher is better (Worse = Lower)</option>
+            </select>
+          </label>
+          <label className="kpi-field">
+            <span>Target Threshold</span>
             <input
               className="input"
               value={draft.target}
               onChange={(e) => setDraft({ ...draft, target: e.target.value })}
-              placeholder="e.g. 80"
+              placeholder="e.g. 2.0 or 98.5"
             />
           </label>
           <label className="kpi-field">
-            <span>Worse = higher</span>
-            <select
-              className="sel"
-              value={draft.worseIsHigher ? '1' : '0'}
-              onChange={(e) => setDraft({ ...draft, worseIsHigher: e.target.value === '1' })}
-            >
-              <option value="1">Yes — high values are bad</option>
-              <option value="0">No — low values are bad</option>
-            </select>
+            <span>Warning Threshold (Optional)</span>
+            <input
+              className="input"
+              value={draft.warningThreshold}
+              onChange={(e) => setDraft({ ...draft, warningThreshold: e.target.value })}
+              placeholder="e.g. 1.8 or 97.0"
+            />
           </label>
           <label className="kpi-field">
-            <span>Aggregation</span>
+            <span>Critical Threshold (Optional)</span>
+            <input
+              className="input"
+              value={draft.criticalThreshold}
+              onChange={(e) => setDraft({ ...draft, criticalThreshold: e.target.value })}
+              placeholder="e.g. 5.0 or 95.0"
+            />
+          </label>
+          <label className="kpi-field">
+            <span>Aggregation Method</span>
             <select
               className="sel"
               value={draft.agg}
@@ -299,13 +373,24 @@ export default function KpiDefinitions(): React.JSX.Element {
               ))}
             </select>
           </label>
+          <label className="kpi-field">
+            <span>Core KPI Status</span>
+            <select
+              className="sel"
+              value={draft.isCore ? '1' : '0'}
+              onChange={(e) => setDraft({ ...draft, isCore: e.target.value === '1' })}
+            >
+              <option value="1">Core / Primary KPI</option>
+              <option value="0">Secondary KPI</option>
+            </select>
+          </label>
           <label className="kpi-field kpi-field-wide">
-            <span>Source aliases (comma-separated, used for import auto-mapping)</span>
+            <span>Source Aliases (Comma-separated column names for auto-mapping)</span>
             <input
               className="input"
               value={draft.aliases}
               onChange={(e) => setDraft({ ...draft, aliases: e.target.value })}
-              placeholder="tch congestion, tch congestion (%)"
+              placeholder="e.g. tch congestion, tch_congestion, tch congestion (%)"
             />
           </label>
           <div className="row-actions">

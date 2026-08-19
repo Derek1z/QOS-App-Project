@@ -13,7 +13,7 @@
     "icon": "node scripts/generate-icon.cjs",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
-    "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron . --smoke",
+    "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && mkdir -p /tmp/qos-runtime && XDG_RUNTIME_DIR=/tmp/qos-runtime XDG_CONFIG_HOME=/tmp/qos-runtime XDG_CACHE_HOME=/tmp/qos-runtime WAYLAND_DISPLAY= DISPLAY= electron . --smoke --no-sandbox --ozone-platform=headless --headless",
     "preview:web": "vite --config .preview/vite.config.ts",
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
     "dist": "node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",

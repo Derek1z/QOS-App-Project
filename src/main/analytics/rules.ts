@@ -13,9 +13,17 @@ export const DEFAULT_PRIORITY_WEIGHTS = [25, 20, 15, 15, 15, 10]
 export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
   const r = await conn.runAndReadAll(
     `SELECT CAST(version AS DOUBLE) AS version, CAST(created_at AS VARCHAR) AS created_at,
-            prb_threshold_pct, CAST(weekly_breach_days AS DOUBLE) AS weekly_breach_days,
+            prb_threshold_pct,
+            COALESCE(tch_congestion_threshold_pct, 2.0) AS tch_congestion_threshold_pct,
+            COALESCE(sdcch_congestion_threshold_pct, 2.0) AS sdcch_congestion_threshold_pct,
+            COALESCE(cssr_threshold_pct, 98.5) AS cssr_threshold_pct,
+            COALESCE(call_drop_threshold_pct, 1.5) AS call_drop_threshold_pct,
+            COALESCE(data_access_threshold_pct, 98.0) AS data_access_threshold_pct,
+            COALESCE(data_service_failure_threshold_pct, 1.0) AS data_service_failure_threshold_pct,
+            CAST(weekly_breach_days AS DOUBLE) AS weekly_breach_days,
             CAST(persistent_weeks AS DOUBLE) AS persistent_weeks,
-            district_nc_threshold_pct, priority_weights, notes
+            CAST(COALESCE(chronic_weeks, 7) AS DOUBLE) AS chronic_weeks,
+            district_nc_threshold_pct, priority_weights, kpi_thresholds, notes
      FROM ruleset ORDER BY version DESC LIMIT 1`
   )
   const row = r.getRowObjects()[0]
@@ -31,14 +39,32 @@ export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
       /* fall back to defaults */
     }
   }
+  let kpiThresholds: Record<string, number> = {}
+  if (row.kpi_thresholds) {
+    try {
+      const parsed = JSON.parse(String(row.kpi_thresholds))
+      if (parsed && typeof parsed === 'object') kpiThresholds = parsed as Record<string, number>
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
     version: Number(row.version),
     createdAt: String(row.created_at ?? ''),
     prbThresholdPct: Number(row.prb_threshold_pct),
+    tchCongestionThresholdPct: Number(row.tch_congestion_threshold_pct),
+    sdcchCongestionThresholdPct: Number(row.sdcch_congestion_threshold_pct),
+    cssrThresholdPct: Number(row.cssr_threshold_pct),
+    callDropThresholdPct: Number(row.call_drop_threshold_pct),
+    dataAccessThresholdPct: Number(row.data_access_threshold_pct),
+    dataServiceFailureThresholdPct: Number(row.data_service_failure_threshold_pct),
     weeklyBreachDays: Number(row.weekly_breach_days ?? 1),
     persistentWeeks: Number(row.persistent_weeks ?? 3),
+    chronicWeeks: Number(row.chronic_weeks ?? 7),
     districtNcThresholdPct: Number(row.district_nc_threshold_pct),
     priorityWeights: weights,
+    kpiThresholds,
     notes: row.notes ? String(row.notes) : null
   }
 }
@@ -54,6 +80,30 @@ export function validateRules(patch: RulesPatch): void {
     const p = Number(patch.prbThresholdPct)
     if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('PRB threshold must be between 0 and 100')
   }
+  if (patch.tchCongestionThresholdPct != null) {
+    const p = Number(patch.tchCongestionThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('TCH Congestion threshold must be between 0 and 100')
+  }
+  if (patch.sdcchCongestionThresholdPct != null) {
+    const p = Number(patch.sdcchCongestionThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('SDCCH Congestion threshold must be between 0 and 100')
+  }
+  if (patch.cssrThresholdPct != null) {
+    const p = Number(patch.cssrThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('CSSR target must be between 0 and 100')
+  }
+  if (patch.callDropThresholdPct != null) {
+    const p = Number(patch.callDropThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('Call Drop threshold must be between 0 and 100')
+  }
+  if (patch.dataAccessThresholdPct != null) {
+    const p = Number(patch.dataAccessThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('Data Access target must be between 0 and 100')
+  }
+  if (patch.dataServiceFailureThresholdPct != null) {
+    const p = Number(patch.dataServiceFailureThresholdPct)
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('Data Service Failure threshold must be between 0 and 100')
+  }
   if (patch.weeklyBreachDays != null) {
     const d = clampInt(patch.weeklyBreachDays, 1, 7, 1)
     if (d !== Math.round(Number(patch.weeklyBreachDays))) {
@@ -61,9 +111,15 @@ export function validateRules(patch: RulesPatch): void {
     }
   }
   if (patch.persistentWeeks != null) {
-    const w = clampInt(patch.persistentWeeks, 2, 12, 3)
+    const w = clampInt(patch.persistentWeeks, 1, 26, 3)
     if (w !== Math.round(Number(patch.persistentWeeks))) {
-      throw new Error('Persistent weeks must be an integer between 2 and 12')
+      throw new Error('Persistent streak must be an integer between 1 and 26')
+    }
+  }
+  if (patch.chronicWeeks != null) {
+    const w = clampInt(patch.chronicWeeks, 2, 52, 7)
+    if (w !== Math.round(Number(patch.chronicWeeks))) {
+      throw new Error('Chronic streak must be an integer between 2 and 52')
     }
   }
   if (patch.districtNcThresholdPct != null) {
@@ -88,9 +144,18 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
   validateRules(patch)
 
   const prb = patch.prbThresholdPct ?? current.prbThresholdPct
+  const tchCong = patch.tchCongestionThresholdPct ?? current.tchCongestionThresholdPct
+  const sdcchCong = patch.sdcchCongestionThresholdPct ?? current.sdcchCongestionThresholdPct
+  const cssr = patch.cssrThresholdPct ?? current.cssrThresholdPct
+  const callDrop = patch.callDropThresholdPct ?? current.callDropThresholdPct
+  const dataAccess = patch.dataAccessThresholdPct ?? current.dataAccessThresholdPct
+  const dataFailure = patch.dataServiceFailureThresholdPct ?? current.dataServiceFailureThresholdPct
   const breach = patch.weeklyBreachDays ?? current.weeklyBreachDays
   const persist = patch.persistentWeeks ?? current.persistentWeeks
+  const chronic = patch.chronicWeeks ?? current.chronicWeeks
   const district = patch.districtNcThresholdPct ?? current.districtNcThresholdPct
+  const kpiThresholds = patch.kpiThresholds ?? current.kpiThresholds ?? {}
+
   let weights = current.priorityWeights
   if (patch.priorityWeights != null) {
     const total = patch.priorityWeights.reduce((a, b) => a + b, 0)
@@ -105,12 +170,33 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
   try {
     await conn.run(
       `INSERT INTO ruleset
-         (version, prb_threshold_pct, weekly_breach_days, persistent_weeks,
-          district_nc_threshold_pct, priority_weights, notes)
-       VALUES ((SELECT COALESCE(max(version), 0) FROM ruleset) + 1, ?, ?, ?, ?, ?, ?)`,
-      [prb, breach, persist, district, JSON.stringify(weights), notes]
+         (version, prb_threshold_pct, tch_congestion_threshold_pct, sdcch_congestion_threshold_pct,
+          cssr_threshold_pct, call_drop_threshold_pct, data_access_threshold_pct,
+          data_service_failure_threshold_pct, weekly_breach_days, persistent_weeks,
+          chronic_weeks, district_nc_threshold_pct, priority_weights, kpi_thresholds, notes)
+       VALUES ((SELECT COALESCE(max(version), 0) FROM ruleset) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        prb, tchCong, sdcchCong, cssr, callDrop, dataAccess, dataFailure,
+        breach, persist, chronic, district, JSON.stringify(weights),
+        JSON.stringify(kpiThresholds), notes
+      ]
     )
     const version = current.version + 1
+    // Also sync the core KPI targets in kpi_defs so the whole application uses the new thresholds
+    await conn.run(
+      `UPDATE kpi_defs SET target = CASE
+         WHEN kpi_key = 'prb_utilization' THEN ?
+         WHEN kpi_key = 'tch_congestion' THEN ?
+         WHEN kpi_key = 'sdcch_congestion' THEN ?
+         WHEN kpi_key LIKE 'call_setup_success%' THEN ?
+         WHEN kpi_key LIKE 'call_drop_rate%' THEN ?
+         WHEN kpi_key = 'data_access_success_3g' THEN ?
+         WHEN kpi_key = 'data_service_failure_4g' THEN ?
+         ELSE target
+       END WHERE is_core = true`,
+      [prb, tchCong, sdcchCong, cssr, callDrop, dataAccess, dataFailure]
+    )
+
     // Recompute everything under the new rules: aggregates carry is_nc flags and
     // intelligence tables embed the ruleset version.
     await recomputeAllAggregates(conn)
@@ -121,6 +207,8 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
       [
         version,
         `Ruleset v${current.version} → v${version}: PRB ${current.prbThresholdPct}→${prb}%, ` +
+          `TCH ${current.tchCongestionThresholdPct}→${tchCong}%, SDCCH ${current.sdcchCongestionThresholdPct}→${sdcchCong}%, ` +
+          `CSSR ${current.cssrThresholdPct}→${cssr}%, CDR ${current.callDropThresholdPct}→${callDrop}%, ` +
           `breach ${current.weeklyBreachDays}→${breach}d, persistent ${current.persistentWeeks}→${persist}w, ` +
           `district NC ${current.districtNcThresholdPct}→${district}%`
       ]

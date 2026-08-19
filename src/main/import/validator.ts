@@ -84,16 +84,36 @@ export function validateSample(
   let missingDistrict = 0
   let missingRegion = 0
 
+  // Combine canonical KPI columns and extra KPI columns
+  const kpiIndices: Array<{ idx: number; label: string }> = []
+  for (const [hName, field] of Object.entries(mapping.columns)) {
+    if (['prb', 'users', 'volume', 'availability', 'throughput'].includes(field)) {
+      const idx = header.indexOf(hName)
+      if (idx >= 0) kpiIndices.push({ idx, label: hName })
+    }
+  }
+  if (mapping.kpiColumns) {
+    for (const [hName, kpiKey] of Object.entries(mapping.kpiColumns)) {
+      if (kpiKey) {
+        const idx = header.indexOf(hName)
+        if (idx >= 0 && !kpiIndices.some((k) => k.idx === idx)) {
+          kpiIndices.push({ idx, label: hName })
+        }
+      }
+    }
+  }
+
   for (const row of rows) {
     if (dateIdx >= 0 && !parseDateOk(row[dateIdx])) badDates++
     if (cellIdx >= 0 && !(row[cellIdx] ?? '').trim()) badCells++
-    for (const k of KPI_COLS) {
-      const field = k.col.replace('_raw', '') as never
-      const idx = header.findIndex((h) => mapping.columns[h] === field)
-      if (idx >= 0 && row[idx] != null && row[idx] !== '' && !isNumeric(row[idx])) {
+
+    for (const k of kpiIndices) {
+      const val = row[k.idx]
+      if (val != null && val.trim() !== '' && !isNumeric(val)) {
         unparsed[k.label] = (unparsed[k.label] ?? 0) + 1
       }
     }
+
     const dIdx = header.findIndex((h) => mapping.columns[h] === 'district')
     const rIdx = header.findIndex((h) => mapping.columns[h] === 'region')
     if (dIdx >= 0 && !(row[dIdx] ?? '').trim()) missingDistrict++
@@ -165,8 +185,6 @@ export async function validateStaged(
   const noRegion = await q(`SELECT count(*) n FROM stg_clean WHERE region_raw IS NULL OR region_raw = ''`)
   if (noRegion > 0) issues.push({ severity: 'info', message: 'Rows missing Region', count: noRegion })
 
-  const unmapped = Object.keys(mapping.columns).length === 0 ? 0 : 0
-  void unmapped
   return issues
 }
 

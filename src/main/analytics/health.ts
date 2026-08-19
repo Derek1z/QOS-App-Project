@@ -23,7 +23,8 @@ const NC_HEALTH: Record<Lifecycle, number> = {
   'Recovering': 90,
   'New NC': 60,
   'Recurring NC': 50,
-  'Persistent NC': 40
+  'Persistent NC': 40,
+  'Chronic NC': 30
 }
 
 /** Network Health Score series, most recent last. */
@@ -76,14 +77,18 @@ export async function computeNetworkHealth(
   return out
 }
 
-/** Persist weekly cell health into cell_health_history (date_id = week end). */
+/** Persist weekly cell health into cell_health_history (date_id = week end). Vectorized in DuckDB SQL. */
 export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: number[]): Promise<void> {
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
   const idList = cellIds.join(',')
 
-  const r = await conn.runAndReadAll(`
+  await conn.run(`DELETE FROM cell_health_history WHERE cell_id IN (${idList})`)
+
+  const prbThresh = rules.prbThresholdPct ?? 80
+
+  await conn.run(`
     WITH peers AS (
       SELECT week_start,
         avg(dl_throughput_kbps_avg) AS avg_throughput
@@ -93,69 +98,51 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
       SELECT cell_id, week_start, data_volume_mb_sum,
         lag(data_volume_mb_sum) OVER (PARTITION BY cell_id ORDER BY week_start) AS prev_volume
       FROM agg_cell_weekly
+    ),
+    prep AS (
+      SELECT w.cell_id, d.date_id,
+        ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - (100.0 * (COALESCE(w.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS capacity,
+        CASE WHEN p.avg_throughput > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)), 1) ELSE 100.0 END AS throughput,
+        ROUND(LEAST(100.0, GREATEST(0.0, COALESCE(w.availability_pct_avg, 100.0))), 1) AS availability,
+        CASE COALESCE(l.lifecycle, 'Healthy')
+          WHEN 'Healthy' THEN 100.0
+          WHEN 'Recovering' THEN 90.0
+          WHEN 'New NC' THEN 60.0
+          WHEN 'Recurring NC' THEN 50.0
+          WHEN 'Persistent NC' THEN 40.0
+          WHEN 'Chronic NC' THEN 30.0
+          ELSE 100.0
+        END AS nc_health,
+        CASE
+          WHEN v.prev_volume IS NOT NULL AND v.prev_volume > 0 THEN
+            ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - LEAST(100.0, GREATEST(0.0, ((w.data_volume_mb_sum - v.prev_volume) / v.prev_volume) * 100.0)) / 0.3)), 1)
+          ELSE 100.0
+        END AS growth
+      FROM agg_cell_weekly w
+      JOIN peers p USING (week_start)
+      JOIN vol v USING (cell_id, week_start)
+      LEFT JOIN cell_nc_lifecycle l
+        ON l.cell_id = w.cell_id AND l.period_start = w.week_start
+        AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
+      JOIN dim_date d ON d.date = w.week_end
+      WHERE w.cell_id IN (${idList})
+    ),
+    scored AS (
+      SELECT cell_id, date_id,
+        ROUND(0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * nc_health + 0.1 * growth, 1) AS final_score,
+        json_object(
+          'capacity', capacity,
+          'throughput', throughput,
+          'availability', availability,
+          'ncHealth', nc_health,
+          'growth', growth,
+          'kpiHealth', 100.0
+        ) AS comps_json
+      FROM prep
     )
-    SELECT w.cell_id, CAST(w.week_start AS VARCHAR) AS week_start,
-      CAST(w.week_end AS VARCHAR) AS week_end, w.prb_avg, w.data_volume_mb_sum,
-      w.dl_throughput_kbps_avg, w.availability_pct_avg,
-      COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
-      p.avg_throughput, v.prev_volume,
-      d.date_id
-    FROM agg_cell_weekly w
-    JOIN peers p USING (week_start)
-    JOIN vol v USING (cell_id, week_start)
-    LEFT JOIN cell_nc_lifecycle l
-      ON l.cell_id = w.cell_id AND l.period_start = w.week_start
-      AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
-    JOIN dim_date d ON d.date = w.week_end
-    WHERE w.cell_id IN (${idList})
+    INSERT INTO cell_health_history (cell_id, date_id, health_score, components)
+    SELECT cell_id, date_id, final_score, comps_json
+    FROM scored
   `)
-  const rows = r.getRowObjects()
-  if (rows.length === 0) return
-
-  // spec §54a: a cell whose imported KPIs breach their editable targets is less
-  // healthy — blend the breach severity (0-100) into the score.
-  const kpiBreach = await cellKpiBreachByCell(conn, rows.map((x) => Number(x.cell_id)), null)
-
-  await conn.run(`DELETE FROM cell_health_history WHERE cell_id IN (${idList})`)
-
-  const inserts: string[] = []
-  const params: DuckDBValue[] = []
-  for (const x of rows) {
-    const prbAvg = x.prb_avg == null ? rules.prbThresholdPct : Number(x.prb_avg)
-    const thrpt = Number(x.dl_throughput_kbps_avg ?? 0)
-    const avail = Number(x.availability_pct_avg ?? 100)
-    const volume = Number(x.data_volume_mb_sum ?? 0)
-    const prevVolume = x.prev_volume == null ? null : Number(x.prev_volume)
-    const avgThroughput = Number(x.avg_throughput ?? 0)
-    const lifecycle = (String(x.lifecycle) ?? 'Healthy') as Lifecycle
-    const growthPct = prevVolume != null && prevVolume > 0 ? ((volume - prevVolume) / prevVolume) * 100 : 0
-
-    const capacity = Math.round(clamp(100 - (100 * (prbAvg - rules.prbThresholdPct)) / 40, 0, 100) * 10) / 10
-    const throughput =
-      avgThroughput > 0 ? Math.round(clamp((100 * thrpt) / avgThroughput, 0, 100) * 10) / 10 : 100
-    const availability = Math.round(clamp(avail, 0, 100) * 10) / 10
-    const ncHealth = NC_HEALTH[lifecycle] ?? 100
-    const growth = Math.round(clamp(100 - clamp(growthPct, 0, 100) / 0.3, 0, 100) * 10) / 10
-    const kpiHealth = Math.round(clamp(100 - (kpiBreach.get(Number(x.cell_id)) ?? 0), 0, 100) * 10) / 10
-    const classical =
-      0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * ncHealth + 0.1 * growth
-    const score = (1 - KPI_BREACH_WEIGHT) * classical + KPI_BREACH_WEIGHT * kpiHealth
-
-    inserts.push(`(${Number(x.cell_id)}, ?, ?, ?)`)
-    params.push(
-      Number(x.date_id),
-      Math.round(score * 10) / 10,
-      JSON.stringify({ capacity, throughput, availability, ncHealth, growth, kpiHealth })
-    )
-  }
-  for (let i = 0; i < inserts.length; i += 500) {
-    const chunk = inserts.slice(i, i + 500)
-    const chunkParams = params.slice(i * 3, (i + 500) * 3)
-    await conn.run(
-      `INSERT INTO cell_health_history (cell_id, date_id, health_score, components)
-       VALUES ${chunk.join(', ')}`,
-      chunkParams
-    )
-  }
 }
 

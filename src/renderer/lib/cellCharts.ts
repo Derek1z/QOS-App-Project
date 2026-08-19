@@ -1,12 +1,12 @@
 import type { EChartsOption, SeriesOption } from 'echarts'
-import type { CellDetail } from '../../../shared/api'
+import type { CellDetail, Grain } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
-import { weekLabel } from './overviewCharts'
+import { formatTimeLabel } from './overviewCharts'
 
 /** Aligned multi-grid layout (spec §68): PRB / Throughput / Users / Volume on
- *  shared week axes with linked cursors — one chart instance, four grids. */
-export function cellDetailOption(detail: CellDetail, prbThreshold: number): EChartsOption {
-  const weeks = detail.weeks.map((w) => weekLabel(w.weekStart))
+ *  shared axes with linked cursors — one chart instance, four grids. */
+export function cellDetailOption(detail: CellDetail, prbThreshold: number, grain: Grain = 'weekly'): EChartsOption {
+  const timeLabels = detail.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
   const grids = [0, 1, 2, 3].map((i) => ({
     left: 64,
     right: 30,
@@ -16,7 +16,7 @@ export function cellDetailOption(detail: CellDetail, prbThreshold: number): ECha
   const xAxis = [0, 1, 2, 3].map((i) => ({
     type: 'category' as const,
     gridIndex: i,
-    data: weeks,
+    data: timeLabels,
     axisLabel: i === 3 ? axisLabelStyle() : { show: false },
     axisLine: { lineStyle: { color: PALETTE.border } },
     axisTick: { show: i === 3 }
@@ -129,7 +129,7 @@ export function cellDetailOption(detail: CellDetail, prbThreshold: number): ECha
           return `${p.marker ?? ''}${name}: <b>${Math.round(v)}</b>`
         })
         const state = w.isNc ? `${w.lifecycle} · ${w.severity}` : w.lifecycle
-        return [`<b>${w.weekStart} (${weeks[idx]})</b>`, `Classification: ${state}`, `Breach days: ${w.breachDays}`, ...lines].join('<br/>')
+        return [`<b>${w.weekStart} (${timeLabels[idx]})</b>`, `Classification: ${state}`, `Breach days: ${w.breachDays}`, ...lines].join('<br/>')
       }
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },

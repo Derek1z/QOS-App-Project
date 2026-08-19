@@ -61,11 +61,26 @@ function holdoutError(xs: number[], predict: (i: number) => number): { mae: numb
   }
 }
 
-/** Run the simple-first forecast over a sorted-by-week series. */
+export interface HorizonForecastPoint {
+  horizonIndex: number
+  value: number
+  lower: number
+  upper: number
+}
+
+function clampDomain(v: number, metric: string): number {
+  if (metric === 'prb' || metric === 'availability') {
+    return Math.max(0, Math.min(100, v))
+  }
+  return Math.max(0, v)
+}
+
+/** Run organic forecasting over a sorted-by-week series. */
 export function forecastSeries(
   weeks: WeeklyValue[],
   metricLabel: string,
-  unit: string
+  unit: string,
+  metric = 'prb'
 ): {
   method: ForecastMethod
   quality: ForecastQuality
@@ -107,10 +122,11 @@ export function forecastSeries(
   let conf: number | null = null
 
   if (n >= 3) {
-    // holdout: fit on all but the last point, evaluate on the last
+    // Holdout evaluation
     const maErr = holdoutError(values, (i) => (i === n - 1 ? mean(values.slice(0, n - 1)) : mean(values.slice(0, i + 1))))
     const lt = linearTrend(values.slice(0, n - 1))
     const ltErr = holdoutError(values, (i) => (i === n - 1 ? lt.intercept + lt.slope * i : values[i]))
+    
     if (ltErr.mae <= maErr.mae) {
       method = 'linear-trend'
       mae = ltErr.mae
@@ -122,25 +138,38 @@ export function forecastSeries(
       rmse = maErr.rmse
       dir = maErr.dir
     }
-    next = method === 'linear-trend'
-      ? Math.max(0, (() => { const t = linearTrend(values); return t.intercept + t.slope * n })())
-      : mean(values)
+
+    // Damped exponential smoothing for organic progression
+    const phi = 0.88
+    let level = values[0]
+    let trend = n > 1 ? (values[values.length - 1] - values[0]) / (values.length - 1) : 0
+    const alpha = 0.35
+    const beta = 0.15
+
+    for (let i = 1; i < n; i++) {
+      const prevLevel = level
+      level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * trend)
+      trend = beta * (level - prevLevel) + (1 - beta) * phi * trend
+    }
+
+    const rawNext = method === 'linear-trend' ? level + phi * trend : mean(values)
+    next = clampDomain(rawNext, metric)
+
     const relErr = mae / scale
-    conf = Math.round(Math.min(92, Math.max(15, 100 - relErr * 220)))
-    if (n < 4) conf = Math.min(conf, 55)
+    conf = Math.round(Math.min(95, Math.max(20, 100 - relErr * 200)))
+    if (n < 4) conf = Math.min(conf, 60)
   } else {
-    // n === 2: flat moving average, no holdout to validate against
     method = 'moving-average'
-    next = mean(values)
+    next = clampDomain(mean(values), metric)
     mae = Math.abs(values[1] - values[0])
     rmse = mae
     dir = null
-    conf = 40
+    conf = 45
   }
 
-  const band = Math.max(scale * 0.08, Math.abs(mean(values) - (next ?? mean(values))) * 1.2, mae * 1.5)
-  const lower = next == null ? null : Math.max(0, next - band)
-  const upper = next == null ? null : next + band
+  const baseBand = Math.max(scale * 0.04, (rmse ?? mae ?? 1) * 1.5)
+  const lower = next == null ? null : clampDomain(next - baseBand, metric)
+  const upper = next == null ? null : clampDomain(next + baseBand, metric)
 
   let quality: ForecastQuality
   if (n < 3) quality = 'low'
@@ -148,7 +177,7 @@ export function forecastSeries(
   else if (mae / scale <= 0.15) quality = 'medium'
   else quality = 'low'
 
-  const methodTxt = method === 'linear-trend' ? 'linear trend' : 'moving average'
+  const methodTxt = method === 'linear-trend' ? 'damped trend' : 'weighted moving average'
   const parts = [
     `${methodTxt} over ${n} week${n === 1 ? '' : 's'} of ${metricLabel.toLowerCase()}`
   ]
@@ -172,6 +201,63 @@ export function forecastSeries(
     directionalAccuracy: dir == null ? null : Math.round(dir * 100),
     explanation: parts.join('; ') + '.'
   }
+}
+
+/** Multi-horizon organic trajectory with expanding confidence cone. */
+export function forecastTrajectory(
+  weeks: WeeklyValue[],
+  metric: string,
+  metricLabel: string,
+  unit: string,
+  weeksAhead = 4
+): {
+  summary: ReturnType<typeof forecastSeries>
+  points: HorizonForecastPoint[]
+} {
+  const summary = forecastSeries(weeks, metricLabel, unit, metric)
+  const values = weeks
+    .map((w) => w.value)
+    .filter((v): v is number => v != null && Number.isFinite(v))
+  const n = values.length
+
+  if (n < 2 || summary.next == null) {
+    return { summary, points: [] }
+  }
+
+  const phi = 0.88
+  let level = values[0]
+  let trend = n > 1 ? (values[values.length - 1] - values[0]) / (values.length - 1) : 0
+  const alpha = 0.35
+  const beta = 0.15
+
+  for (let i = 1; i < n; i++) {
+    const prevLevel = level
+    level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * trend)
+    trend = beta * (level - prevLevel) + (1 - beta) * phi * trend
+  }
+
+  const rmse = summary.rmse ?? summary.mae ?? Math.abs(values[values.length - 1] * 0.05)
+  const points: HorizonForecastPoint[] = []
+
+  let accumulatedDamp = 0
+  for (let h = 1; h <= weeksAhead; h++) {
+    accumulatedDamp += Math.pow(phi, h)
+    const rawVal = summary.method === 'linear-trend'
+      ? level + accumulatedDamp * trend
+      : mean(values) + (level - mean(values)) * Math.pow(0.8, h)
+
+    const val = clampDomain(rawVal, metric)
+    const coneMargin = Math.max(val * 0.03, rmse * Math.sqrt(1 + 0.3 * (h - 1)) * 1.645)
+
+    points.push({
+      horizonIndex: h,
+      value: Math.round(val * 100) / 100,
+      lower: Math.round(clampDomain(val - coneMargin, metric) * 100) / 100,
+      upper: Math.round(clampDomain(val + coneMargin, metric) * 100) / 100
+    })
+  }
+
+  return { summary, points }
 }
 
 /** Classify a forecast into an early-warning risk state (§45). */

@@ -35,8 +35,8 @@ type Metric = 'health' | 'prb' | 'nc'
 
 const METRICS: Array<{ id: Metric; label: string }> = [
   { id: 'health', label: 'Health' },
-  { id: 'nc', label: 'NC cells' },
-  { id: 'prb', label: 'PRB' }
+  { id: 'nc', label: 'NC Rate %' },
+  { id: 'prb', label: 'PRB %' }
 ]
 
 function fmt(n: number | null | undefined, digits = 1): string {
@@ -50,18 +50,21 @@ function healthColor(s: number | null): string {
 }
 
 function metricValue(r: RegionMapRow | DistrictMapRow, m: Metric): number | null {
-  return m === 'health' ? r.healthScore : m === 'prb' ? r.prbAvg : r.ncCells
+  if (m === 'health') return r.healthScore
+  if (m === 'prb') return r.prbAvg
+  // 'nc' represents percentage of non-compliant cells (lower is better)
+  return r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0
 }
 
 function metricLabel(m: Metric): string {
-  return m === 'prb' ? 'PRB %' : m === 'nc' ? 'NC cells' : 'Health'
+  return m === 'prb' ? 'PRB %' : m === 'nc' ? 'NC Rate %' : 'Health'
 }
 
 // visualMap text labels: [top (high values), bottom (low values)]. Health is
-// higher-better; PRB utilization and NC cells are higher-worse (congestion /
-// poor conditions), so the red end always sits at the top.
+// higher-better; PRB utilization and NC rate % are higher-worse (lower is better),
+// so the red end sits at the top.
 function scaleLabels(m: Metric): [string, string] {
-  return m === 'health' ? ['Best', 'Worst'] : ['Worse', 'Better']
+  return m === 'health' ? ['Best (100)', 'Worst (0)'] : ['Worst', 'Best (0%)']
 }
 
 function cleanName(s: string): string {
@@ -316,9 +319,8 @@ export default function GhanaMap(): React.JSX.Element {
           }
         })
         .map((x) => ({ name: x.name, value: x.value ?? undefined, meta: x.row }))
-      const ncMax = Math.max(1, ...districts.map((d) => d.ncCells)) * 1.1
-      const max = metric === 'nc' ? ncMax : 100
-      // health is higher-better; PRB utilization and NC cells are higher-worse
+      const max = metric === 'health' ? 100 : metric === 'prb' ? 100 : Math.max(10, Math.min(100, Math.ceil(Math.max(1, ...districts.map((d) => d.cells > 0 ? (d.ncCells / d.cells) * 100 : 0)) * 1.15)))
+      // health is higher-better; PRB utilization and NC Rate % are higher-worse (lower is better)
       const higherBetter = metric === 'health'
       const option: EChartsOption = {
         backgroundColor: 'transparent',
@@ -329,10 +331,11 @@ export default function GhanaMap(): React.JSX.Element {
             const m = item.data?.meta
             if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No active cell data for this district.</span>`
             const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
+            const ncPct = m.cells > 0 ? (m.ncCells / m.cells) * 100 : 0
             return [
               `<b>${m.name}</b>`,
               `Health <b>${v(m.healthScore)}</b> / 100`,
-              `NC cells <b>${m.ncCells}</b> of ${m.cells}`,
+              `NC Rate <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
               `PRB <b>${v(m.prbAvg, '%')}</b> · Avail <b>${v(m.availability, '%')}</b>`,
               `<span style="color:${PALETTE.dim}">Click to open this district's investigation.</span>`
             ].join('<br/>')
@@ -345,6 +348,7 @@ export default function GhanaMap(): React.JSX.Element {
           left: 8,
           bottom: 10,
           calculable: true,
+          formatter: metric === 'health' ? '{value}' : '{value}%',
           text: scaleLabels(metric),
           textStyle: { color: PALETTE.dim, fontSize: 10 },
           inRange: {
@@ -402,9 +406,8 @@ export default function GhanaMap(): React.JSX.Element {
       return
     }
 
-    const ncMax = Math.max(1, ...regions.map((r) => r.ncCells)) * 1.1
-    const max = metric === 'nc' ? ncMax : 100
-    // health is higher-better; PRB utilization and NC cells are higher-worse
+    const max = metric === 'health' ? 100 : metric === 'prb' ? 100 : Math.max(10, Math.min(100, Math.ceil(Math.max(1, ...regions.map((r) => r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0)) * 1.15)))
+    // health is higher-better; PRB utilization and NC Rate % are higher-worse (lower is better)
     const higherBetter = metric === 'health'
     const data = GHANA_REGIONS_GEOJSON.features
       .map((f) => {
@@ -427,10 +430,11 @@ export default function GhanaMap(): React.JSX.Element {
           const m = item.data?.meta
           if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No cell data for this region.</span>`
           const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
+          const ncPct = m.cells > 0 ? (m.ncCells / m.cells) * 100 : 0
           return [
             `<b>${m.name}</b>`,
             `Health <b>${v(m.healthScore)}</b> / 100`,
-            `NC cells <b>${m.ncCells}</b> of ${m.cells}`,
+            `NC Rate <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
             `PRB <b>${v(m.prbAvg, '%')}</b> · Avail <b>${v(m.availability, '%')}</b>`,
             `Throughput <b>${v(m.throughputKbps == null ? null : m.throughputKbps / 1024, ' Mbps')}</b>`,
             `Users <b>${fmt(m.users, 0)}</b> · Volume <b>${fmt((m.volumeMb ?? 0) / 1024, 1)} GB</b>`,
@@ -445,6 +449,7 @@ export default function GhanaMap(): React.JSX.Element {
         left: 8,
         bottom: 10,
         calculable: true,
+        formatter: metric === 'health' ? '{value}' : '{value}%',
         text: scaleLabels(metric),
         textStyle: { color: PALETTE.dim, fontSize: 10 },
         inRange: {
@@ -482,7 +487,7 @@ export default function GhanaMap(): React.JSX.Element {
   return (
     <div className="card ghana-card card-wide">
       <div className="file-head">
-        <h3>Ghana Map</h3>
+        <h3>Ghana Regional Intelligence</h3>
         <div className="seg">
           {METRICS.map((m) => (
             <button
@@ -502,10 +507,9 @@ export default function GhanaMap(): React.JSX.Element {
             <div className="ghana-hint">
               <p className="card-note">
                 Color-coded <b>region health</b> (best green → worst red).{' '}
-                <b>PRB % and NC cells are reversed — higher = worse</b> (red), since high
-                utilization and more NC cells mean poorer conditions. Hover for details,
-                <b> click a region to drill into its district choropleth</b>. Regions without
-                data stay muted.
+                <b>PRB % and NC Rate % are reversed — higher = worse (red)</b> (lower is better), since high
+                utilization and higher non-compliance rates represent network degradation. Hover for details,
+                <b> click a region to drill into its district choropleth</b>.
               </p>
               <div className="kpi-strip">
                 <div className="kpi">
@@ -517,8 +521,14 @@ export default function GhanaMap(): React.JSX.Element {
                   <div className="kpi-label">Cells covered</div>
                 </div>
                 <div className="kpi">
-                  <div className="kpi-value">{regions.reduce((s, r) => s + r.ncCells, 0)}</div>
-                  <div className="kpi-label">Weekly NC cells</div>
+                  <div className="kpi-value">
+                    {(() => {
+                      const total = regions.reduce((s, r) => s + r.cells, 0)
+                      const nc = regions.reduce((s, r) => s + r.ncCells, 0)
+                      return total > 0 ? `${((nc / total) * 100).toFixed(1)}%` : '0.0%'
+                    })()}
+                  </div>
+                  <div className="kpi-label">Network NC Rate ({regions.reduce((s, r) => s + r.ncCells, 0)} cells)</div>
                 </div>
               </div>
             </div>
@@ -542,8 +552,10 @@ export default function GhanaMap(): React.JSX.Element {
                   <div className="kpi-label">Cells</div>
                 </div>
                 <div className="kpi">
-                  <div className="kpi-value">{selected.ncCells}</div>
-                  <div className="kpi-label">NC cells</div>
+                  <div className="kpi-value">
+                    {selected.cells > 0 ? `${((selected.ncCells / selected.cells) * 100).toFixed(1)}%` : '0.0%'}
+                  </div>
+                  <div className="kpi-label">NC Rate ({selected.ncCells} cells)</div>
                 </div>
                 <div className="kpi">
                   <div className="kpi-value">{fmt(selected.prbAvg)}%</div>
@@ -555,9 +567,8 @@ export default function GhanaMap(): React.JSX.Element {
                 </div>
               </div>
               <p className="card-note">
-                The map now shows this region's <b>district boundaries</b> colored by{' '}
-                {metricLabel(metric).toLowerCase()}, with the parent region's boundary kept as an
-                outline for context. Click any district (on the map or below) to open its diagnosis
+                The map shows <b>district boundaries</b> colored by{' '}
+                {metricLabel(metric).toLowerCase()} (lower is better for PRB & NC Rate). Click any district to open its diagnosis
                 in the Investigation Workspace.
               </p>
               {loading ? (
@@ -566,12 +577,14 @@ export default function GhanaMap(): React.JSX.Element {
                 <p className="card-note">No district data for this region yet — import cell-level data to populate the drill-down.</p>
               ) : (
                 <div className="ghana-districts">
-                  <b className="card-note">Districts (worst health first)</b>
+                  <b className="card-note">Districts ({metricLabel(metric)})</b>
                   {worstFirst.slice(0, 15).map((d) => (
                     <button key={d.id} className="district-row" onClick={() => openDistrict(d)}>
                       <span className="district-dot" style={{ background: healthColor(d.healthScore) }} />
                       <span className="district-name">{d.name}</span>
-                      <span className="district-cell">{d.cells} cells · {d.ncCells} NC</span>
+                      <span className="district-cell">
+                        {d.cells} cells · {d.cells > 0 ? `${((d.ncCells / d.cells) * 100).toFixed(1)}%` : '0%'} NC
+                      </span>
                       <span className="district-score">{fmt(d.healthScore, 0)}</span>
                       <span className="district-prb">{fmt(d.prbAvg)}%</span>
                     </button>

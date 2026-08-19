@@ -50,7 +50,18 @@ export default function WorkspaceModule(): React.JSX.Element {
   const [name, setName] = useState('')
   const [rules, setRules] = useState<Rules | null>(null)
   const [rulesForm, setRulesForm] = useState({
-    prb: '', breach: '', persistent: '', district: '', notes: ''
+    prb: '',
+    tchCongestion: '',
+    sdcchCongestion: '',
+    cssr: '',
+    callDrop: '',
+    dataAccess: '',
+    dataFailure: '',
+    breach: '',
+    persistent: '',
+    chronic: '',
+    district: '',
+    notes: ''
   })
   const [rulesError, setRulesError] = useState<string | null>(null)
   const [rulesSaving, setRulesSaving] = useState(false)
@@ -85,10 +96,17 @@ export default function WorkspaceModule(): React.JSX.Element {
         if (!alive || !r) return
         setRules(r)
         setRulesForm({
-          prb: String(r.prbThresholdPct),
-          breach: String(r.weeklyBreachDays),
-          persistent: String(r.persistentWeeks),
-          district: String(r.districtNcThresholdPct),
+          prb: String(r.prbThresholdPct ?? 80),
+          tchCongestion: String(r.tchCongestionThresholdPct ?? 2.0),
+          sdcchCongestion: String(r.sdcchCongestionThresholdPct ?? 2.0),
+          cssr: String(r.cssrThresholdPct ?? 98.5),
+          callDrop: String(r.callDropThresholdPct ?? 1.5),
+          dataAccess: String(r.dataAccessThresholdPct ?? 98.0),
+          dataFailure: String(r.dataServiceFailureThresholdPct ?? 1.0),
+          breach: String(r.weeklyBreachDays ?? 1),
+          persistent: String(r.persistentWeeks ?? 3),
+          chronic: String(r.chronicWeeks ?? 7),
+          district: String(r.districtNcThresholdPct ?? 10),
           notes: r.notes ?? ''
         })
       } catch {
@@ -192,16 +210,30 @@ export default function WorkspaceModule(): React.JSX.Element {
     try {
       const updated = await window.api.rules.update({
         prbThresholdPct: Number(rulesForm.prb),
+        tchCongestionThresholdPct: Number(rulesForm.tchCongestion),
+        sdcchCongestionThresholdPct: Number(rulesForm.sdcchCongestion),
+        cssrThresholdPct: Number(rulesForm.cssr),
+        callDropThresholdPct: Number(rulesForm.callDrop),
+        dataAccessThresholdPct: Number(rulesForm.dataAccess),
+        dataServiceFailureThresholdPct: Number(rulesForm.dataFailure),
         weeklyBreachDays: Number(rulesForm.breach),
         persistentWeeks: Number(rulesForm.persistent),
+        chronicWeeks: Number(rulesForm.chronic),
         districtNcThresholdPct: Number(rulesForm.district),
         notes: rulesForm.notes.trim() || undefined
       })
       setRules(updated)
       setRulesForm({
         prb: String(updated.prbThresholdPct),
+        tchCongestion: String(updated.tchCongestionThresholdPct ?? 2.0),
+        sdcchCongestion: String(updated.sdcchCongestionThresholdPct ?? 2.0),
+        cssr: String(updated.cssrThresholdPct ?? 98.5),
+        callDrop: String(updated.callDropThresholdPct ?? 1.5),
+        dataAccess: String(updated.dataAccessThresholdPct ?? 98.0),
+        dataFailure: String(updated.dataServiceFailureThresholdPct ?? 1.0),
         breach: String(updated.weeklyBreachDays),
         persistent: String(updated.persistentWeeks),
+        chronic: String(updated.chronicWeeks ?? 7),
         district: String(updated.districtNcThresholdPct),
         notes: updated.notes ?? ''
       })
@@ -216,23 +248,27 @@ export default function WorkspaceModule(): React.JSX.Element {
   return (
     <div className="module">
       <div className="module-head">
-        <h2>Workspace</h2>
+        <h2>Workspace & Threshold Governance</h2>
+        <span className="module-workspace">{workspace?.name ?? 'No workspace'}</span>
+        {workspace?.readOnly && <span className="badge badge-ro">READ ONLY</span>}
       </div>
 
       {workspace && (
         <div className="card">
-          <h3>
-            {workspace.name}
-            {workspace.readOnly && <span className="badge badge-ro">READ ONLY</span>}
-          </h3>
-          <table className="info-table">
+          <div className="file-head">
+            <h3>Workspace Overview</h3>
+            <span className="badge">{workspace.technology ?? '4G'}</span>
+          </div>
+          <table className="meta-table">
             <tbody>
               <tr>
                 <td>Path</td>
-                <td>{workspace.path}</td>
+                <td>
+                  <code>{workspace.path}</code>
+                </td>
               </tr>
               <tr>
-                <td>File size</td>
+                <td>Database size</td>
                 <td>{fmtBytes(workspace.sizeBytes)}</td>
               </tr>
               <tr>
@@ -282,16 +318,16 @@ export default function WorkspaceModule(): React.JSX.Element {
       {workspace && rules && (
         <div className="card">
           <div className="file-head">
-            <h3>Ruleset v{rules.version}</h3>
+            <h3>Ruleset v{rules.version} — Thresholds & Governance</h3>
             {rules.createdAt && <span className="card-note">created {new Date(rules.createdAt).toLocaleString()}</span>}
           </div>
           <p className="card-note">
-            Changing rules creates a new version, recomputes all derived intelligence and writes an
-            audit event — raw facts are never altered (spec §63).
+            Centralized 2G, 3G, and 4G compliance thresholds. Changing rules creates a new version, recomputes
+            derived intelligence, and writes an audit event (spec §63).
           </p>
           <div className="rules-grid">
             <NumField
-              label="PRB threshold %"
+              label="4G PRB Threshold % (Max)"
               value={rulesForm.prb}
               onChange={(v) => setRulesForm((f) => ({ ...f, prb: v }))}
               step={1}
@@ -299,18 +335,73 @@ export default function WorkspaceModule(): React.JSX.Element {
               max={100}
             />
             <NumField
-              label="Weekly breach days"
+              label="2G TCH Congestion % (Max)"
+              value={rulesForm.tchCongestion}
+              onChange={(v) => setRulesForm((f) => ({ ...f, tchCongestion: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="2G SDCCH Congestion % (Max)"
+              value={rulesForm.sdcchCongestion}
+              onChange={(v) => setRulesForm((f) => ({ ...f, sdcchCongestion: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="Call Setup Success (CSSR) Target % (Min)"
+              value={rulesForm.cssr}
+              onChange={(v) => setRulesForm((f) => ({ ...f, cssr: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="Call Drop Rate (CDR) Threshold % (Max)"
+              value={rulesForm.callDrop}
+              onChange={(v) => setRulesForm((f) => ({ ...f, callDrop: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="3G Data Access Success (DASR) Target %"
+              value={rulesForm.dataAccess}
+              onChange={(v) => setRulesForm((f) => ({ ...f, dataAccess: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="4G Data Service Failure (DSAF) Threshold %"
+              value={rulesForm.dataFailure}
+              onChange={(v) => setRulesForm((f) => ({ ...f, dataFailure: v }))}
+              step={0.1}
+              min={0}
+              max={100}
+            />
+            <NumField
+              label="Weekly Breach Days (1-7)"
               value={rulesForm.breach}
               onChange={(v) => setRulesForm((f) => ({ ...f, breach: v }))}
               min={1}
               max={7}
             />
             <NumField
-              label="Persistent weeks"
+              label="Persistent Streak Weeks (≥)"
               value={rulesForm.persistent}
               onChange={(v) => setRulesForm((f) => ({ ...f, persistent: v }))}
+              min={1}
+              max={26}
+            />
+            <NumField
+              label="Chronic Streak Weeks (≥)"
+              value={rulesForm.chronic}
+              onChange={(v) => setRulesForm((f) => ({ ...f, chronic: v }))}
               min={2}
-              max={12}
+              max={52}
             />
             <NumField
               label="District NC threshold %"
@@ -324,7 +415,7 @@ export default function WorkspaceModule(): React.JSX.Element {
           <div className="row-actions">
             <input
               className="input rules-notes"
-              placeholder="Notes for this version…"
+              placeholder="Notes for this ruleset version…"
               value={rulesForm.notes}
               onChange={(e) => setRulesForm((f) => ({ ...f, notes: e.target.value }))}
             />

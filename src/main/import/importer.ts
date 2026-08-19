@@ -14,7 +14,8 @@ import {
   aliasGeoValue
 } from './mapping'
 import { validateSample } from './validator'
-import { discoverKpiDefs } from '../services/kpiService'
+import { discoverKpiDefs, workspaceTechnology } from '../services/kpiService'
+import { detectDerivedKpiSuggestions } from '../services/derivedKpiService'
 import { invalidateSummaryCache } from '../services/queryService'
 import createImportWorker from './importWorker?nodeWorker'
 import type { ImportCoreJob } from './importCore'
@@ -82,12 +83,15 @@ export async function analyzeFiles(
       // source column names (exact alias + fuzzy token match)
       onProgress?.({ phase: 'Discovering KPI columns', detail: fname })
       const kpiDiscovery = await discoverKpiDefs(ws.connection, header)
+      const currentTech = await workspaceTechnology(ws.connection)
+      const derivedSuggestions = detectDerivedKpiSuggestions(header, detectedTechnology ?? currentTech)
       const st = statSync(path)
       const id = `${path}|${st.size}|${st.mtimeMs}`
       out.push({
         id, path, filename: basename(path), header, sample: rows, fingerprint,
         suggestedMapping: mapping,
         suggestedKpiMapping: profile ? profile.kpiColumns : kpiDiscovery.mapping,
+        derivedSuggestions,
         confidence, knownProfile: !!profile,
         detectedTechnology,
         errors: issues.filter((i) => i.severity === 'error').map((i) => i.message)
@@ -256,6 +260,23 @@ export async function runImport(
  *  cell) count distinct values and how many match the workspace's dimension
  *  tables, and list the most common unmatched values so nothing is silently
  *  dropped (spec §13). Reads a capped window of the source file. */
+const SUMMARY_KEYWORDS = new Set([
+  'total', 'grand total', 'subtotal', 'average', 'avg', 'sum', 'count', 'max', 'min', 'summary', 'all'
+])
+
+function isLikelyDimensionValue(field: CanonicalField, raw: string, isCsv = true): boolean {
+  const t = raw.trim().toLowerCase()
+  if (!t || SUMMARY_KEYWORDS.has(t)) return false
+
+  if (isCsv) {
+    // In CSV datasets, valid Region, District, Site, and Cell names must contain letters [a-zA-Z]
+    // Rejects pure numbers, decimals, and digit-only strings (e.g. 100-1, 1.15, 3178.15, 100)
+    if (!/[a-z]/i.test(t)) return false
+    if (/^[0-9\s._\-–/,;:#$%&*+=!?'"()]+$/.test(t)) return false
+  }
+  return true
+}
+
 export async function geoStats(
   id: string,
   mapping: MappingConfig
@@ -263,6 +284,7 @@ export async function geoStats(
   const ws = wsRequired()
   const path = id.split('|')[0]
   if (!existsSync(path)) return null
+  const isCsv = !isExcelPath(path)
   const sample = isExcelPath(path)
     ? await readExcelSample(path, 20000)
     : readCsvSample(path, 20000)
@@ -308,6 +330,7 @@ export async function geoStats(
       if (idx < 0) continue
       const raw = row[idx]
       if (raw == null || raw.trim() === '') continue
+      if (!isLikelyDimensionValue(st.field, raw, isCsv)) continue
       const v = norm(aliasGeoValue(aliases, st.field, raw))
       seen.get(st.field)!.add(v)
       if (dimSets.get(st.field)?.has(v)) st.matched++

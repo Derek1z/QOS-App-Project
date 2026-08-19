@@ -1,10 +1,19 @@
 import type { EChartsOption } from 'echarts'
-import type { HealthComponentRow, NcMovementRow } from '../../../shared/api'
+import type { HealthComponentRow, NcMovementRow, Grain } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
+
+function normalizeDateStr(dateStr: string): string {
+  if (!dateStr) return ''
+  if (/^\d{8}$/.test(dateStr)) {
+    return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+  }
+  return dateStr
+}
 
 /** ISO week label (spec §19: W31-style, Monday–Sunday). */
 export function weekLabel(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00Z')
+  const norm = normalizeDateStr(dateStr)
+  const d = new Date(norm + 'T00:00:00Z')
   const day = (d.getUTCDay() + 6) % 7
   d.setUTCDate(d.getUTCDate() - day + 3)
   const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4))
@@ -12,9 +21,22 @@ export function weekLabel(dateStr: string): string {
   return 'W' + week
 }
 
+/** Multi-grain time label supporting daily (07-05), weekly (W27), and monthly (2026-07). */
+export function formatTimeLabel(dateStr: string, grain: Grain = 'weekly'): string {
+  if (!dateStr) return ''
+  const norm = normalizeDateStr(dateStr)
+  if (grain === 'daily') {
+    return norm.length >= 10 ? norm.slice(5) : norm
+  }
+  if (grain === 'monthly') {
+    return norm.slice(0, 7)
+  }
+  return weekLabel(norm)
+}
+
 /** Network Health Score line with a Watch threshold band + component tooltip. */
-export function healthLineOption(network: HealthComponentRow[]): EChartsOption {
-  const weeks = network.map((w) => weekLabel(w.asOf))
+export function healthLineOption(network: HealthComponentRow[], grain: Grain = 'weekly'): EChartsOption {
+  const timeLabels = network.map((w) => formatTimeLabel(w.asOf, grain))
   return {
     backgroundColor: 'transparent',
     grid: { left: 42, right: 14, top: 24, bottom: 26 },
@@ -27,7 +49,7 @@ export function healthLineOption(network: HealthComponentRow[]): EChartsOption {
         const row = network[idx]
         if (!row) return ''
         return [
-          `<b>${row.asOf} (${weeks[idx]})</b>`,
+          `<b>${row.asOf} (${timeLabels[idx]})</b>`,
           `Health score: <b>${row.score}</b>`,
           `Capacity: ${row.capacity}`,
           `Throughput: ${row.throughput}`,
@@ -37,7 +59,7 @@ export function healthLineOption(network: HealthComponentRow[]): EChartsOption {
         ].join('<br/>')
       }
     },
-    xAxis: { type: 'category', data: weeks, axisLabel: axisLabelStyle(), axisLine: { lineStyle: { color: PALETTE.border } } },
+    xAxis: { type: 'category', data: timeLabels, axisLabel: axisLabelStyle(), axisLine: { lineStyle: { color: PALETTE.border } } },
     yAxis: {
       type: 'value',
       min: 0,
@@ -78,8 +100,8 @@ export function healthLineOption(network: HealthComponentRow[]): EChartsOption {
 
 /** NC Movement: stacked area of lifecycle counts + NC-rate line with the
  *  district threshold (10%) marked on the secondary axis. */
-export function ncMovementOption(movement: NcMovementRow[]): EChartsOption {
-  const weeks = movement.map((m) => weekLabel(m.weekStart))
+export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'weekly'): EChartsOption {
+  const timeLabels = movement.map((m) => formatTimeLabel(m.weekStart, grain))
   const stack = 'nc'
   const base = {
     type: 'line' as const,
@@ -108,7 +130,7 @@ export function ncMovementOption(movement: NcMovementRow[]): EChartsOption {
           if (name === 'NC rate') return `${p.marker ?? ''}NC rate: <b>${v}%</b>`
           return `${p.marker ?? ''}${name}: ${v}`
         })
-        return [`<b>${row.weekStart} (${weeks[idx]})</b>`, ...lines, `Total cells: ${row.totalCells}`, `NC rate: <b>${rate}</b>`].join('<br/>')
+        return [`<b>${row.weekStart} (${timeLabels[idx]})</b>`, ...lines, `Total cells: ${row.totalCells}`, `NC rate: <b>${rate}</b>`].join('<br/>')
       }
     },
     legend: {
@@ -118,7 +140,7 @@ export function ncMovementOption(movement: NcMovementRow[]): EChartsOption {
       itemHeight: 8,
       data: ['New NC', 'Recurring', 'Persistent', 'Recovering', 'NC rate']
     },
-    xAxis: { type: 'category', data: weeks, axisLabel: axisLabelStyle(), axisLine: { lineStyle: { color: PALETTE.border } } },
+    xAxis: { type: 'category', data: timeLabels, axisLabel: axisLabelStyle(), axisLine: { lineStyle: { color: PALETTE.border } } },
     yAxis: [
       {
         type: 'value',

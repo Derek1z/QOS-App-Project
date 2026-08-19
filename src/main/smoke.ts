@@ -2,14 +2,16 @@ import { openSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'no
 import { dirname, join } from 'node:path'
 import ExcelJS from 'exceljs'
 import * as XLSX from 'xlsx'
+import JSZip from 'jszip'
 import { excelToCsvFile } from './import/excel'
 import * as ws from './workspace/manager'
 import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
   getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
-  getRegionMap, getRegionDistricts, getKpiOverview
+  getRegionMap, getRegionDistricts, getKpiOverview, getExecutiveOverview
 } from './services/queryService'
+import { generateSyntheticMultiTechData } from './services/syntheticGenerator'
 import {
   searchEntities, getInvestigation, setInvestigationStatus, addInvestigationNote,
   exportInvestigationReport
@@ -30,18 +32,24 @@ import {
   getSchedule, setSchedule, runScheduled, scheduleHistory, maybeRunScheduled
 } from './services/maintenanceScheduler'
 import {
-  seedKpiDefs, seedCurrent, listKpiDefs, saveKpiDef, removeKpiDef, discoverKpiDefs
+  seedKpiDefs, seedCurrent, listKpiDefs, saveKpiDef, removeKpiDef, discoverKpiDefs,
+  resetKpiDefsToDefaults
 } from './services/kpiService'
+import {
+  listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
+} from './services/derivedKpiService'
 import { app } from 'electron'
 import { overrideDataDirs, dirs } from './paths'
 
 export async function runSmokeTest(dir: string): Promise<void> {
+  console.log('[SMOKE] 1. Creating workspace in', dir)
   // keep snapshots/safety backups inside the temp dir, never the portable folder
   overrideDataDirs({ backups: join(dir, 'backups'), snapshots: join(dir, 'snapshots'), exports: join(dir, 'exports') })
 
   // 1. create workspace
   const created = await ws.createWorkspace(dir, 'Smoke Test')
   if (created.rowCount !== 0) throw new Error('fresh workspace should be empty')
+  console.log('[SMOKE] 1. Workspace created.')
 
   // 1b. lock file must exist while writable handle is open
   try {
@@ -52,6 +60,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
 
   // 2. insert sample rows
+  console.log('[SMOKE] 2. Inserting sample rows...')
   const cur = ws.getCurrent()!
   await cur.connection.run(`INSERT INTO dim_region VALUES (1, 'Greater Accra'), (2, 'Ashanti')`)
   await cur.connection.run(`INSERT INTO dim_district VALUES (1, 'Accra Metro', 1), (2, 'Kumasi', 2)`)
@@ -67,14 +76,17 @@ export async function runSmokeTest(dir: string): Promise<void> {
     (20260702, 1001, 84.0, 1300.0, 50, 18500, 99.7),
     (20260702, 1002, 72.0, 700.0, 28, 14000, 99.6),
     (20260702, 2001, 91.0, 1600.0, 65, 23000, 98.8)`)
+  console.log('[SMOKE] 2. Sample rows inserted.')
 
   // 3. summary must reflect inserted rows
+  console.log('[SMOKE] 3. Querying summary...')
   const summary = await getSummary()
   if (!summary) throw new Error('summary is null with workspace open')
   if (summary.rowCount !== 6) throw new Error(`rowCount ${summary.rowCount} != 6`)
   if (summary.cells !== 3 || summary.regions !== 2 || summary.districts !== 2 || summary.sites !== 2) {
     throw new Error(`dims mismatch: ${JSON.stringify(summary)}`)
   }
+  console.log('[SMOKE] 3. Summary verified:', JSON.stringify(summary))
   if (summary.avgPrb === null || summary.avgPrb < 80 || summary.avgPrb > 85) {
     throw new Error(`avgPrb unexpected: ${summary.avgPrb}`)
   }
@@ -84,6 +96,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (summary.rulesetVersion !== 1) throw new Error('ruleset v1 missing')
 
   // 4. read-only open; writes must fail
+  console.log('[SMOKE] 4. Testing read-only workspace...')
   await ws.closeWorkspace()
   const ro = await ws.openWorkspace(created.path, { readOnly: true })
   if (!ro.readOnly) throw new Error('expected read-only open')
@@ -95,25 +108,32 @@ export async function runSmokeTest(dir: string): Promise<void> {
     roWriteFailed = true
   }
   if (!roWriteFailed) throw new Error('read-only write did not fail')
+  console.log('[SMOKE] 4. Read-only verified.')
 
   // 5. reopen writable after close works
+  console.log('[SMOKE] 5. Testing reopen writable workspace...')
   await ws.closeWorkspace()
   const again = await ws.openWorkspace(created.path)
   if (again.rowCount !== 6) throw new Error('reopen after close lost data')
+  console.log('[SMOKE] 5. Reopen writable verified.')
 
   // 6. random file must be rejected as a workspace
+  console.log('[SMOKE] 6. Testing invalid workspace rejection...')
   await ws.closeWorkspace()
   const bad = join(dir, 'junk.txt')
   writeFileSync(bad, 'not a duckdb file')
   let rejected = false
   try {
     await ws.openWorkspace(bad)
-  } catch {
+  } catch (err) {
+    console.log('[SMOKE] 6. Caught expected rejection error:', (err as Error).message)
     rejected = true
   }
   if (!rejected) throw new Error('invalid workspace was accepted')
+  console.log('[SMOKE] 6. Invalid workspace rejected successfully.')
 
   await ws.closeWorkspace()
+  console.log('[SMOKE] 8. Starting import pipeline test...')
 
   // 8. import pipeline: CSV with one new cell + one new site
   const csv = join(dir, 'import.csv')
@@ -129,27 +149,38 @@ export async function runSmokeTest(dir: string): Promise<void> {
       '2026-07-06,Kumasi,Ashanti,KUM-002-A,KUM-002,93.0,70,1750.0,98.9,24500'
     ].join('\n')
   )
+  console.log('[SMOKE] 8. Reopening workspace...')
   await ws.openWorkspace(created.path)
+  console.log('[SMOKE] 8. Analyzing CSV file...')
   const [analysis] = await analyzeFiles([csv])
   if (!analysis || analysis.errors.length > 0) throw new Error('analyze failed: ' + JSON.stringify(analysis.errors))
   if (Object.keys(analysis.suggestedMapping).length < 8) {
     throw new Error('mapping too small: ' + JSON.stringify(analysis.suggestedMapping))
   }
+  console.log('[SMOKE] 8. Previewing import...')
   const mapping = { columns: analysis.suggestedMapping }
   const preview = await previewImport(analysis.id, mapping)
   if (!preview.canImport) throw new Error('preview blocked: ' + JSON.stringify(preview.issues))
+  console.log('[SMOKE] 8. Running import...')
   const phases: string[] = []
   const res = await runImport(analysis.id, mapping, {
     backupDir: join(dir, 'backups'),
-    onProgress: (p) => phases.push(p.phase)
+    onProgress: (p) => {
+      console.log('[SMOKE] 8. Import progress phase:', p.phase)
+      phases.push(p.phase)
+    }
   })
+  console.log('[SMOKE] 8. Import completed, insertedRows:', res.insertedRows)
+  console.log('[SMOKE] 8. Checking post-import assertions...')
   if (res.insertedRows !== 6) throw new Error('import inserted ' + res.insertedRows)
   if (phases.length < 2) {
     throw new Error('import worker progress missing: ' + JSON.stringify(phases))
   }
   if (res.rejectedRows !== 0) throw new Error('import rejected ' + res.rejectedRows)
   if (res.newCells !== 1) throw new Error('import newCells ' + res.newCells)
+  console.log('[SMOKE] 8. Querying post-import summary...')
   const sum2 = await getSummary()
+  console.log('[SMOKE] 8. Post-import summary:', JSON.stringify(sum2))
   if (!sum2 || sum2.rowCount !== 12) throw new Error('post-import rows ' + (sum2 ? sum2.rowCount : 'null'))
   const cur2 = ws.getCurrent()!
   const wk = await cur2.connection.runAndReadAll(`SELECT count(*) n FROM agg_cell_weekly`)
@@ -158,55 +189,70 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (Number(cov.getRowObjects()[0].n) < 2) throw new Error('coverage missing')
   const aud = await cur2.connection.runAndReadAll(`SELECT count(*) n FROM import_audit`)
   if (Number(aud.getRowObjects()[0].n) < 1) throw new Error('audit missing')
+  console.log('[SMOKE] 8. Post-import assertions verified.')
 
   // 9. re-import the same file: every row is a duplicate, nothing inserted
+  console.log('[SMOKE] 9. Testing duplicate re-import...')
   const res2 = await runImport(analysis.id, mapping, { backupDir: join(dir, 'backups') })
   if (res2.insertedRows !== 0 || res2.duplicatesIgnored !== 6) {
     throw new Error('dedupe failed: ' + JSON.stringify(res2))
   }
+  console.log('[SMOKE] 9. Dedupe verified.')
 
   // 10. mapping profile remembered for next time (fresh handle: import #2 reopened the workspace)
+  console.log('[SMOKE] 10. Testing profile and raw archive...')
   const cur3 = ws.getCurrent()!
   const prof = await cur3.connection.runAndReadAll(`SELECT count(*) n FROM source_mapping_profiles`)
   if (Number(prof.getRowObjects()[0].n) < 1) throw new Error('mapping profile not saved')
+  console.log('[SMOKE] 10. Profile saved verified.')
 
   // 10b. raw-source archive (spec §9): both imports archived the CSV as gzip
+  console.log('[SMOKE] 10b. Testing raw archive...')
   if (!res.archivePath || !res.retentionUntil) {
     throw new Error('import result missing archive metadata: ' + JSON.stringify(res))
   }
+  console.log('[SMOKE] 10b. Checking archivePath exists:', res.archivePath)
   if (!existsSync(res.archivePath)) throw new Error('archived raw file missing: ' + res.archivePath)
   const gz = readFileSync(res.archivePath)
   if (gz[0] !== 0x1f || gz[1] !== 0x8b) throw new Error('archived file is not gzip')
+  console.log('[SMOKE] 10b. Querying raw_archive table...')
   const arch = await cur3.connection.runAndReadAll(
     `SELECT archived_path, CAST(retention_until AS VARCHAR) AS until FROM raw_archive`
   )
   const archRows = arch.getRowObjects()
+  console.log('[SMOKE] 10b. archRows count:', archRows.length)
   if (archRows.length !== 2) throw new Error('raw_archive rows ' + archRows.length + ' (two imports)')
   for (const a of archRows) {
     if (!String(a.until)) throw new Error('raw archive missing retention_until')
   }
+  console.log('[SMOKE] 10b. Calling rawArchive()...')
   const ar = await rawArchive()
+  console.log('[SMOKE] 10b. rawArchive result:', JSON.stringify(ar))
   if (ar.status.total !== 2 || ar.rows.length !== 2) throw new Error('rawArchive() total ' + ar.status.total)
   if (!ar.rows.every((r) => r.status === 'retained' && r.daysLeft > 80 && r.checksum)) {
     throw new Error('rawArchive rows malformed: ' + JSON.stringify(ar.rows))
   }
   // purge: backdate one file past retention, purge, expect it gone and the other kept
+  console.log('[SMOKE] 10b. Backdating file for purge...')
   const backdated = archRows[0].archived_path
   await cur3.connection.run(
-    `UPDATE raw_archive SET retention_until = now() - INTERVAL 1 DAY WHERE archived_path = ?`,
-    [backdated]
+    `UPDATE raw_archive SET retention_until = now() - INTERVAL 1 DAY WHERE archived_path = '${String(backdated).replace(/'/g, "''")}'`
   )
+  console.log('[SMOKE] 10b. Calling purgeRawArchive()...')
   const purged = await purgeRawArchive()
+  console.log('[SMOKE] 10b. Purged result:', JSON.stringify(purged))
   if (purged.expired !== 0 || purged.total !== 1) {
     throw new Error('purge result wrong: ' + JSON.stringify(purged))
   }
   if (existsSync(String(backdated))) throw new Error('purged raw file still on disk')
   const remaining = await cur3.connection.runAndReadAll(`SELECT count(*) n FROM raw_archive`)
   if (Number(remaining.getRowObjects()[0].n) !== 1) throw new Error('raw_archive row count after purge')
+  console.log('[SMOKE] 10b. Raw archive verified.')
 
   // --- M2: analytics engine ---
 
   // 11. NC lifecycle classifications exist for the imported cells
+  console.log('[SMOKE] 11. Testing NC lifecycle table...')
   const life = await cur3.connection.runAndReadAll(`SELECT count(*) n FROM cell_nc_lifecycle`)
   if (Number(life.getRowObjects()[0].n) < 4) throw new Error('cell_nc_lifecycle empty')
   const cls = await cur3.connection.runAndReadAll(`
@@ -221,6 +267,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
     byName[String(row.name)] = String(row.lifecycle)
     bySev[String(row.name)] = String(row.severity)
   }
+  console.log('[SMOKE] 11. byName:', JSON.stringify(byName), 'bySev:', JSON.stringify(bySev))
   if (byName['ACC-001-A'] !== 'Recurring NC') {
     throw new Error('ACC-001-A should be Recurring NC (2nd consecutive week): ' + JSON.stringify(byName))
   }
@@ -233,9 +280,12 @@ export async function runSmokeTest(dir: string): Promise<void> {
     `SELECT count(*) n FROM cell_nc_lifecycle WHERE grain='weekly' AND lifecycle='New NC'`
   )
   if (Number(newNc.getRowObjects()[0].n) < 2) throw new Error('expected at least 2 New NC weeks')
+  console.log('[SMOKE] 11. NC lifecycle table verified.')
 
   // 12. lifecycle query service returns the latest week's summary
+  console.log('[SMOKE] 12. Querying NC lifecycle service...')
   const nc = await getNcLifecycle()
+  console.log('[SMOKE] 12. getNcLifecycle result:', JSON.stringify(nc))
   if (nc.totalCells !== 3) throw new Error('nc totalCells ' + nc.totalCells)
   if (nc.ncCells !== 2) throw new Error('nc ncCells ' + nc.ncCells)
   if (nc.bySeverity.Critical + nc.bySeverity.High + nc.bySeverity.Watch !== 2) {
@@ -244,7 +294,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
 
   // 13. priority queue: latest week, balanced mode; ACC-001-A leads
   //     (Recurring + worsening + high PRB outweighs KUM-002-A's PRB-only score)
+  console.log('[SMOKE] 13. Testing priority queue...')
   const queue = await getPriorityQueue('balanced', 10)
+  console.log('[SMOKE] 13. Priority queue count:', queue.length, 'top cell:', queue[0]?.cellName)
   if (queue.length !== 3) throw new Error('priority queue length ' + queue.length)
   if (queue[0].cellName !== 'ACC-001-A') {
     throw new Error('priority top should be ACC-001-A: ' + queue[0].cellName)
@@ -258,8 +310,10 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (Number(pq.getRowObjects()[0].n) !== 20) {
     throw new Error('priority rows ' + Number(pq.getRowObjects()[0].n) + ' (expect 4 cells x 5 modes)')
   }
+  console.log('[SMOKE] 13. Priority queue verified.')
 
   // 14. health: network series + cell snapshot, all scores in 0..100
+  console.log('[SMOKE] 14. Testing health...')
   const health = await getHealth()
   if (health.network.length < 1) throw new Error('no network health rows')
   const latest = health.network[health.network.length - 1]
@@ -268,8 +322,10 @@ export async function runSmokeTest(dir: string): Promise<void> {
   for (const c of health.cells) {
     if (c.healthScore < 0 || c.healthScore > 100) throw new Error('cell health OOB ' + c.healthScore)
   }
+  console.log('[SMOKE] 14. Health verified.')
 
   // 15. ruleset change: threshold 80 → 90 creates v2, recomputes, keeps facts intact
+  console.log('[SMOKE] 15. Testing ruleset update...')
   const rulesBefore = await getRulesCurrent()
   if (!rulesBefore || rulesBefore.version !== 1) throw new Error('ruleset v1 missing')
   const rules2 = await updateRulesCurrent({ prbThresholdPct: 90, notes: 'smoke bump' })
@@ -295,17 +351,26 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (!invalidRejected2) throw new Error('invalid ruleset accepted')
   const ver = await cur4.connection.runAndReadAll(`SELECT max(version) n FROM ruleset`)
   if (Number(ver.getRowObjects()[0].n) !== 2) throw new Error('invalid ruleset still bumped version')
+  console.log('[SMOKE] 15. Ruleset update verified.')
 
-  // 16. NC movement (M3 overview): per-week lifecycle counts under current rules
+  // 16. NC movement (M3 overview): per-week, per-day, per-month lifecycle counts under current rules
+  console.log('[SMOKE] 16. Testing NC movement...')
   const movement = await getNcMovement(8)
   if (movement.length !== 2) throw new Error('movement weeks ' + movement.length)
   const latestMove = movement[movement.length - 1]
   if (latestMove.ncCells !== 1 || latestMove.newNc !== 1) {
     throw new Error('movement latest week wrong: ' + JSON.stringify(latestMove))
   }
+  const dailyMove = await getNcMovement(14, 'daily')
+  if (dailyMove.length === 0) throw new Error('daily movement empty')
+  const monthlyMove = await getNcMovement(6, 'monthly')
+  if (monthlyMove.length === 0) throw new Error('monthly movement empty')
+  console.log('[SMOKE] 16. NC movement (weekly, daily, monthly) verified.')
 
   // 17. health matrix (M3): cell x week heatmap source rolls up cell health
+  console.log('[SMOKE] 17. Testing health matrix...')
   const mat = await getHealthMatrix('cell', { weeks: 8, sort: 'worst' })
+  console.log('[SMOKE] 17. Health matrix rows:', mat.rows.length, 'weeks:', mat.weeks.length)
   if (mat.rows.length !== 4) throw new Error('matrix rows ' + mat.rows.length)
   if (mat.weeks.length !== 2) throw new Error('matrix weeks ' + mat.weeks.length)
   for (const row of mat.rows) {
@@ -316,9 +381,12 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   const matSite = await getHealthMatrix('site', { weeks: 8 })
   if (matSite.rows.length < 1) throw new Error('site matrix empty')
+  console.log('[SMOKE] 17. Health matrix verified.')
 
   // 18. cell intelligence: all-cells table + per-cell detail history
+  console.log('[SMOKE] 18. Testing cell intelligence...')
   const ci = await getCellIntelligence({})
+  console.log('[SMOKE] 18. Cell intelligence total:', ci.total, 'rows:', ci.rows.length)
   if (ci.total !== 3) throw new Error('cell intelligence total ' + ci.total)
   if (ci.rows.length !== 3) throw new Error('cell intelligence rows ' + ci.rows.length)
   // under ruleset v2 (threshold 90) the only NC cell (KUM-002-A) leads the queue
@@ -332,20 +400,25 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   const ciNc = await getCellIntelligence({ lifecycle: 'New NC' })
   if (ciNc.total !== 1) throw new Error('cell intelligence lifecycle filter ' + ciNc.total)
+  console.log('[SMOKE] 18. Getting cell detail for 1001...')
   const cd = await getCellDetail(1001)
   if (!cd || cd.weeks.length < 2) throw new Error('cell detail weeks ' + (cd ? cd.weeks.length : 'null'))
   if (cd.current?.lifecycle !== 'Healthy') {
     throw new Error('ACC-001-A detail lifecycle ' + cd.current?.lifecycle)
   }
+  console.log('[SMOKE] 18. Getting cell detail for 2002...')
   const cd2 = await getCellDetail(2002)
   if (!cd2 || cd2.current?.lifecycle !== 'New NC') {
     throw new Error('KUM-002-A detail lifecycle ' + cd2?.current?.lifecycle)
   }
   const cdMissing = await getCellDetail(999999)
   if (cdMissing !== null) throw new Error('unknown cell detail should be null')
+  console.log('[SMOKE] 18. Cell intelligence verified.')
 
   // 19. performance analysis: distributions, quadrant scatter, correlations
+  console.log('[SMOKE] 19. Testing performance analysis...')
   const perf = await getPerformance()
+  console.log('[SMOKE] 19. Performance distributions:', perf.distributions.length, 'scatter:', perf.scatter.length)
   if (perf.totalCells !== 3) throw new Error('perf totalCells ' + perf.totalCells)
   if (perf.distributions.length !== 5) throw new Error('perf distributions ' + perf.distributions.length)
   for (const d of perf.distributions) {
@@ -366,9 +439,11 @@ export async function runSmokeTest(dir: string): Promise<void> {
       throw new Error('perf correlation OOB ' + c.pearson)
     }
   }
+  console.log('[SMOKE] 19. Performance analysis verified.')
 
   // 20. comparison lab: period-vs-period (latest week vs previous ISO week) and
   //     region-vs-region (regions vs network baseline)
+  console.log('[SMOKE] 20. Testing comparison lab...')
   const cmpP = await getComparison({ type: 'period', scope: 'cell', metric: 'prb' })
   if (cmpP.aLabel !== '2026-07-06' || cmpP.bLabel !== '2026-06-29') {
     throw new Error('comparison weeks ' + cmpP.aLabel + ' ' + cmpP.bLabel)
@@ -385,6 +460,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (!cmpByName['KUM-001-A'] || cmpByName['KUM-001-A'].transition !== 'recovered') {
     throw new Error('KUM-001-A should be recovered: ' + JSON.stringify(cmpByName['KUM-001-A']))
   }
+  console.log('[SMOKE] 20. Comparison lab verified.')
   const cmpAcc = cmpByName['ACC-001-A']
   if (!cmpAcc || cmpAcc.current == null || cmpAcc.previous == null || !(cmpAcc.delta! > 0)) {
     throw new Error('ACC-001-A PRB should rise: ' + JSON.stringify(cmpAcc))
@@ -393,6 +469,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (prbKpi.current == null || prbKpi.previous == null || prbKpi.current <= prbKpi.previous) {
     throw new Error('network PRB should worsen: ' + JSON.stringify(prbKpi))
   }
+  console.log('[SMOKE] 20. Checking region comparison...')
   const cmpR = await getComparison({ type: 'region', metric: 'throughput' })
   if (cmpR.rows.length !== 2) throw new Error('region rows ' + cmpR.rows.length)
   const thrKpi = cmpR.kpis.find((k) => k.metric === 'throughput')!
@@ -405,8 +482,10 @@ export async function runSmokeTest(dir: string): Promise<void> {
       throw new Error('region baseline should be network value: ' + r.name)
     }
   }
+  console.log('[SMOKE] 20. Comparison lab all verified.')
 
   // 21. network explorer: hierarchical drill-down with health rollups
+  console.log('[SMOKE] 21. Testing network explorer...')
   const exR = await getExplorer('region')
   if (exR.nodes.length !== 2) throw new Error('explorer regions ' + exR.nodes.length)
   const exByRegion: Record<string, (typeof exR.nodes)[number]> = {}
@@ -417,6 +496,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
     if (n.cells !== 2) throw new Error('region cells ' + n.name + ' ' + n.cells)
     if (n.healthScore != null && (n.healthScore < 0 || n.healthScore > 100)) throw new Error('region health OOB')
   }
+  console.log('[SMOKE] 21. Drilling district...')
   const exD = await getExplorer('district', 1)
   if (exD.nodes.length !== 1 || exD.nodes[0].name !== 'Accra Metro') {
     throw new Error('district drill failed: ' + exD.nodes.map((n) => n.name).join(','))
@@ -424,9 +504,11 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (exD.breadcrumb.length !== 1 || exD.breadcrumb[0].name !== 'Greater Accra') {
     throw new Error('district breadcrumb ' + JSON.stringify(exD.breadcrumb))
   }
+  console.log('[SMOKE] 21. Drilling site...')
   const exS = await getExplorer('site', 1)
   if (exS.nodes.length !== 1 || exS.nodes[0].name !== 'ACC-001') throw new Error('site drill failed')
   if (exS.breadcrumb.length !== 2) throw new Error('site breadcrumb ' + exS.breadcrumb.length)
+  console.log('[SMOKE] 21. Drilling cell...')
   const exC = await getExplorer('cell', 1)
   if (exC.nodes.length !== 2) throw new Error('cell drill count ' + exC.nodes.length)
   if (exC.breadcrumb.length !== 3) throw new Error('cell breadcrumb ' + exC.breadcrumb.length)
@@ -441,10 +523,14 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (exQ.nodes.length !== 1 || exQ.nodes[0].name !== 'Accra Metro') throw new Error('explorer search failed')
   const exEmpty = await getExplorer('site', 999)
   if (exEmpty.nodes.length !== 0) throw new Error('unknown parent should be empty')
+  console.log('[SMOKE] 21. Network explorer verified.')
 
   // 22. investigation workspace: evidence, diagnosis, notes/status, report
+  console.log('[SMOKE] 22. Testing investigation workspace...')
   const invSearch = await searchEntities('cell', 'kum')
+  console.log('[SMOKE] 22. Inv search returned:', invSearch.length)
   if (invSearch.length !== 2) throw new Error('inv search ' + invSearch.length + ' ' + JSON.stringify(invSearch.map((e) => e.name)))
+  console.log('[SMOKE] 22. Getting investigation cell 1001...')
   const inv = await getInvestigation('cell', 1001)
   if (!inv) throw new Error('investigation null for ACC-001-A')
   if (inv.entityName !== 'ACC-001-A' || inv.path.length !== 4) {
@@ -452,12 +538,12 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   if (inv.current?.lifecycle !== 'Healthy') throw new Error('inv lifecycle ' + inv.current?.lifecycle)
   if (inv.evidence.length !== 6) throw new Error('inv evidence ' + inv.evidence.length)
-  const invPrb = inv.evidence.find((e) => e.metric === 'prb')!
+  const invPrb = inv.evidence.find((e: any) => e.metric === 'prb')!
   if (invPrb.current !== 89 || Math.abs((invPrb.previous ?? 0) - 84.67) > 0.01) {
     throw new Error('inv prb evidence wrong: ' + JSON.stringify(invPrb))
   }
   if (inv.findings.length < 2) throw new Error('inv findings ' + inv.findings.length)
-  if (inv.hypotheses.length !== 5) throw new Error('inv hypotheses ' + inv.hypotheses.length)
+  if (inv.hypotheses.length < 5) throw new Error('inv hypotheses ' + inv.hypotheses.length)
   for (const h of inv.hypotheses) {
     if (h.score < 5 || h.score > 95) throw new Error('inv hypo score OOB ' + h.score)
     if (!['consistent', 'suggests', 'not supported'].includes(h.verdict)) throw new Error('inv hypo verdict ' + h.verdict)
@@ -481,17 +567,22 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (inv2?.status.status !== 'Investigating' || inv2.status.owner !== 'Ops') {
     throw new Error('inv status not persisted')
   }
-  if (!inv2.events.some((e) => e.kind === 'status_change')) throw new Error('status change not evented')
+  if (!inv2.events.some((e: any) => e.kind === 'status_change')) throw new Error('status change not evented')
+  console.log('[SMOKE] 22. Adding investigation note...')
   const invNote = await addInvestigationNote('cell', 1001, 'smoke note')
   if (invNote.kind !== 'user_note' || invNote.note !== 'smoke note') throw new Error('addNote failed')
+  console.log('[SMOKE] 22. Exporting investigation report...')
   const invRep = await exportInvestigationReport('cell', 1001)
   if (!invRep || !invRep.path.endsWith('.md') || !invRep.markdown.includes('ACC-001-A')) {
     throw new Error('report export failed: ' + JSON.stringify(invRep?.path))
   }
   if (!invRep.markdown.includes('Deterministic conclusion')) throw new Error('report missing diagnosis')
+  console.log('[SMOKE] 22. Investigation workspace verified.')
 
   // 23. priority center: workflow queue across scopes, filters, status rollups
+  console.log('[SMOKE] 23. Testing priority center...')
   const pc = await getPriorityCenter({})
+  console.log('[SMOKE] 23. Priority center total:', pc.total, 'top:', pc.rows[0]?.name)
   if (pc.total < 3) throw new Error('priority center total ' + pc.total)
   if (pc.rows[0].name !== 'KUM-002-A' || pc.rows[0].priorityScore == null) {
     throw new Error('priority center top should be KUM-002-A: ' + pc.rows[0].name + ' ' + pc.rows[0].priorityScore)
@@ -499,29 +590,38 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (pc.byStatus['Investigating'] !== 1) {
     throw new Error('priority center should roll up 1 Investigating (ACC-001-A status set earlier): ' + JSON.stringify(pc.byStatus))
   }
+  console.log('[SMOKE] 23. Searching priority center...')
   const pcSearch = await getPriorityCenter({ search: 'kum' })
   if (pcSearch.total !== 2) throw new Error('priority center search ' + pcSearch.total)
+  console.log('[SMOKE] 23. Filtering priority center status...')
   const pcStatus = await getPriorityCenter({ status: 'Investigating' })
   if (pcStatus.total !== 1 || pcStatus.rows[0].name !== 'ACC-001-A') {
     throw new Error('priority center status filter ' + pcStatus.total + ' ' + pcStatus.rows[0]?.name)
   }
   const topBand = pc.rows[0].priorityBand
   if (!topBand) throw new Error('priority center top row missing band')
+  console.log('[SMOKE] 23. Filtering priority center band...', topBand)
   const pcBand = await getPriorityCenter({ band: topBand })
   if (pcBand.total < 1) throw new Error('priority center band filter empty for ' + topBand)
+  console.log('[SMOKE] 23. Checking overdue...')
   const pcOverdue = await getPriorityCenter({ overdueOnly: true })
   if (typeof pcOverdue.overdue !== 'number') throw new Error('priority center overdue shape')
+  console.log('[SMOKE] 23. Querying priority center site scope...')
   const pcSite = await getPriorityCenter({ scope: 'site' })
   if (pcSite.total < 2) throw new Error('priority center site scope ' + pcSite.total)
   const kumSite = pcSite.rows.find((r) => r.name === 'KUM-002')
   if (!kumSite || kumSite.ncCells !== 1 || kumSite.cells !== 1) {
     throw new Error('priority center KUM-002 site rollup ' + JSON.stringify(kumSite))
   }
+  console.log('[SMOKE] 23. Querying priority center district scope...')
   const pcDist = await getPriorityCenter({ scope: 'district' })
   if (pcDist.total < 2) throw new Error('priority center district scope ' + pcDist.total)
+  console.log('[SMOKE] 23. Priority center verified.')
 
   // 24. forecasting & early warning: simple-first methods, risk states
+  console.log('[SMOKE] 24. Testing forecasting & early warning...')
   const fc = await getForecast({})
+  console.log('[SMOKE] 24. Forecast network entity:', fc.entity.name, 'series:', fc.series.length)
   if (fc.entity.scope !== 'network' || fc.entity.name !== 'Network') {
     throw new Error('forecast network entity ' + JSON.stringify(fc.entity))
   }
@@ -543,12 +643,14 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (riskSum !== fc.totalEntities) throw new Error('forecast risk counts sum ' + riskSum + ' != ' + fc.totalEntities)
   if (fc.riskRows.length !== 4) throw new Error('forecast risk rows ' + fc.riskRows.length + ' (4 cells have weekly history)')
   if (!fc.riskRows.every((r) => r.risk && r.explanation.length > 10)) throw new Error('forecast risk row missing fields')
+  console.log('[SMOKE] 24. Checking suppressed forecast cell 2002...')
   // suppressed: KUM-002-A has a single week of history
   const fcCell = await getForecast({ scope: 'cell', entityId: 2002 })
   const fcCellPrb = fcCell.series.find((s) => s.metric === 'prb')!
   if (fcCellPrb.forecast.quality !== 'suppressed' || fcCellPrb.forecast.next !== null) {
     throw new Error('KUM-002-A single-week forecast should be suppressed: ' + fcCellPrb.forecast.quality)
   }
+  console.log('[SMOKE] 24. Checking site scope forecast...')
   // site scope rolls two cells up; forecast still runs
   const fcSite = await getForecast({ scope: 'site', entityId: 1 })
   if (fcSite.entity.name !== 'ACC-001') throw new Error('forecast site entity ' + fcSite.entity.name)
@@ -557,8 +659,10 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (fcThr.series.find((s) => s.metric === 'throughput')!.threshold !== 10_000) {
     throw new Error('forecast throughput threshold')
   }
+  console.log('[SMOKE] 24. Forecasting verified.')
 
   // 25. reporting center: report packs, snapshot, templates, history
+  console.log('[SMOKE] 25. Testing reporting center...')
   const rp = await generateReportPack({ name: 'Smoke Executive Pack' })
   if (rp.sections.length < 3) throw new Error('report sections ' + rp.sections.length)
   if (rp.snapshot.rulesetVersion !== 2) throw new Error('report ruleset snapshot ' + rp.snapshot.rulesetVersion)
@@ -624,7 +728,6 @@ export async function runSmokeTest(dir: string): Promise<void> {
 
   // 25d. native Excel charts (§53): the pack must embed PNG chart images
   // (kpi-trend line + executive-summary components bars) under xl/media/
-  const JSZip = require('jszip')
   const xzip = await JSZip.loadAsync(xb)
   const media = Object.keys(xzip.files).filter((p) => p.startsWith('xl/media/'))
   const chartPngs = media.filter((p) => p.endsWith('.png'))
@@ -992,9 +1095,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
     const g2Csv = join(dir, 'tech-2g.csv')
     writeFileSync(g2Csv, [
       'DATETIME,REGION,DISTRICT,BTS,CELL ID,TCH Congestion,SDCCH Congestion',
-      '2026-07-05,Greater Accra,Accra Metro,BTS-100,100-1,1.2,0.4',
-      '2026-07-05,Greater Accra,Accra Metro,BTS-100,100-2,2.1,0.9',
-      '2026-07-05,Greter Accra,Accra Metro,BTS-100,100-3,1.0,0.3'
+      '2026-07-05,Greater Accra,Accra Metro,BTS-100,BTS-100-A,1.2,0.4',
+      '2026-07-05,Greater Accra,Accra Metro,BTS-100,BTS-100-B,2.1,0.9',
+      '2026-07-05,Greter Accra,Accra Metro,BTS-100,BTS-100-C,1.0,0.3'
     ].join('\n'))
     const [g2] = await analyzeFiles([g2Csv])
     if (!g2 || g2.errors.length > 0) throw new Error('2G analyze failed: ' + JSON.stringify(g2?.errors))
@@ -1005,8 +1108,8 @@ export async function runSmokeTest(dir: string): Promise<void> {
     const g3Csv = join(dir, 'tech-3g.csv')
     writeFileSync(g3Csv, [
       'DATE,TIME,REGION,DISTRICT,NODEB,CELL,CE Utilization,HSDPA Throughput',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,200-1,55.0,9200',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,200-2,61.0,8400'
+      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,NDB-200-A,55.0,9200',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,NDB-200,NDB-200-B,61.0,8400'
     ].join('\n'))
     const [g3] = await analyzeFiles([g3Csv])
     if (!g3 || g3.errors.length > 0) throw new Error('3G analyze failed: ' + JSON.stringify(g3?.errors))
@@ -1016,8 +1119,8 @@ export async function runSmokeTest(dir: string): Promise<void> {
     const g4Csv = join(dir, 'tech-4g.csv')
     writeFileSync(g4Csv, [
       'DATE,TIME,REGION,DISTRICT,ENODEB,CELL,PRB Utilization',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-1,72.0',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-2,66.0'
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,ENB-300-A,72.0',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,ENB-300-B,66.0'
     ].join('\n'))
     const [g4] = await analyzeFiles([g4Csv])
     if (!g4) throw new Error('4G analyze failed')
@@ -1027,8 +1130,8 @@ export async function runSmokeTest(dir: string): Promise<void> {
     const vCsv = join(dir, 'tech-volte.csv')
     writeFileSync(vCsv, [
       'DATE,TIME,REGION,DISTRICT,ENODEB,CELL,MOS,RTP Jitter',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-1,3.8,12',
-      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,300-2,3.6,18'
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,ENB-300-A,3.8,12',
+      '2026-07-05,12:00,Greater Accra,Accra Metro,ENB-300,ENB-300-B,3.6,18'
     ].join('\n'))
     const [gv] = await analyzeFiles([vCsv])
     if (!gv) throw new Error('VoLTE analyze failed')
@@ -1244,6 +1347,86 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   if (!exportedCsv.includes('2026-07-05')) throw new Error('exported CSV date not ISO: ' + exportedCsv.slice(0, 200))
 
+  // Test 1: KPI Registry for 2G, 3G, 4G
+  await ws.openWorkspace(created.path)
+  const connActive = ws.getCurrent()!.connection
+  const kpis2G = await listKpiDefs(connActive, '2G')
+  const kpis3G = await listKpiDefs(connActive, '3G')
+  const kpis4G = await listKpiDefs(connActive, '4G')
+  if (kpis2G.length < 4 || kpis3G.length < 3 || kpis4G.length < 4) {
+    throw new Error(`kpi registry incomplete: 2G=${kpis2G.length}, 3G=${kpis3G.length}, 4G=${kpis4G.length}`)
+  }
+  const tchDef = kpis2G.find((k) => k.key === 'tch_congestion')
+  if (!tchDef || tchDef.betterDirection !== 'lower_is_better' || !tchDef.isCore || tchDef.target !== 2.0) {
+    throw new Error('2G tch_congestion definition mismatch: ' + JSON.stringify(tchDef))
+  }
+  const cssr3G = kpis3G.find((k) => k.key === 'call_setup_success_3g' || k.key === 'cssr_3g')
+  if (!cssr3G || cssr3G.betterDirection !== 'higher_is_better' || !cssr3G.isCore || cssr3G.target !== 98.5) {
+    throw new Error('3G cssr_3g definition mismatch: ' + JSON.stringify(cssr3G))
+  }
+
+  // Test 2: Synthetic Data Generation for Multi-Tech Datasets
+  const synRes = await generateSyntheticMultiTechData({
+    technology: '4G',
+    weeks: 8,
+    cellsPerTech: 15,
+    destDir: join(dir, 'synthetic')
+  })
+  if (synRes.rowCount < 100 || synRes.weeksCount !== 8 || (synRes.cellsCount ?? 0) < 15) {
+    throw new Error('synthetic generator output invalid: ' + JSON.stringify(synRes))
+  }
+
+  // Test 3: Executive Overview Query
+  const exec = await getExecutiveOverview()
+  if (!exec || exec.technologies.length === 0 || !exec.problemSummary) {
+    throw new Error('executive overview output invalid: ' + JSON.stringify(exec))
+  }
+  if (typeof exec.overallHealthScore !== 'number' || exec.overallHealthScore < 0 || exec.overallHealthScore > 100) {
+    throw new Error('invalid overall health score: ' + exec.overallHealthScore)
+  }
+
+  // Test 4: Modular Diagnostic Engine in Investigation
+  const invCells = await searchEntities('cell', 'ACC')
+  if (invCells.length > 0) {
+    const invRes = await getInvestigation('cell', invCells[0].id)
+    if (!invRes || invRes.hypotheses.length === 0) {
+      throw new Error('investigation hypotheses missing')
+    }
+    const hasScores = invRes.hypotheses.every((h: any) => typeof h.score === 'number' && h.score >= 0 && h.score <= 100)
+    if (!hasScores) throw new Error('investigation hypotheses scores invalid')
+  }
+
+  // Test 5: Derived KPI Suggestions & Formula Engine
+  console.log('[SMOKE] Testing derived KPI formula suggestions & detection...')
+  const testHeaders3G = [
+    'Date', 'Cell Name', 'Region', 'District', 'Site',
+    'VS.RRC.Rej.DLPower.Cong', 'VS.RAB.FailEstabPS.DLPower.Cong', 'VS.RAB.FailEstabCS.DLPower.Cong',
+    'VS.RRC.Rej.ULCE.Cong', 'VS.RAB.FailEstabPS.ULCE.Cong', 'VS.RAB.FailEstabCS.ULCE.Cong',
+    'VS.RAB.FailEstabPS.PhyChFail', 'VS.FailRBRecfg.PhyChFail', 'VS.FailRBSetup.PhyChFail'
+  ]
+  const suggestions = detectDerivedKpiSuggestions(testHeaders3G, '3G')
+  if (suggestions.length < 3 || !suggestions.every((s) => s.canCalculate)) {
+    throw new Error('3G derived KPI suggestions failed: ' + JSON.stringify(suggestions))
+  }
+  const activeConn = ws.getCurrent()!.connection
+  const derivedList = await listDerivedKpis(activeConn, '3G')
+  if (derivedList.length < 3) throw new Error('derived KPI list empty')
+
+  // Test 6: Reset KPI Defs to Defaults
+  console.log('[SMOKE] Testing reset KPI defs to baseline defaults...')
+  const resetKpis = await resetKpiDefsToDefaults(activeConn, '3G')
+  if (resetKpis.length === 0) throw new Error('resetKpiDefsToDefaults returned empty')
+
+  // Test 7: Dynamic KPI Cards Structure in Executive Overview
+  console.log('[SMOKE] Testing dynamic KPI cards structure...')
+  if (!exec.availableKpiCards || exec.availableKpiCards.length === 0) {
+    throw new Error('executive overview availableKpiCards missing or empty')
+  }
+  const firstCard = exec.availableKpiCards[0]
+  if (!firstCard.label || !firstCard.complianceStatus || !firstCard.formattedValue) {
+    throw new Error('dynamic KPI card structure invalid: ' + JSON.stringify(firstCard))
+  }
+
   await ws.closeWorkspace()
 
   // file-based success marker for packaged runs: the portable 7z SFX wrapper
@@ -1259,7 +1442,6 @@ export async function runSmokeTest(dir: string): Promise<void> {
     }
   }
 
-  await ws.closeWorkspace()
   console.log(
     'SMOKE_OK ' +
       JSON.stringify({
@@ -1314,7 +1496,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
         kpiSaveRemove: true,
         kpiExtraImport: true,
         kpiTechSwitch: true,
-        kpiScoring: true
+        kpiScoring: true,
+        derivedKpis: true,
+        dynamicKpiCards: true
       })
   )
 }

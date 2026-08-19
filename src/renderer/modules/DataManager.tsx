@@ -98,9 +98,30 @@ export default function DataManager(): React.JSX.Element {
   const [schedDraft, setSchedDraft] = useState<MaintenanceScheduleSettings | null>(null)
   const [schedHistory, setSchedHistory] = useState<ScheduledMaintenanceRun[]>([])
   const [schedBusy, setSchedBusy] = useState(false)
+  const [syntheticBusy, setSyntheticBusy] = useState(false)
   const [elapsedSec, setElapsedSec] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  async function generateSynthetic(tech?: '2G' | '3G' | '4G'): Promise<void> {
+    setSyntheticBusy(true)
+    setError(null)
+    try {
+      const res = await window.api.synthetic.generate({
+        technology: tech,
+        weeks: 8,
+        cellsPerTech: 20
+      })
+      await refreshWorkspaceState()
+      await loadTabs()
+      setError(`Successfully generated and imported ${res.rowsCount} rows for ${res.technology} dataset (${res.weeksCount} weeks, ${res.cellsCount} cells).`)
+      emit('MODULE_CHANGED')
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setSyntheticBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (busy) {
@@ -538,6 +559,32 @@ export default function DataManager(): React.JSX.Element {
                 <button className="btn btn-primary" onClick={() => fileInput.current?.click()}>
                   Choose files…
                 </button>
+                <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={busy || syntheticBusy}
+                    onClick={() => void generateSynthetic('2G')}
+                    title="Generate multi-week 2G dataset with TCH/SDCCH congestion and call drops"
+                  >
+                    {syntheticBusy ? 'Generating…' : '⚡ Generate 2G Demo Data'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={busy || syntheticBusy}
+                    onClick={() => void generateSynthetic('3G')}
+                    title="Generate multi-week 3G dataset with CSSR, CDR, and DASR metrics"
+                  >
+                    {syntheticBusy ? 'Generating…' : '⚡ Generate 3G Demo Data'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={busy || syntheticBusy}
+                    onClick={() => void generateSynthetic('4G')}
+                    title="Generate multi-week 4G dataset with PRB, DSAF, and throughput metrics"
+                  >
+                    {syntheticBusy ? 'Generating…' : '⚡ Generate 4G Demo Data'}
+                  </button>
+                </div>
                 {isDemo && (
                   <button className="btn btn-ghost" onClick={() => void loadSample()}>
                     Use sample CSV
@@ -620,6 +667,42 @@ export default function DataManager(): React.JSX.Element {
                         ↺ Remembered {suggestedKeys.length} KPI{' '}
                         {suggestedKeys.length === 1 ? 'assignment' : 'assignments'} from the last
                         import of this source — adjust below if needed.
+                      </div>
+                    )}
+                    {a.derivedSuggestions && a.derivedSuggestions.length > 0 && (
+                      <div className="notice kpi-suggest" style={{ background: 'rgba(56, 189, 248, 0.08)', borderLeft: '3px solid #38bdf8', marginTop: 8 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div>
+                            ⚡ <b>{a.derivedSuggestions.filter((s) => s.canCalculate).length} derived KPI{a.derivedSuggestions.filter((s) => s.canCalculate).length === 1 ? '' : 's'}</b> can be created from this dataset: {a.derivedSuggestions.map((s) => s.derivedKpi.name).join(', ')}
+                          </div>
+                          {a.derivedSuggestions.some((s) => !s.canCalculate) && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                              {a.derivedSuggestions.filter((s) => !s.canCalculate).map((s) => `${s.derivedKpi.name}: missing ${s.missingSources.join(', ')}`).join(' · ')}
+                            </div>
+                          )}
+                        </div>
+                        <span className="suggest-actions">
+                          <button
+                            className="btn btn-primary btn-sm"
+                            disabled={busy}
+                            onClick={async () => {
+                              for (const s of a.derivedSuggestions ?? []) {
+                                if (s.canCalculate) {
+                                  await window.api.derived.save({ ...s.derivedKpi, enabled: true })
+                                }
+                              }
+                              emit('KPIDEFS_CHANGED')
+                            }}
+                          >
+                            Create All
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => emit('OPEN_TARGETS_MODAL')}
+                          >
+                            Review
+                          </button>
+                        </span>
                       </div>
                     )}
                     {a.errors.length === 0 && (

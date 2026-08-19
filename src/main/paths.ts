@@ -10,17 +10,18 @@ import { mkdirSync } from 'node:fs'
  */
 export function portableRoot(): string {
   if (process.env.PORTABLE_EXECUTABLE_DIR) return process.env.PORTABLE_EXECUTABLE_DIR
-  if (app.isPackaged) return dirname(process.execPath)
-  return app.getAppPath()
+  if (app?.isPackaged) return dirname(process.execPath)
+  if (app?.getAppPath) return app.getAppPath()
+  return process.cwd()
 }
 
 export const dirs = {
-  root: portableRoot(),
-  workspaces: join(portableRoot(), 'workspaces'),
-  backups: join(portableRoot(), 'backups'),
-  snapshots: join(portableRoot(), 'backups', 'snapshots'),
-  exports: join(portableRoot(), 'exports'),
-  appState: join(portableRoot(), 'app_state.json')
+  get root(): string { return portableRoot() },
+  get workspaces(): string { return join(portableRoot(), 'workspaces') },
+  get backups(): string { return join(portableRoot(), 'backups') },
+  get snapshots(): string { return join(portableRoot(), 'backups', 'snapshots') },
+  get exports(): string { return join(portableRoot(), 'exports') },
+  get appState(): string { return join(portableRoot(), 'app_state.json') }
 }
 
 // Test hook: the headless smoke run points backups/snapshots/exports at its

@@ -1,4 +1,5 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
+import type { Technology } from '../../../shared/api'
 
 /** Incremental aggregate refresh (spec §66): only affected days/weeks/months are recomputed. */
 
@@ -8,6 +9,7 @@ export async function recomputeAggregates(conn: DuckDBConnection, dateIds: numbe
   await recomputeCellWeekly(conn, idList)
   await recomputeCellMonthly(conn, idList)
   await recomputeCellKpiWeekly(conn, idList)
+  await recomputeCellKpiMonthly(conn, idList)
   for (const e of ['site', 'district', 'region'] as const) {
     await recomputeEntityDaily(conn, e, idList)
     await recomputeEntityWeekly(conn, e, idList)
@@ -20,46 +22,39 @@ export async function recomputeAggregates(conn: DuckDBConnection, dateIds: numbe
 
 const RULESET = `JOIN (SELECT * FROM ruleset ORDER BY version DESC LIMIT 1) r ON true`
 
-/** NC driver KPIs per technology: 2G/3G classify NC on their imported
- *  congestion + drop KPIs instead of the 4G PRB threshold (spec §54a). */
-const NC_DRIVER_KEYS: Record<'2G' | '3G', string[]> = {
-  '2G': ['tch_congestion', 'drop_call_rate'],
-  '3G': ['ce_utilization', 'drop_call_rate']
-}
-
-/** The workspace's technology and its NC driver KPI keys, or null for 4G
- *  (which keeps the PRB-threshold rule). */
-async function ncDrivers(conn: DuckDBConnection): Promise<{ tech: '2G' | '3G'; keys: string[] } | null> {
+/** All active core KPIs for the workspace's technology (or across technologies). */
+async function activeTech(conn: DuckDBConnection): Promise<Technology> {
   const r = await conn.runAndReadAll(
     `SELECT value FROM workspace_meta WHERE key = 'technology'`
   )
   const v = String(r.getRowObjects()[0]?.value ?? '4G')
-  if (v === '2G' || v === '3G') return { tech: v, keys: NC_DRIVER_KEYS[v] }
-  return null
+  return v === '2G' || v === '3G' ? v : '4G'
 }
 
 /** Per-day breach join over the imported extra KPI values: one row per
- *  (cell, day) where any driver KPI breached its editable target. */
-function kpiBreachJoin(drivers: { tech: '2G' | '3G'; keys: string[] }): {
+ *  (cell, day) where any core KPI breached its editable target.
+ *  Uses direction-aware comparison (lower_is_better vs higher_is_better). */
+function kpiBreachJoin(tech: Technology): {
   sql: string
-  params: (string)[]
+  params: string[]
 } {
-  const placeholders = drivers.keys.map(() => '?').join(', ')
   return {
     sql: `
       LEFT JOIN (
         SELECT f2.cell_id, f2.date_id
         FROM fact_extra_metrics f2
         JOIN kpi_defs k2 ON k2.kpi_id = f2.kpi_id
-        WHERE k2.technology = ? AND k2.kpi_key IN (${placeholders})
+        WHERE k2.active = true
+          AND (k2.is_core = true OR k2.supports_persistent_nc = true)
+          AND k2.target IS NOT NULL
           AND ((k2.worse_is_higher AND f2.value > k2.target)
             OR (NOT k2.worse_is_higher AND f2.value < k2.target))
       ) kb ON kb.cell_id = f.cell_id AND kb.date_id = f.date_id`,
-    params: [drivers.tech, ...drivers.keys]
+    params: []
   }
 }
 
-/** spec §54a: weekly rollups of per-technology extra KPI values (per cell). */
+/** weekly rollups of per-technology extra KPI values (per cell). */
 async function recomputeCellKpiWeekly(conn: DuckDBConnection, idList: string): Promise<void> {
   await conn.run(`DELETE FROM agg_cell_kpi_weekly WHERE week_start IN ${WEEKS(idList)}`)
   await conn.run(`
@@ -75,19 +70,32 @@ async function recomputeCellKpiWeekly(conn: DuckDBConnection, idList: string): P
   `)
 }
 
+/** monthly rollups of per-technology extra KPI values (per cell). */
+async function recomputeCellKpiMonthly(conn: DuckDBConnection, idList: string): Promise<void> {
+  await conn.run(`DELETE FROM agg_cell_kpi_monthly WHERE month_start IN ${MONTHS(idList)}`)
+  await conn.run(`
+    INSERT INTO agg_cell_kpi_monthly
+      (month_start, cell_id, kpi_id, avg_value, sum_value, max_value, min_value, observed_days)
+    SELECT
+      CAST(date_trunc('month', d.date) AS DATE) AS month_start,
+      f.cell_id, f.kpi_id,
+      avg(f.value), sum(f.value), max(f.value), min(f.value), count(*) AS observed_days
+    FROM fact_extra_metrics f
+    JOIN dim_date d ON d.date_id = f.date_id
+    WHERE d.date_id IN (${idList})
+    GROUP BY CAST(date_trunc('month', d.date) AS DATE), f.cell_id, f.kpi_id
+  `)
+}
+
 const WEEKS = (idList: string) => `(SELECT DISTINCT week_start FROM dim_date WHERE date_id IN (${idList}))`
 const MONTHS = (idList: string) =>
   `(SELECT DISTINCT CAST(date_trunc('month', date) AS DATE) AS month_start FROM dim_date WHERE date_id IN (${idList}))`
 
 async function recomputeCellWeekly(conn: DuckDBConnection, idList: string): Promise<void> {
   await conn.run(`DELETE FROM agg_cell_weekly WHERE week_start IN ${WEEKS(idList)}`)
-  const drivers = await ncDrivers(conn)
-  // 2G/3G: a breach day is any imported driver KPI (congestion/drop) past its
-  // editable target; 4G keeps the PRB-threshold rule.
-  const breachDay = drivers
-    ? `count(*) FILTER (WHERE kb.cell_id IS NOT NULL)`
-    : `count(*) FILTER (WHERE f.prb_utilization >= r.prb_threshold_pct)`
-  const breachJoin = drivers ? kpiBreachJoin(drivers) : null
+  const tech = await activeTech(conn)
+  const breachJoin = kpiBreachJoin(tech)
+  const breachDay = `count(*) FILTER (WHERE (f.prb_utilization IS NOT NULL AND f.prb_utilization >= r.prb_threshold_pct) OR kb.cell_id IS NOT NULL)`
   await conn.run(
     `
     INSERT INTO agg_cell_weekly
@@ -105,11 +113,11 @@ async function recomputeCellWeekly(conn: DuckDBConnection, idList: string): Prom
     FROM fact_cell_daily f
     JOIN dim_date d ON d.date_id = f.date_id
     ${RULESET}
-    ${breachJoin?.sql ?? ''}
+    ${breachJoin.sql}
     WHERE d.week_start IN ${WEEKS(idList)}
     GROUP BY d.week_start, d.iso_year, d.iso_week, f.cell_id
   `,
-    breachJoin?.params ?? []
+    breachJoin.params
   )
 }
 
@@ -157,7 +165,7 @@ function entityJoins(entity: string): { idJoin: string; colId: string; selId: st
 async function recomputeEntityDaily(conn: DuckDBConnection, entity: string, idList: string): Promise<void> {
   const { idJoin, colId, selId, groupExtra } = entityJoins(entity)
   await conn.run(`DELETE FROM agg_${entity}_daily WHERE period_start IN (SELECT date FROM dim_date WHERE date_id IN (${idList}))`)
-  const drivers = await ncDrivers(conn)
+  const drivers = await activeTech(conn)
   const ncCell = drivers
     ? `count(DISTINCT f.cell_id) FILTER (WHERE kb.cell_id IS NOT NULL)`
     : `count(DISTINCT f.cell_id) FILTER (WHERE f.prb_utilization >= r.prb_threshold_pct)`

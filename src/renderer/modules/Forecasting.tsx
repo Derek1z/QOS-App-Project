@@ -51,6 +51,8 @@ async function searchOptions(scope: ForecastScope, q: string): Promise<EntityOpt
 
 export default function Forecasting(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
+  const period = useAppStore((s) => s.period)
   const [scope, setScope] = useState<ForecastScope>('network')
   const [entity, setEntity] = useState<EntityOption | null>(null)
   const [query, setQuery] = useState('')
@@ -80,7 +82,9 @@ export default function Forecasting(): React.JSX.Element {
         scope,
         entityId: scope === 'network' ? null : entity?.id ?? null,
         metric,
-        horizon
+        horizon,
+        grain,
+        period
       })
       setResult(r)
       setShowAll(25)
@@ -89,7 +93,7 @@ export default function Forecasting(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [scope, entity, metric, horizon])
+  }, [scope, entity, metric, horizon, grain, period])
 
   useEffect(() => {
     void load()

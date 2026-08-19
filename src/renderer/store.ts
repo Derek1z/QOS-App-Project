@@ -90,6 +90,8 @@ export type BusEvent =
   | 'WORKSPACE_CHANGED'
   | 'RULESET_CHANGED'
   | 'IMPORT_COMPLETE'
+  | 'KPIDEFS_CHANGED'
+  | 'OPEN_TARGETS_MODAL'
 
 const bus = new EventTarget()
 

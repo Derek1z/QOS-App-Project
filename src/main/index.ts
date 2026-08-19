@@ -15,6 +15,19 @@ let mainWindow: BrowserWindow | null = null
 // Skip single-instance lock during smoke runs — the verify-portable script launches
 // the exe headlessly and there may be a stale lock from a previous build session.
 const isSmokeRun = process.argv.includes('--smoke') || process.env.SMOKE_TEST === '1' || process.env.QOS_SMOKE === '1'
+if (isSmokeRun) {
+  app.disableHardwareAcceleration()
+  try {
+    app.setPath('userData', mkdtempSync(join(tmpdir(), 'qos-userdata-')))
+  } catch {}
+  app.commandLine.appendSwitch('no-sandbox')
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  app.commandLine.appendSwitch('disable-dev-shm-usage')
+  app.commandLine.appendSwitch('ozone-platform', 'headless')
+  app.commandLine.appendSwitch('headless')
+}
 const gotLock = isSmokeRun ? true : app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -35,8 +48,12 @@ if (!gotLock) {
 
 function bootstrap(): void {
   if (isSmokeRun) {
+    console.log('[SMOKE] Starting smoke test bootstrap...')
     void runSmokeTest(mkdtempSync(join(tmpdir(), 'qos-smoke-')))
-      .then(() => app.exit(0))
+      .then(() => {
+        console.log('[SMOKE] Smoke test completed successfully.')
+        app.exit(0)
+      })
       .catch((e) => {
         console.error('SMOKE_FAILED', e)
         if (e instanceof Error && e.stack) console.error('STACK\n' + e.stack)

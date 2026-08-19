@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAppStore, emit, on, type PeriodId, type Grain, type ModuleId } from '../store'
 import type { Technology, Rules } from '../../../shared/api'
+import TargetsModal from '../modules/TargetsModal'
 
 const PERIODS: { id: PeriodId; label: string }[] = [
   { id: '7d', label: 'Last 7 days' },
@@ -26,6 +27,12 @@ export default function CommandBar(): React.JSX.Element {
   const setGrain = useAppStore((s) => s.setGrain)
   const [switching, setSwitching] = useState(false)
   const [rules, setRules] = useState<Rules | null>(null)
+  const [targetsOpen, setTargetsOpen] = useState(false)
+
+  useEffect(() => {
+    const offTargets = on('OPEN_TARGETS_MODAL', () => setTargetsOpen(true))
+    return () => offTargets()
+  }, [])
 
   useEffect(() => {
     if (!workspace) {
@@ -122,24 +129,14 @@ export default function CommandBar(): React.JSX.Element {
         </div>
       </div>
       <div className="bar-right">
-        {rules && (
-          <>
-            <button
-              className="btn btn-ghost"
-              title={`Active ruleset v${rules.version}: PRB utilization threshold is ${rules.prbThresholdPct}%. Click to view in Workspace.`}
-              onClick={() => goTo('workspace')}
-            >
-              PRB ≥ {rules.prbThresholdPct}%
-            </button>
-            <button
-              className="btn btn-ghost"
-              title={`Active ruleset v${rules.version}: Weekly NC requires breach on ≥ ${rules.weeklyBreachDays} distinct day(s). Click to view in Workspace.`}
-              onClick={() => goTo('workspace')}
-            >
-              Breach ≥ {rules.weeklyBreachDays}d
-            </button>
-          </>
-        )}
+        <button
+          className="btn btn-ghost"
+          disabled={!workspace}
+          title="Open Technology Targets & Thresholds Panel"
+          onClick={() => setTargetsOpen(true)}
+        >
+          Targets
+        </button>
         <button
           className="btn btn-ghost"
           disabled={!workspace}
@@ -173,6 +170,7 @@ export default function CommandBar(): React.JSX.Element {
         </button>
         <span className="kbd-hint">Ctrl K</span>
       </div>
+      <TargetsModal isOpen={targetsOpen} onClose={() => setTargetsOpen(false)} />
     </header>
   )
 }

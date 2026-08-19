@@ -1,12 +1,32 @@
-import { existsSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
 import { SCHEMA_SQL } from './schema'
 import { acquireLock, releaseLock } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
+import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
+
+function isValidDuckDbFile(path: string): boolean {
+  try {
+    const size = statSync(path).size
+    if (size === 0) return true
+    const len = Math.min(size, 4096)
+    if (len < 4) return false
+    const buf = Buffer.alloc(len)
+    const fd = openSync(path, 'r')
+    readSync(fd, buf, 0, len, 0)
+    closeSync(fd)
+    if (buf.includes('DUCK') || buf.includes('SQLite format 3')) {
+      return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
 
 interface OpenWorkspace {
   path: string
@@ -183,8 +203,7 @@ export async function setWorkspaceTechnology(technology: Technology): Promise<Wo
   if (current.readOnly) throw new Error('Workspace is open read-only — switch technology on the writable workspace')
   const tech = technology === '2G' || technology === '3G' ? technology : '4G'
   await current.connection.run(
-    `UPDATE workspace_meta SET value = ? WHERE key = 'technology'`,
-    [tech]
+    `UPDATE workspace_meta SET value = '${tech}' WHERE key = 'technology'`
   )
   await seedKpiDefs(current.connection, tech)
   return assemble(current)
@@ -215,7 +234,10 @@ export async function createWorkspace(dir: string, name: string, technology?: st
         `INSERT INTO workspace_meta (key, value) VALUES ` +
         `('schema_version', '0.1.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}')`
       )
-      await seedKpiDefs(connection, tech as Technology)
+      await seedKpiDefs(connection, '2G')
+      await seedKpiDefs(connection, '3G')
+      await seedKpiDefs(connection, '4G')
+      await ensureDerivedKpiSchema(connection)
       const lockHeld = acquireLock(path)
       current = { path, name: safe, readOnly: false, instance, connection, lockHeld }
       await appState.touchRecent(path, safe)
@@ -255,6 +277,7 @@ export async function openWorkspace(
   opts: { readOnly?: boolean } = {}
 ): Promise<WorkspaceInfo> {
   if (!existsSync(path)) throw new Error(`Workspace file not found: ${path}`)
+  if (!isValidDuckDbFile(path)) throw new Error(`Not a valid database workspace file: ${path}`)
   if (current) await closeWorkspace()
 
   const readOnly = !!opts.readOnly
@@ -274,9 +297,10 @@ export async function openWorkspace(
       } catch {}
       if (!readOnly) {
         await ensureUpgradeSchema(connection)
-        // spec §54a: every workspace ships with its technology's KPI set
-        const tech = await workspaceTechnology(connection)
-        await seedKpiDefs(connection, tech)
+        await seedKpiDefs(connection, '2G')
+        await seedKpiDefs(connection, '3G')
+        await seedKpiDefs(connection, '4G')
+        await ensureDerivedKpiSchema(connection)
         // legacy workspaces may hold duplicate dimension names (pre-import
         // dedupe fix); merge them so lookups/joins stay unambiguous — this is
         // best-effort and never blocks opening the workspace

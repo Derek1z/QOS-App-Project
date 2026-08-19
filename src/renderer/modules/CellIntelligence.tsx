@@ -30,6 +30,7 @@ const BAND_COLOR: Record<string, string> = {
 
 export default function CellIntelligence(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
   const [data, setData] = useState<CellIntelligenceResult>({ total: 0, rows: [] })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -96,7 +97,7 @@ export default function CellIntelligence(): React.JSX.Element {
   async function openDetail(row: CellIntelligenceRow): Promise<void> {
     setDetailLoading(true)
     try {
-      const d = await window.api.analytics.cellDetail(row.cellId)
+      const d = await window.api.analytics.cellDetail(row.cellId, grain)
       if (d) {
         setDetail(d)
         setDetailOpen(true)
@@ -319,9 +320,9 @@ export default function CellIntelligence(): React.JSX.Element {
             {detailLoading ? (
               <p className="card-note">Loading…</p>
             ) : detail.weeks.length > 0 ? (
-              <Chart option={cellDetailOption(detail, prbThreshold)} height={490} />
+              <Chart option={cellDetailOption(detail, prbThreshold, grain)} height={490} />
             ) : (
-              <p className="card-note">No weekly history for this cell yet.</p>
+              <p className="card-note">No history for this cell yet.</p>
             )}
 
             {detail.weeks.length > 0 && (

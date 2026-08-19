@@ -90,7 +90,7 @@ export default function Chart({
   }, [])
 
   useEffect(() => {
-    if (option) chartRef.current?.setOption(option, { notMerge: true })
+    if (option) chartRef.current?.setOption(option, { notMerge: true, lazyUpdate: true })
   }, [option])
 
   return <div ref={ref} style={{ width: '100%', height }} />

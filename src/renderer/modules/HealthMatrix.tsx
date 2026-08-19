@@ -3,7 +3,7 @@ import type { EChartsOption } from 'echarts'
 import { useAppStore } from '../store'
 import type { HealthMatrixResult, HealthScope } from '../../../shared/api'
 import Chart, { PALETTE, tooltipStyle, axisLabelStyle } from '../lib/Chart'
-import { weekLabel } from '../lib/overviewCharts'
+import { formatTimeLabel } from '../lib/overviewCharts'
 
 const SCOPES: Array<{ id: HealthScope; label: string }> = [
   { id: 'cell', label: 'Cell' },
@@ -16,6 +16,8 @@ const WEEK_OPTIONS = [4, 8, 12, 26]
 
 export default function HealthMatrix(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
+  const period = useAppStore((s) => s.period)
   const [scope, setScope] = useState<HealthScope>('cell')
   const [weeks, setWeeks] = useState(12)
   const [sort, setSort] = useState<'worst' | 'name'>('worst')
@@ -27,7 +29,7 @@ export default function HealthMatrix(): React.JSX.Element {
     setError(null)
     void (async () => {
       try {
-        const m = await window.api.analytics.healthMatrix(scope, { weeks, sort })
+        const m = await window.api.analytics.healthMatrix(scope, { weeks, sort, grain })
         if (alive) setMatrix(m)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
@@ -36,7 +38,7 @@ export default function HealthMatrix(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly, scope, weeks, sort])
+  }, [workspace?.path, workspace?.readOnly, scope, weeks, sort, grain, period])
 
   const option: EChartsOption | null = useMemo(() => {
     if (!matrix || matrix.rows.length === 0 || matrix.weeks.length === 0) return null
@@ -62,12 +64,12 @@ export default function HealthMatrix(): React.JSX.Element {
           const name = names[y] ?? '—'
           const wk = matrix.weeks[x] ?? '—'
           const band = score >= 80 ? 'Good' : score >= 65 ? 'OK' : score >= 50 ? 'Watch' : 'Poor'
-          return `<b>${name}</b><br/>${wk} (${weekLabel(wk)})<br/>Health: <b>${score}</b> · ${band}`
+          return `<b>${name}</b><br/>${wk} (${formatTimeLabel(wk, grain)})<br/>Health: <b>${score}</b> · ${band}`
         }
       },
       xAxis: {
         type: 'category',
-        data: matrix.weeks.map((w) => weekLabel(w)),
+        data: matrix.weeks.map((w) => formatTimeLabel(w, grain)),
         axisLabel: axisLabelStyle(),
         axisLine: { lineStyle: { color: PALETTE.border } },
         splitArea: { show: true, areaStyle: { color: ['rgba(38,48,65,0.15)', 'rgba(0,0,0,0)'] } }
@@ -175,7 +177,7 @@ export default function HealthMatrix(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>{SCOPES.find((s) => s.id === scope)?.label}</th>
-                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{weekLabel(matrix.weeks[matrix.weeks.length - 1])}</th>}
+                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{formatTimeLabel(matrix.weeks[matrix.weeks.length - 1], grain)}</th>}
                   </tr>
                 </thead>
                 <tbody>

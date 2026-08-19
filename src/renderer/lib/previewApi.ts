@@ -21,10 +21,12 @@ import type {
   SnapshotComparisonKpi, MaintenanceAction, MaintenanceResult,
   MaintenanceScheduleSettings, ScheduledMaintenanceRun, ScheduledRunResult,
   ReportChartConfig, KpiDefinition, KpiDefPatch, KpiDiscovery, CellKpiValue, Technology,
-  KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell, KpiTrendPoint
+  KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell, KpiTrendPoint,
+  ExecutiveOverviewResult, SyntheticDataConfig, SyntheticGenerateResult,
+  DynamicKpiCardData, DerivedKPI, DerivedKpiSuggestion, Grain, PeriodId
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
-import { weekLabel } from './overviewCharts'
+import { weekLabel, formatTimeLabel } from './overviewCharts'
 
 /** Browser-only stub installed when the renderer runs outside Electron
  *  (e.g. the Vite dev-server preview). IPC-backed calls return demo data so
@@ -101,10 +103,20 @@ function seedDemoKpiDefs(): KpiDefinition[] {
     key: s.key,
     label: s.label,
     unit: s.unit,
+    category: s.key.includes('congestion') || s.key.includes('prb') || s.key.includes('utilization') ? 'Congestion' : s.key.includes('drop') ? 'Retainability' : 'Accessibility',
+    betterDirection: s.worseIsHigher ? 'lower_is_better' : 'higher_is_better',
     worseIsHigher: s.worseIsHigher,
     target: s.target,
+    warningThreshold: s.target != null ? (s.worseIsHigher ? s.target * 0.9 : s.target * 0.98) : null,
+    criticalThreshold: s.target != null ? (s.worseIsHigher ? s.target * 1.2 : s.target * 0.95) : null,
     agg: s.agg,
+    isCore: true,
+    supportsCongestionAnalysis: s.key.includes('congestion') || s.key.includes('prb'),
+    supportsPersistentNc: true,
+    showInExecutiveView: true,
+    decimalPrecision: 1,
     sourceHeaders: s.aliases,
+    aliases: s.aliases,
     isCustom: false,
     active: true,
     sortOrder: i,
@@ -605,7 +617,7 @@ function demoNcLifecycle(): NcLifecycleResult {
       prb, isNc ? 1 : 0
     )
   }
-  const byLifecycle: NcLifecycleResult['byLifecycle'] = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, Recovering: 0 }
+  const byLifecycle: NcLifecycleResult['byLifecycle'] = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 }
   const byTrend: NcLifecycleResult['byTrend'] = { Improving: 0, Stable: 0, Worsening: 0 }
   const bySeverity: NcLifecycleResult['bySeverity'] = { Normal: 0, Watch: 0, High: 0, Critical: 0 }
   let ncCells = 0
@@ -1615,11 +1627,11 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
   const series: ForecastSeries[] = FC_METRICS.map((m) => {
     const points: ForecastPoint[] = weekStarts.map((ws0, i) => {
       const vals = inScope.map((c) => history.get(c.cellId)?.[m.metric]?.[i]).filter((v): v is number => v != null)
-      if (vals.length === 0) return { weekStart: ws0, label: weekLabel(ws0), value: null, kind: 'actual' as const, lower: null, upper: null }
+      if (vals.length === 0) return { weekStart: ws0, label: formatTimeLabel(ws0, opts.grain ?? 'weekly'), value: null, kind: 'actual' as const, lower: null, upper: null }
       const value = m.metric === 'users' || m.metric === 'traffic'
         ? vals.reduce((a, b) => a + b, 0)
         : vals.reduce((a, b) => a + b, 0) / vals.length
-      return { weekStart: ws0, label: weekLabel(ws0), value: Math.round(value * 100) / 100, kind: 'actual' as const, lower: null, upper: null }
+      return { weekStart: ws0, label: formatTimeLabel(ws0, opts.grain ?? 'weekly'), value: Math.round(value * 100) / 100, kind: 'actual' as const, lower: null, upper: null }
     })
     const fc = fcForecast(points.map((p) => p.value).filter((v): v is number => v != null), m.label, m.unit)
     let last = weekStarts[weekStarts.length - 1]
@@ -1627,7 +1639,7 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
       last = addWeeks(last, 1)
       points.push({
         weekStart: last,
-        label: weekLabel(last),
+        label: formatTimeLabel(last, opts.grain ?? 'weekly'),
         value: fc.next == null ? null : Math.round(fc.next * 100) / 100,
         kind: 'forecast',
         lower: fc.lower == null ? null : Math.round(fc.lower * 100) / 100,
@@ -2427,7 +2439,17 @@ function demoInvestigation(
   if (!isNc) push(trans, 'con', 15, 'Not currently classified NC')
   const hypotheses: Hypothesis[] = H.map((h) => {
     const score = Math.max(5, Math.min(95, 40 + h.support - h.contra))
-    return { id: h.id, title: h.title, score, verdict: score >= 65 ? 'consistent' : score >= 45 ? 'suggests' : 'not supported', supporting: h.sup, contradicting: h.con }
+    const confidence = score >= 70 ? 'High' : score >= 45 ? 'Medium' : 'Low'
+    return {
+      id: h.id,
+      title: h.title,
+      score,
+      confidence,
+      verdict: score >= 65 ? 'consistent' : score >= 45 ? 'suggests' : 'not supported',
+      supporting: h.sup,
+      contradicting: h.con,
+      recommendations: score >= 50 ? [`Perform on-site audit for ${h.title}`, 'Review recent parameter changes'] : []
+    }
   })
 
   const key = invKey(scope, entityId)
@@ -2520,15 +2542,27 @@ function demoSearch(scope: InvestigationScope, q = ''): EntityOption[] {
   }
   const siteId = nameId(cells.map((c) => c.site ?? c.cellName))
   const districtId = nameId(cells.map((c) => c.district ?? '—'))
-  const regionId = nameId(cells.map((c) => c.region ?? '—'))
   const opts: EntityOption[] = []
   const match = (s: string): boolean => !query || s.toLowerCase().includes(query)
   if (scope === 'cell') {
     for (const c of cells) {
       if (match(c.cellName) || match(c.site ?? '') || match(c.district ?? '') || match(c.region ?? '')) {
-        opts.push({ id: c.cellId, name: c.cellName, path: [c.region, c.district, c.site, c.cellName].filter((v): v is string => !!v) })
+        opts.push({
+          id: c.cellId,
+          name: c.cellName,
+          path: [c.region, c.district, c.site, c.cellName].filter((v): v is string => !!v),
+          severity: c.severity,
+          lifecycle: c.lifecycle
+        })
       }
     }
+    return opts.sort((a, b) => {
+      const sevOrder: Record<string, number> = { Critical: 1, High: 2, Watch: 3, Normal: 4 }
+      const sA = (a.severity && sevOrder[a.severity]) || 5
+      const sB = (b.severity && sevOrder[b.severity]) || 5
+      if (sA !== sB) return sA - sB
+      return a.name.localeCompare(b.name)
+    }).slice(0, 50)
   } else if (scope === 'site') {
     for (const [name, id] of siteId) {
       const cs = cells.filter((c) => (c.site ?? c.cellName) === name)
@@ -2666,8 +2700,15 @@ let demoRules: Rules = {
   version: 12,
   createdAt: '2026-07-01T08:00:00.000Z',
   prbThresholdPct: 80,
+  tchCongestionThresholdPct: 2.0,
+  sdcchCongestionThresholdPct: 2.0,
+  cssrThresholdPct: 98.5,
+  callDropThresholdPct: 1.5,
+  dataAccessThresholdPct: 98.0,
+  dataServiceFailureThresholdPct: 1.0,
   weeklyBreachDays: 1,
   persistentWeeks: 3,
+  chronicWeeks: 7,
   districtNcThresholdPct: 10,
   priorityWeights: [25, 20, 15, 15, 15, 10],
   notes: 'Demo ruleset — edits bump the version like the real engine'
@@ -2836,8 +2877,8 @@ export const previewApi: Api & { demo: true } = {
         periodEnd: null
       }
     },
-    ncLifecycle: async (): Promise<NcLifecycleResult> => demoNcLifecycle(),
-    ncMovement: async (limit = 8): Promise<NcMovementRow[]> => demoNcMovement(limit),
+    ncLifecycle: async (_grain?: Grain): Promise<NcLifecycleResult> => demoNcLifecycle(),
+    ncMovement: async (limit = 8, _grain?: Grain): Promise<NcMovementRow[]> => demoNcMovement(limit),
     healthMatrix: async (
       scope: HealthScope,
       opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }
@@ -2851,12 +2892,14 @@ export const previewApi: Api & { demo: true } = {
       limit?: number
       offset?: number
     }): Promise<CellIntelligenceResult> => demoCellIntelligence(opts),
-    cellDetail: async (cellId: number): Promise<CellDetail | null> => demoCellDetail(cellId),
-    performance: async (): Promise<PerformanceResult> => demoPerformance(),
+    cellDetail: async (cellId: number, _grain?: Grain): Promise<CellDetail | null> => demoCellDetail(cellId),
+    performance: async (_opts?: { grain?: Grain; period?: PeriodId }): Promise<PerformanceResult> => demoPerformance(),
     comparison: async (opts?: {
       type?: ComparisonType
       scope?: CompareScope
       metric?: CompareMetric
+      grain?: Grain
+      period?: PeriodId
     }): Promise<ComparisonResult> => demoComparison(opts ?? {}),
     explorer: async (
       level: ExplorerLevel,
@@ -2871,7 +2914,7 @@ export const previewApi: Api & { demo: true } = {
     priorityQueue: async (mode: PriorityMode, limit = 10): Promise<PriorityRow[]> =>
       demoPriority(mode).slice(0, limit),
     health: async (_grain?: string): Promise<HealthResult> => demoHealth(),
-    kpiOverview: async (limit = 8): Promise<KpiOverviewResult> => {
+    kpiOverview: async (limit = 8, _grain?: Grain): Promise<KpiOverviewResult> => {
       const tech = demoTech
       const cells = demoNcLifecycle().cells
       const byKey = new Map<
@@ -2957,14 +3000,91 @@ export const previewApi: Api & { demo: true } = {
           }
         })
       return { technology: tech, weekStart: cells[0]?.weekStart ?? null, kpis, worstCells }
+    },
+    executiveOverview: async (_opts?: { period?: PeriodId; grain?: Grain }): Promise<ExecutiveOverviewResult> => {
+      const { min, max } = factDateRange()
+      return {
+        asOf: max,
+        periodLabel: `Week of ${max}`,
+        activeTechnology: '4G',
+        availableKpiCards: [],
+        overallHealthScore: 84.5,
+        overallHealthDelta: 1.2,
+        technologies: [
+          {
+            technology: '2G',
+            healthScore: 88,
+            cellCount: 450,
+            ncCellCount: 22,
+            compliancePct: 95.1,
+            primaryKpis: [
+              { kpiId: 1, key: 'tch_congestion', label: 'TCH Congestion', unit: '%', category: 'Congestion', technology: '2G', currentValue: 1.4, target: 2.0, warningThreshold: 2.0, criticalThreshold: 3.0, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '1.4%', trend: 'improving', delta: -0.1, nonCompliantCellCount: 4, nonCompliantCellPct: 0.9, persistentNcCount: 0, sparkline: [1.6, 1.5, 1.4] },
+              { kpiId: 2, key: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', category: 'Congestion', technology: '2G', currentValue: 1.1, target: 2.0, warningThreshold: 2.0, criticalThreshold: 3.0, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '1.1%', trend: 'stable', delta: 0.0, nonCompliantCellCount: 2, nonCompliantCellPct: 0.4, persistentNcCount: 0, sparkline: [1.1, 1.1, 1.1] },
+              { kpiId: 3, key: 'cssr_2g', label: '2G Call Setup Success', unit: '%', category: 'Accessibility', technology: '2G', currentValue: 98.9, target: 98.5, warningThreshold: 98.5, criticalThreshold: 95.0, betterDirection: 'higher_is_better', worseIsHigher: false, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '98.9%', trend: 'improving', delta: 0.2, nonCompliantCellCount: 5, nonCompliantCellPct: 1.1, persistentNcCount: 0, sparkline: [98.5, 98.7, 98.9] },
+              { kpiId: 4, key: 'call_drop_rate_2g', label: '2G Call Drop Rate', unit: '%', category: 'Retainability', technology: '2G', currentValue: 1.1, target: 1.5, warningThreshold: 1.5, criticalThreshold: 2.5, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '1.1%', trend: 'improving', delta: -0.2, nonCompliantCellCount: 3, nonCompliantCellPct: 0.7, persistentNcCount: 0, sparkline: [1.3, 1.2, 1.1] }
+            ],
+            availableKpiCards: []
+          },
+          {
+            technology: '3G',
+            healthScore: 82,
+            cellCount: 380,
+            ncCellCount: 35,
+            compliancePct: 90.8,
+            primaryKpis: [
+              { kpiId: 5, key: 'cssr_3g', label: '3G Call Setup Success', unit: '%', category: 'Accessibility', technology: '3G', currentValue: 98.2, target: 98.5, warningThreshold: 98.5, criticalThreshold: 95.0, betterDirection: 'higher_is_better', worseIsHigher: false, isBreached: true, isCore: true, isDerived: false, complianceStatus: 'warning', formattedValue: '98.2%', trend: 'worsening', delta: -0.4, nonCompliantCellCount: 12, nonCompliantCellPct: 3.2, persistentNcCount: 2, sparkline: [98.8, 98.5, 98.2] },
+              { kpiId: 6, key: 'call_drop_rate_3g', label: '3G Call Drop Rate', unit: '%', category: 'Retainability', technology: '3G', currentValue: 1.3, target: 1.5, warningThreshold: 1.5, criticalThreshold: 2.5, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '1.3%', trend: 'stable', delta: 0.0, nonCompliantCellCount: 6, nonCompliantCellPct: 1.6, persistentNcCount: 0, sparkline: [1.3, 1.3, 1.3] },
+              { kpiId: 7, key: 'data_access_success_3g', label: '3G Data Access Success', unit: '%', category: 'Accessibility', technology: '3G', currentValue: 98.6, target: 98.0, warningThreshold: 98.0, criticalThreshold: 95.0, betterDirection: 'higher_is_better', worseIsHigher: false, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '98.6%', trend: 'improving', delta: 0.3, nonCompliantCellCount: 4, nonCompliantCellPct: 1.1, persistentNcCount: 0, sparkline: [98.1, 98.3, 98.6] }
+            ],
+            availableKpiCards: []
+          },
+          {
+            technology: '4G',
+            healthScore: 85,
+            cellCount: 520,
+            ncCellCount: 42,
+            compliancePct: 91.9,
+            primaryKpis: [
+              { kpiId: 8, key: 'prb_utilization', label: '4G Peak Hour PRB', unit: '%', category: 'Congestion', technology: '4G', currentValue: 68.4, target: 80.0, warningThreshold: 80.0, criticalThreshold: 90.0, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '68.4%', trend: 'stable', delta: 0.2, nonCompliantCellCount: 15, nonCompliantCellPct: 2.9, persistentNcCount: 3, sparkline: [67.9, 68.1, 68.4] },
+              { kpiId: 9, key: 'cssr_4g', label: '4G Call Setup Success', unit: '%', category: 'Accessibility', technology: '4G', currentValue: 99.1, target: 98.5, warningThreshold: 98.5, criticalThreshold: 95.0, betterDirection: 'higher_is_better', worseIsHigher: false, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '99.1%', trend: 'improving', delta: 0.1, nonCompliantCellCount: 6, nonCompliantCellPct: 1.2, persistentNcCount: 0, sparkline: [98.9, 99.0, 99.1] },
+              { kpiId: 10, key: 'call_drop_rate_4g', label: '4G Call Drop Rate', unit: '%', category: 'Retainability', technology: '4G', currentValue: 0.9, target: 1.5, warningThreshold: 1.5, criticalThreshold: 2.5, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '0.9%', trend: 'improving', delta: -0.1, nonCompliantCellCount: 4, nonCompliantCellPct: 0.8, persistentNcCount: 0, sparkline: [1.1, 1.0, 0.9] },
+              { kpiId: 11, key: 'data_service_failure_4g', label: '4G Data Service Failure', unit: '%', category: 'Integrity', technology: '4G', currentValue: 0.7, target: 1.0, warningThreshold: 1.0, criticalThreshold: 2.0, betterDirection: 'lower_is_better', worseIsHigher: true, isBreached: false, isCore: true, isDerived: false, complianceStatus: 'compliant', formattedValue: '0.7%', trend: 'stable', delta: 0.0, nonCompliantCellCount: 3, nonCompliantCellPct: 0.6, persistentNcCount: 0, sparkline: [0.7, 0.7, 0.7] }
+            ],
+            availableKpiCards: []
+          }
+        ],
+        problemSummary: {
+          topProblemCategory: 'Congestion',
+          criticalCellCount: 5,
+          chronicCellCount: 3,
+          persistentCellCount: 14,
+          degradingDistricts: ['Accra Metro', 'Kumasi'],
+          keyRecommendations: [
+            'Investigate 3 chronic cells in Accra Metro (7+ weeks breach).',
+            'Conduct tilt optimization in high PRB clusters in Kumasi.'
+          ]
+        }
+      }
     }
+  },
+  synthetic: {
+    generate: async (config?: SyntheticDataConfig): Promise<SyntheticGenerateResult> => ({
+      path: '/demo/synthetic.csv',
+      filename: 'synthetic-demo.csv',
+      rowCount: 500,
+      technology: config?.technology ?? 'All',
+      technologies: ['2G', '3G', '4G'],
+      weeksCount: 8,
+      cellsCount: 25,
+      injectedFaultsCount: 6
+    })
   },
   investigation: {
     search: async (scope: InvestigationScope, q?: string): Promise<EntityOption[]> => demoSearch(scope, q),
     get: async (
       scope: InvestigationScope,
       entityId: number,
-      opts?: { interventionWeek?: string }
+      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }
     ): Promise<InvestigationResult | null> => demoInvestigation(scope, entityId, opts),
     setStatus: async (
       scope: InvestigationScope,
@@ -3062,10 +3182,20 @@ export const previewApi: Api & { demo: true } = {
         key: patch.key ?? '',
         label: patch.label ?? '',
         unit: patch.unit ?? '',
+        category: patch.category ?? 'Congestion',
+        betterDirection: patch.betterDirection ?? (patch.worseIsHigher ? 'lower_is_better' : 'higher_is_better'),
         worseIsHigher: patch.worseIsHigher ?? true,
         target: patch.target ?? null,
+        warningThreshold: patch.warningThreshold ?? null,
+        criticalThreshold: patch.criticalThreshold ?? null,
         agg: patch.agg ?? 'avg',
+        isCore: patch.isCore ?? false,
+        supportsCongestionAnalysis: patch.supportsCongestionAnalysis ?? false,
+        supportsPersistentNc: patch.supportsPersistentNc ?? true,
+        showInExecutiveView: patch.showInExecutiveView ?? true,
+        decimalPrecision: patch.decimalPrecision ?? 1,
         sourceHeaders: patch.sourceHeaders ?? [],
+        aliases: patch.aliases ?? patch.sourceHeaders ?? [],
         isCustom: true,
         active: patch.active ?? true,
         sortOrder: demoKpisFor(tech).length,
@@ -3099,10 +3229,20 @@ export const previewApi: Api & { demo: true } = {
           key: s.key,
           label: s.label,
           unit: s.unit,
+          category: s.key.includes('congestion') || s.key.includes('prb') || s.key.includes('utilization') ? 'Congestion' : s.key.includes('drop') ? 'Retainability' : 'Accessibility',
+          betterDirection: s.worseIsHigher ? 'lower_is_better' : 'higher_is_better',
           worseIsHigher: s.worseIsHigher,
           target: s.target,
+          warningThreshold: s.target != null ? (s.worseIsHigher ? s.target * 0.9 : s.target * 0.98) : null,
+          criticalThreshold: s.target != null ? (s.worseIsHigher ? s.target * 1.2 : s.target * 0.95) : null,
           agg: s.agg,
+          isCore: true,
+          supportsCongestionAnalysis: s.key.includes('congestion') || s.key.includes('prb'),
+          supportsPersistentNc: true,
+          showInExecutiveView: true,
+          decimalPrecision: 1,
           sourceHeaders: s.aliases,
+          aliases: s.aliases,
           isCustom: false,
           active: true,
           sortOrder: i,
@@ -3111,7 +3251,50 @@ export const previewApi: Api & { demo: true } = {
         })
       })
       return demoKpisFor(tech)
+    },
+    resetDefaults: async (technology?: Technology): Promise<KpiDefinition[]> => {
+      const tech = technology ?? demoTech
+      return demoKpisFor(tech)
     }
+  },
+  derived: {
+    list: async (_tech?: Technology): Promise<DerivedKPI[]> => [
+      {
+        id: '3g_dl_power_congestion',
+        technology: '3G',
+        name: '3G DL Power Congestion',
+        description: 'Sum of RRC, PS and CS DL Power Congestion failures',
+        operation: 'SUM',
+        sourceKPIs: ['VS.RRC.Rej.DLPower.Cong', 'VS.RAB.FailEstabPS.DLPower.Cong', 'VS.RAB.FailEstabCS.DLPower.Cong'],
+        unit: 'events',
+        enabled: true,
+        treatMissingAsZero: false
+      },
+      {
+        id: '3g_ul_ce_congestion',
+        technology: '3G',
+        name: '3G UL CE Congestion',
+        description: 'Sum of RRC, PS and CS UL CE Congestion failures',
+        operation: 'SUM',
+        sourceKPIs: ['VS.RRC.Rej.ULCE.Cong', 'VS.RAB.FailEstabPS.ULCE.Cong', 'VS.RAB.FailEstabCS.ULCE.Cong'],
+        unit: 'events',
+        enabled: true,
+        treatMissingAsZero: false
+      },
+      {
+        id: '3g_phych_failures',
+        technology: '3G',
+        name: '3G PhyCh Failures',
+        description: 'Sum of PS establishment and reconfiguration PhyCh failures',
+        operation: 'SUM',
+        sourceKPIs: ['VS.RAB.FailEstabPS.PhyChFail', 'VS.FailRBRecfg.PhyChFail', 'VS.FailRBSetup.PhyChFail'],
+        unit: 'events',
+        enabled: true,
+        treatMissingAsZero: false
+      }
+    ],
+    save: async (def: DerivedKPI): Promise<DerivedKPI> => def,
+    detect: async (_headers: string[], _tech?: Technology): Promise<DerivedKpiSuggestion[]> => []
   },
   reports: {
     generate: async (opts?: ReportOpts): Promise<ReportPack> => demoReportPack(opts),

@@ -144,10 +144,10 @@ export async function restoreSnapshot(snapshotId: number): Promise<WorkspaceInfo
   }
 
   try {
+    const noteMsg = `Restored snapshot "${row.name}" (${row.path}); pre-restore backup: ${safety}`.replace(/'/g, "''")
     await ws.getCurrent()!.connection.run(
       `INSERT INTO notes_events (entity_type, kind, note, author)
-       VALUES ('workspace', 'snapshot_restore', ?, 'system')`,
-      [`Restored snapshot "${row.name}" (${row.path}); pre-restore backup: ${safety}`]
+       VALUES ('workspace', 'snapshot_restore', '${noteMsg}', 'system')`
     )
   } catch {
     /* audit write is best-effort */
@@ -168,8 +168,7 @@ export async function removeSnapshot(snapshotId: number): Promise<void> {
     }
   }
   await cur.connection.run(
-    `DELETE FROM workspace_snapshots WHERE snapshot_id = ?`,
-    [snapshotId]
+    `DELETE FROM workspace_snapshots WHERE snapshot_id = ${snapshotId}`
   )
 }
 

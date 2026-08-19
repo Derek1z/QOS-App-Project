@@ -15,12 +15,14 @@ import type {
   PriorityCenterResult, PriorityCenterRow, ForecastMetric, ForecastHorizon,
   ForecastRisk, ForecastResult, ForecastRiskRow, ForecastSeries, ForecastPoint,
   ForecastScope, CellKpiValue, KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell,
-  KpiTrendPoint, Technology
+  KpiTrendPoint, Technology, ExecutiveOverviewResult, ExecutiveKpiCardData,
+  TechHealthCard, ExecutiveProblemSummary, KpiDefinition, DynamicKpiCardData
 } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { computeNetworkHealth } from '../analytics/health'
 import { getRules, updateRules } from '../analytics/rules'
-import { forecastSeries, classifyRisk } from '../analytics/forecast'
+import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
+import { listKpiDefs, workspaceTechnology } from './kpiService'
 
 /** Spec §64: UI modules call centralized analytics interfaces, not raw SQL. */
 
@@ -44,7 +46,7 @@ export async function getRulesCurrent(): Promise<Rules | null> {
  *  week, driven entirely by the imported extra KPI values vs editable targets.
  *  Reads technology straight from workspace_meta (no service imports) so the
  *  analytics bundle stays cycle-free. */
-export async function getKpiOverview(limit = 8): Promise<KpiOverviewResult> {
+export async function getKpiOverview(limit = 8, _grain: Grain = 'weekly'): Promise<KpiOverviewResult> {
   const w = getCurrent()
   if (!w) return { technology: '4G', weekStart: null, kpis: [], worstCells: [] }
   const conn = w.connection
@@ -160,8 +162,9 @@ export async function updateRulesCurrent(patch: RulesPatch): Promise<Rules> {
 }
 
 /** Weekly NC movement (spec §28): lifecycle counts per week, newest last. */
-export async function getNcMovement(limit = 8): Promise<NcMovementRow[]> {
+export async function getNcMovement(limit = 8, grain: Grain = 'weekly'): Promise<NcMovementRow[]> {
   const conn = ws().connection
+  const safeGrain = grain === 'daily' || grain === 'monthly' ? grain : 'weekly'
   const r = await conn.runAndReadAll(`
     SELECT CAST(period_start AS VARCHAR) AS week_start,
       count(*) FILTER (WHERE lifecycle = 'New NC') AS new_nc,
@@ -171,7 +174,7 @@ export async function getNcMovement(limit = 8): Promise<NcMovementRow[]> {
       count(*) FILTER (WHERE is_nc) AS nc_cells,
       count(*) AS total_cells
     FROM cell_nc_lifecycle
-    WHERE grain = 'weekly'
+    WHERE grain = '${safeGrain}'
       AND ruleset_version = (SELECT max(version) FROM ruleset)
     GROUP BY period_start
     ORDER BY period_start DESC
@@ -196,16 +199,17 @@ export async function getNcMovement(limit = 8): Promise<NcMovementRow[]> {
     })
 }
 
-/** Latest completed week's lifecycle/trend/severity summary + per-cell rows. */
-export async function getNcLifecycle(): Promise<NcLifecycleResult> {
+/** Latest completed period lifecycle/trend/severity summary + per-cell rows. */
+export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecycleResult> {
   const conn = ws().connection
   const rules = await getRules(conn)
+  const safeGrain = grain === 'daily' || grain === 'monthly' ? grain : 'weekly'
   const empty: NcLifecycleResult = {
     weekStart: null,
     totalCells: 0,
     ncCells: 0,
     ncRate: null,
-    byLifecycle: { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, Recovering: 0 },
+    byLifecycle: { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 },
     byTrend: { Improving: 0, Stable: 0, Worsening: 0 },
     bySeverity: { Normal: 0, Watch: 0, High: 0, Critical: 0 },
     cells: []
@@ -222,8 +226,8 @@ export async function getNcLifecycle(): Promise<NcLifecycleResult> {
     LEFT JOIN dim_site s ON s.site_id = c.site_id
     LEFT JOIN dim_district d ON d.district_id = c.district_id
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
-    WHERE l.ruleset_version = ${rules.version} AND l.grain = 'weekly'
-      AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+    WHERE l.ruleset_version = ${rules.version} AND l.grain = '${safeGrain}'
+      AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = '${safeGrain}')
     ORDER BY l.severity DESC, l.lifecycle, c.name
   `)
   const cells: NcLifecycleRow[] = r.getRowObjects().map((x) => ({
@@ -241,7 +245,7 @@ export async function getNcLifecycle(): Promise<NcLifecycleResult> {
     prbAvg: x.prb_avg == null ? null : Number(x.prb_avg)
   }))
   const weekStart = cells.length > 0 ? cells[0].weekStart : null
-  const byLifecycle = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, Recovering: 0 }
+  const byLifecycle = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 }
   const byTrend = { Improving: 0, Stable: 0, Worsening: 0 }
   const bySeverity = { Normal: 0, Watch: 0, High: 0, Critical: 0 }
   let ncCells = 0
@@ -266,7 +270,7 @@ export async function getNcLifecycle(): Promise<NcLifecycleResult> {
 /** Current priority queue for one mode, worst first (latest completed week). */
 export async function getPriorityQueue(mode: PriorityMode, limit = 50): Promise<PriorityRow[]> {
   const conn = ws().connection
-  if (!PRIORITY_MODES.includes(mode)) throw new Error(`Unknown priority mode: ${mode}`)
+  const safeMode = mode.replace(/'/g, "''")
   const r = await conn.runAndReadAll(`
     SELECT CAST(p.cell_id AS DOUBLE) AS cell_id, c.name AS cell_name,
       s.name AS site, d.name AS district, rg.name AS region,
@@ -276,12 +280,12 @@ export async function getPriorityQueue(mode: PriorityMode, limit = 50): Promise<
     LEFT JOIN dim_site s ON s.site_id = c.site_id
     LEFT JOIN dim_district d ON d.district_id = c.district_id
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
-    WHERE p.mode = ? AND p.as_of = (
-      SELECT max(as_of) FROM cell_priority_history WHERE mode = ?
+    WHERE p.mode = '${safeMode}' AND p.as_of = (
+      SELECT max(as_of) FROM cell_priority_history WHERE mode = '${safeMode}'
     )
     ORDER BY p.score DESC, p.cell_id
-    LIMIT ?
-  `, [mode, mode, limit])
+    LIMIT ${Number(limit)}
+  `)
   return r.getRowObjects().map((x) => {
     let components = {
       prbSeverity: 0, persistence: 0, userImpact: 0, trafficImpact: 0,
@@ -329,7 +333,7 @@ export async function getHealthMatrix(
 
   const r = await conn.runAndReadAll(
     `WITH target_weeks AS (
-       SELECT DISTINCT date_id FROM cell_health_history ORDER BY date_id DESC LIMIT ?
+       SELECT DISTINCT date_id FROM cell_health_history ORDER BY date_id DESC LIMIT ${weeksN}
      ),
      latest_week AS (
        SELECT max(date_id) AS max_date_id FROM target_weeks
@@ -343,7 +347,7 @@ export async function getHealthMatrix(
        WHERE h.date_id IN (SELECT date_id FROM target_weeks)
        GROUP BY ${sel.id}, ${sel.name}
        ORDER BY ${sort === 'worst' ? 'latest_score ASC NULLS LAST, entity_name ASC' : 'entity_name ASC'}
-       LIMIT ?
+       LIMIT ${limit}
      )
      SELECT r.entity_id, r.entity_name,
             CAST(h.date_id AS DOUBLE) AS date_id,
@@ -354,8 +358,7 @@ export async function getHealthMatrix(
      JOIN ranked_entities r ON r.entity_id = ${sel.id}
      WHERE h.date_id IN (SELECT date_id FROM target_weeks)
      GROUP BY r.entity_id, r.entity_name, h.date_id
-     ORDER BY r.entity_name, h.date_id`,
-    [weeksN, limit]
+     ORDER BY r.entity_name, h.date_id`
   )
 
   const rows = r.getRowObjects()
@@ -411,30 +414,22 @@ export async function getCellIntelligence(opts: {
   const limit = Math.min(500, Math.max(1, opts.limit ?? 100))
   const offset = Math.max(0, opts.offset ?? 0)
   const where: string[] = []
-  const params: (string | number)[] = []
   if (opts.search) {
-    where.push(`(c.name ILIKE ? OR COALESCE(s.name,'') ILIKE ? OR COALESCE(d.name,'') ILIKE ?)`)
-    const like = `%${opts.search}%`
-    params.push(like, like, like)
+    const esc = opts.search.replace(/'/g, "''")
+    where.push(`(c.name ILIKE '%${esc}%' OR COALESCE(s.name,'') ILIKE '%${esc}%' OR COALESCE(d.name,'') ILIKE '%${esc}%')`)
   }
   if (opts.lifecycle) {
-    where.push(`l.lifecycle = ?`)
-    params.push(opts.lifecycle)
+    where.push(`l.lifecycle = '${opts.lifecycle.replace(/'/g, "''")}'`)
   }
   if (opts.trend) {
-    where.push(`l.trend = ?`)
-    params.push(opts.trend)
+    where.push(`l.trend = '${opts.trend.replace(/'/g, "''")}'`)
   }
   if (opts.severity) {
-    where.push(`l.severity = ?`)
-    params.push(opts.severity)
+    where.push(`l.severity = '${opts.severity.replace(/'/g, "''")}'`)
   }
   if (opts.minPriority != null && opts.minPriority > 0) {
-    where.push(`p.score >= ?`)
-    params.push(opts.minPriority)
+    where.push(`p.score >= ${Number(opts.minPriority)}`)
   }
-  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
-  const filterParams = params.slice()
   const base = `
     FROM cell_nc_lifecycle l
     JOIN dim_cell c ON c.cell_id = l.cell_id
@@ -443,24 +438,23 @@ export async function getCellIntelligence(opts: {
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
     LEFT JOIN agg_cell_weekly w ON w.cell_id = l.cell_id AND w.week_start = l.period_start
     LEFT JOIN cell_priority_history p
-      ON p.cell_id = l.cell_id AND p.mode = 'balanced' AND p.as_of = l.period_start
+    ON p.cell_id = l.cell_id AND p.mode = 'balanced' AND p.as_of = l.period_start
     WHERE l.grain = 'weekly'
       AND l.ruleset_version = (SELECT max(version) FROM ruleset)
       AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
       ${where.length > 0 ? `AND ${where.join(' AND ')}` : ''}
   `
-  const totalR = await conn.runAndReadAll(`SELECT count(*) AS n ${base}`, filterParams)
+  const totalR = await conn.runAndReadAll(`SELECT count(*) AS n ${base}`)
   const total = Number(totalR.getRowObjects()[0].n)
   const r = await conn.runAndReadAll(
     `SELECT l.cell_id, c.name AS cell_name, s.name AS site, d.name AS district, rg.name AS region,
-       CAST(l.period_start AS VARCHAR) AS week_start, l.is_nc, l.lifecycle, l.trend, l.severity,
-       l.prb_avg, CAST(l.breach_days AS DOUBLE) AS breach_days,
-       w.dl_throughput_kbps_avg, w.connected_users_sum, w.data_volume_mb_sum,
-       w.availability_pct_avg, p.score AS priority_score, p.band AS priority_band
-     ${base}
-     ORDER BY p.score DESC NULLS LAST, l.cell_id
-     LIMIT ? OFFSET ?`,
-    [...filterParams, limit, offset]
+        CAST(l.period_start AS VARCHAR) AS week_start, l.is_nc, l.lifecycle, l.trend, l.severity,
+        l.prb_avg, CAST(l.breach_days AS DOUBLE) AS breach_days,
+        w.dl_throughput_kbps_avg, w.connected_users_sum, w.data_volume_mb_sum,
+        w.availability_pct_avg, p.score AS priority_score, p.band AS priority_band
+      ${base}
+      ORDER BY p.score DESC NULLS LAST, l.cell_id
+      LIMIT ${limit} OFFSET ${offset}`
   )
   const pageRows = r.getRowObjects()
   const weekOf = (x: Record<string, unknown>): string => String(x.week_start ?? '')
@@ -511,9 +505,8 @@ async function pageCellKpiValues(
        END AS value
      FROM agg_cell_kpi_weekly w
      JOIN kpi_defs k ON k.kpi_id = w.kpi_id
-     WHERE w.cell_id IN (${cellIds.join(',')}) AND w.week_start = ? AND k.active
-     ORDER BY k.sort_order, k.kpi_key`,
-    [weekStart]
+     WHERE w.cell_id IN (${cellIds.join(',')}) AND w.week_start = '${weekStart.replace(/'/g, "''")}' AND k.active
+     ORDER BY k.sort_order, k.kpi_key`
   )
   for (const x of r.getRowObjects()) {
     const cellId = Number(x.cell_id)
@@ -550,9 +543,14 @@ async function cellKpiValues(
   return m.get(cellId) ?? []
 }
 
-/** Weekly history for one cell — the drawer's aligned time-series source. */
-export async function getCellDetail(cellId: number): Promise<CellDetail | null> {
+/** Time-series history for one cell — the drawer's aligned time-series source. */
+export async function getCellDetail(cellId: number, grain: Grain = 'weekly'): Promise<CellDetail | null> {
   const conn = ws().connection
+  const numCellId = Number(cellId)
+  const g: Grain = grain === 'daily' || grain === 'monthly' ? grain : 'weekly'
+  const aggTable = g === 'daily' ? 'agg_cell_daily' : g === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
+  const dateCol = g === 'daily' ? 'w.date' : g === 'monthly' ? 'w.month_start' : 'w.week_start'
+
   const dimR = await conn.runAndReadAll(
     `SELECT CAST(c.cell_id AS DOUBLE) AS cell_id, c.name AS cell_name,
        s.name AS site, d.name AS district, rg.name AS region
@@ -560,47 +558,43 @@ export async function getCellDetail(cellId: number): Promise<CellDetail | null> 
      LEFT JOIN dim_site s ON s.site_id = c.site_id
      LEFT JOIN dim_district d ON d.district_id = c.district_id
      LEFT JOIN dim_region rg ON rg.region_id = c.region_id
-     WHERE c.cell_id = ?`,
-    [cellId]
+     WHERE c.cell_id = ${numCellId}`
   )
   const dim = dimR.getRowObjects()[0]
   if (!dim) return null
   const curR = await conn.runAndReadAll(
     `SELECT CAST(p.score AS DOUBLE) AS score, p.band, CAST(p.as_of AS VARCHAR) AS as_of
      FROM cell_priority_history p
-     WHERE p.cell_id = ? AND p.mode = 'balanced'
-       AND p.as_of = (SELECT max(as_of) FROM cell_priority_history WHERE cell_id = ? AND mode = 'balanced')
-     LIMIT 1`,
-    [cellId, cellId]
+     WHERE p.cell_id = ${numCellId} AND p.mode = 'balanced'
+       AND p.as_of = (SELECT max(as_of) FROM cell_priority_history WHERE cell_id = ${numCellId} AND mode = 'balanced')
+     LIMIT 1`
   )
   const cur = curR.getRowObjects()[0]
   const lifeR = await conn.runAndReadAll(
     `SELECT CAST(period_start AS VARCHAR) AS week_start, lifecycle, trend, severity,
        is_nc, prb_avg
      FROM cell_nc_lifecycle
-     WHERE cell_id = ? AND grain = 'weekly'
+     WHERE cell_id = ${numCellId} AND grain = '${g}'
        AND ruleset_version = (SELECT max(version) FROM ruleset)
        AND period_start = (SELECT max(period_start) FROM cell_nc_lifecycle
-         WHERE cell_id = ? AND grain = 'weekly')
-     LIMIT 1`,
-    [cellId, cellId]
+         WHERE cell_id = ${numCellId} AND grain = '${g}')
+     LIMIT 1`
   )
   const life = lifeR.getRowObjects()[0]
   const wkR = await conn.runAndReadAll(
-    `SELECT CAST(w.week_start AS VARCHAR) AS week_start,
+    `SELECT CAST(${dateCol} AS VARCHAR) AS week_start,
        w.prb_avg, w.dl_throughput_kbps_avg, w.connected_users_sum,
        w.data_volume_mb_sum, w.availability_pct_avg,
        CAST(w.breach_days AS DOUBLE) AS breach_days,
        COALESCE(l.is_nc, false) AS is_nc,
        COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
        COALESCE(l.severity, 'Normal') AS severity
-     FROM agg_cell_weekly w
+     FROM ${aggTable} w
      LEFT JOIN cell_nc_lifecycle l
-       ON l.cell_id = w.cell_id AND l.period_start = w.week_start
-       AND l.grain = 'weekly' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-     WHERE w.cell_id = ?
-     ORDER BY w.week_start`,
-    [cellId]
+       ON l.cell_id = w.cell_id AND l.period_start = ${dateCol}
+       AND l.grain = '${g}' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
+     WHERE w.cell_id = ${numCellId}
+     ORDER BY ${dateCol}`
   )
   const weeks: CellWeekPoint[] = wkR.getRowObjects().map((x) => ({
     weekStart: String(x.week_start),
@@ -672,15 +666,18 @@ export async function getHealth(grain: Grain = 'weekly'): Promise<HealthResult> 
 /** Performance Analysis (spec §40): metric percentile distributions, a
  *  PRB-vs-throughput scatter with quadrant bands, and the correlation table.
  *  All math runs in DuckDB — the renderer only receives ready-to-draw shapes. */
-export async function getPerformance(): Promise<PerformanceResult> {
+export async function getPerformance(opts?: { grain?: Grain; period?: PeriodId }): Promise<PerformanceResult> {
   const conn = ws().connection
   const rules = await getRulesCurrent()
   const prbThreshold = rules?.prbThresholdPct ?? 80
+  const grain: Grain = opts?.grain === 'daily' || opts?.grain === 'monthly' ? opts.grain : 'weekly'
+  const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
+  const dateCol = grain === 'daily' ? 'date' : grain === 'monthly' ? 'month_start' : 'week_start'
 
   const wkR = await conn.runAndReadAll(
-    `SELECT CAST(max(week_start) AS VARCHAR) AS week_start FROM agg_cell_weekly`
+    `SELECT CAST(max(${dateCol}) AS VARCHAR) AS week_start FROM ${aggTable}`
   )
-  const weekStart = String(wkR.getRowObjects()[0].week_start ?? '')
+  const weekStart = String(wkR.getRowObjects()[0]?.week_start ?? '')
 
   const METRICS: Array<{ metric: PerfMetric; label: string; unit: string; col: string }> = [
     { metric: 'prb', label: 'PRB utilization', unit: '%', col: 'prb_avg' },
@@ -691,6 +688,7 @@ export async function getPerformance(): Promise<PerformanceResult> {
   ]
   const QUANTILES = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1]
 
+  const safeWeekStart = weekStart.replace(/'/g, "''")
   const distributions: MetricDistribution[] = []
   for (const m of METRICS) {
     const r = await conn.runAndReadAll(
@@ -698,13 +696,16 @@ export async function getPerformance(): Promise<PerformanceResult> {
               avg(${m.col}) AS mean, min(${m.col}) AS min, max(${m.col}) AS max,
               quantile_cont(${m.col}, 0.5) AS p50, quantile_cont(${m.col}, 0.9) AS p90,
               count(*) AS n
-       FROM agg_cell_weekly WHERE week_start = ?`,
-      [weekStart]
+       FROM ${aggTable} WHERE ${dateCol} = '${safeWeekStart}'`
     )
     const row = r.getRowObjects()[0]
-    // a LIST column decodes to { items: [...] } in @duckdb/node-api
-    const ps = row?.ps as { items?: Array<number | null> } | null
-    const items: Array<number | null> = ps?.items ?? []
+    // a LIST column decodes to an array or { items: [...] } in @duckdb/node-api
+    let items: Array<number | null> = []
+    if (Array.isArray(row?.ps)) {
+      items = row.ps as Array<number | null>
+    } else if (row?.ps && typeof row.ps === 'object' && 'items' in (row.ps as unknown as Record<string, unknown>)) {
+      items = ((row.ps as unknown) as { items: Array<number | null> }).items ?? []
+    }
     distributions.push({
       metric: m.metric,
       label: m.label,
@@ -722,29 +723,27 @@ export async function getPerformance(): Promise<PerformanceResult> {
     })
   }
 
-  // scatter: latest-week cells with NC state under the active ruleset
+  // scatter: latest-period cells with NC state under the active ruleset
   const scR = await conn.runAndReadAll(
     `SELECT CAST(c.cell_id AS DOUBLE) AS cell_id, c.name AS cell_name,
        d.name AS district, rg.name AS region,
        w.prb_avg, w.dl_throughput_kbps_avg, w.connected_users_sum,
        COALESCE(l.is_nc, false) AS is_nc
-     FROM agg_cell_weekly w
+     FROM ${aggTable} w
      JOIN dim_cell c ON c.cell_id = w.cell_id
      LEFT JOIN dim_site s ON s.site_id = c.site_id
      LEFT JOIN dim_district d ON d.district_id = c.district_id
      LEFT JOIN dim_region rg ON rg.region_id = c.region_id
      LEFT JOIN cell_nc_lifecycle l
-       ON l.cell_id = w.cell_id AND l.period_start = w.week_start
-       AND l.grain = 'weekly' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-     WHERE w.week_start = ?`,
-    [weekStart]
+       ON l.cell_id = w.cell_id AND l.period_start = w.${dateCol}
+       AND l.grain = '${grain}' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
+     WHERE w.${dateCol} = '${safeWeekStart}'`
   )
   const scRows = scR.getRowObjects()
   const medR = await conn.runAndReadAll(
-    `SELECT median(dl_throughput_kbps_avg) AS med FROM agg_cell_weekly WHERE week_start = ?`,
-    [weekStart]
+    `SELECT median(dl_throughput_kbps_avg) AS med FROM ${aggTable} WHERE ${dateCol} = '${safeWeekStart}'`
   )
-  const med = medR.getRowObjects()[0].med
+  const med = medR.getRowObjects()[0]?.med
   const throughputMedianKbps = med == null ? null : Number(med)
   const scatter: ScatterPoint[] = scRows.map((x) => {
     const prb = x.prb_avg == null ? null : Number(x.prb_avg)
@@ -767,8 +766,7 @@ export async function getPerformance(): Promise<PerformanceResult> {
     }
   })
 
-  // correlations: Pearson over every weekly row (more signal than one week).
-  // Descriptive, never causal (spec §40).
+  // correlations: Pearson over every aggregate row in this grain
   const corrR = await conn.runAndReadAll(`
     SELECT
       corr(prb_avg, dl_throughput_kbps_avg) AS prb_thr,
@@ -782,7 +780,7 @@ export async function getPerformance(): Promise<PerformanceResult> {
       corr(connected_users_sum, availability_pct_avg) AS usr_avail,
       corr(data_volume_mb_sum, availability_pct_avg) AS vol_avail,
       count(*) AS n
-    FROM agg_cell_weekly
+    FROM ${aggTable}
   `)
   const crow = corrR.getRowObjects()[0]
   const pairs: Array<[PerfMetric, PerfMetric, string]> = [
@@ -823,12 +821,18 @@ export async function getComparison(opts: {
   type?: ComparisonType
   scope?: CompareScope
   metric?: CompareMetric
+  grain?: Grain
+  period?: PeriodId
 } = {}): Promise<ComparisonResult> {
   const conn = ws().connection
   const type: ComparisonType = opts.type ?? 'period'
   // region mode always compares regions against the network baseline
   const scope: CompareScope = type === 'region' ? 'region' : (opts.scope ?? 'cell')
   const metric: CompareMetric = opts.metric ?? 'prb'
+  const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
+
+  const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
+  const dateCol = grain === 'daily' ? 'date' : grain === 'monthly' ? 'month_start' : 'week_start'
 
   const METRICS: Array<{
     metric: CompareMetric
@@ -846,9 +850,9 @@ export async function getComparison(opts: {
   ]
 
   const wkR = await conn.runAndReadAll(
-    `SELECT DISTINCT CAST(week_start AS VARCHAR) AS week_start FROM agg_cell_weekly ORDER BY week_start DESC LIMIT 2`
+    `SELECT DISTINCT CAST(${dateCol} AS VARCHAR) AS date_val FROM ${aggTable} ORDER BY ${dateCol} DESC LIMIT 2`
   )
-  const weeks = wkR.getRowObjects().map((x) => String(x.week_start))
+  const weeks = wkR.getRowObjects().map((x) => String(x.date_val))
   const a = weeks[0] ?? '' // latest
   const b = weeks[1] ?? '' // previous (period mode only)
 
@@ -860,14 +864,14 @@ export async function getComparison(opts: {
   }
   const sel = SCOPE[scope]
 
-  /** Network-level KPI snapshot for one week (the `kpis` source). */
+  /** Network-level KPI snapshot for one period (the `kpis` source). */
   async function networkKpis(weekStart: string): Promise<Record<string, number | null>> {
+    const safeWk = weekStart.replace(/'/g, "''")
     const r = await conn.runAndReadAll(
       `SELECT avg(prb_avg) AS prb, avg(dl_throughput_kbps_avg) AS thr,
          sum(connected_users_sum) AS usr, sum(data_volume_mb_sum) AS vol,
          avg(availability_pct_avg) AS avail, sum(is_nc) AS nc
-       FROM agg_cell_weekly WHERE week_start = ?`,
-      [weekStart]
+       FROM ${aggTable} WHERE ${dateCol} = '${safeWk}'`
     )
     const row = r.getRowObjects()[0]
     const out: Record<string, number | null> = {}
@@ -877,18 +881,18 @@ export async function getComparison(opts: {
     return out
   }
 
-  /** Per-entity metric + NC count for one week at the chosen scope. */
+  /** Per-entity metric + NC count for one period at the chosen scope. */
   async function scopeRows(weekStart: string): Promise<Map<number, { name: string; value: number | null; nc: number; cells: number }>> {
     const metricDef = METRICS.find((m) => m.metric === metric)!
+    const safeWk = weekStart.replace(/'/g, "''")
     const r = await conn.runAndReadAll(
       `SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,
               ${metricDef.expr} AS value, sum(is_nc) AS nc, count(*) AS cells
-       FROM agg_cell_weekly w
+       FROM ${aggTable} w
        JOIN dim_cell c ON c.cell_id = w.cell_id
        ${sel.join}
-       WHERE w.week_start = ?
-       GROUP BY ${sel.id}, ${sel.name}`,
-      [weekStart]
+       WHERE w.${dateCol} = '${safeWk}'
+       GROUP BY ${sel.id}, ${sel.name}`
     )
     const map = new Map<number, { name: string; value: number | null; nc: number; cells: number }>()
     for (const x of r.getRowObjects()) {
@@ -904,17 +908,17 @@ export async function getComparison(opts: {
 
   /** Wide variant for region mode: every metric per region (for best/worst). */
   async function scopeAllRows(weekStart: string): Promise<Map<number, { name: string; vals: Record<string, number | null>; nc: number; cells: number }>> {
+    const safeWk = weekStart.replace(/'/g, "''")
     const r = await conn.runAndReadAll(
       `SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,
               avg(prb_avg) AS prb, avg(dl_throughput_kbps_avg) AS thr,
               sum(connected_users_sum) AS usr, sum(data_volume_mb_sum) AS vol,
               avg(availability_pct_avg) AS avail, sum(is_nc) AS nc, count(*) AS cells
-       FROM agg_cell_weekly w
+       FROM ${aggTable} w
        JOIN dim_cell c ON c.cell_id = w.cell_id
        ${sel.join}
-       WHERE w.week_start = ?
-       GROUP BY ${sel.id}, ${sel.name}`,
-      [weekStart]
+       WHERE w.${dateCol} = '${safeWk}'
+       GROUP BY ${sel.id}, ${sel.name}`
     )
     const map = new Map<number, { name: string; vals: Record<string, number | null>; nc: number; cells: number }>()
     for (const x of r.getRowObjects()) {
@@ -1076,12 +1080,12 @@ export async function getExplorer(
     if (parentId == null) {
       return { level, parentId, breadcrumb: [], nodes: [], ncCells: 0, totalCells: 0 }
     }
-    where.push(e.filter)
-    params.push(parentId)
+    const filterExpr = e.filter.replace('?', String(Number(parentId)))
+    where.push(filterExpr)
   }
   if (q) {
-    where.push(`${e.name} ILIKE ?`)
-    params.push(`%${q}%`)
+    const escQ = q.replace(/'/g, "''")
+    where.push(`${e.name} ILIKE '%${escQ}%'`)
   }
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -1118,8 +1122,7 @@ export async function getExplorer(
      ${e.extra}
      ${whereSql}
      GROUP BY ${e.id}, ${e.name}${groupBy}
-     ORDER BY health ASC NULLS LAST, ${e.name}`,
-    params
+     ORDER BY health ASC NULLS LAST, ${e.name}`
   )
 
   const nodes: ExplorerNode[] = r.getRowObjects().map((x) => ({
@@ -1192,6 +1195,7 @@ export async function getRegionMap(): Promise<RegionMapRow[]> {
 /** Ghana map drill-down: districts of one region with latest-week KPIs. */
 export async function getRegionDistricts(regionId: number): Promise<DistrictMapRow[]> {
   const conn = ws().connection
+  const numRegionId = Number(regionId)
   const r = await conn.runAndReadAll(
     `SELECT d.district_id AS id, d.name AS name, rg.name AS region,
        count(DISTINCT c.cell_id) AS cells,
@@ -1211,10 +1215,9 @@ export async function getRegionDistricts(regionId: number): Promise<DistrictMapR
        AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
      LEFT JOIN fact_cell_daily f ON f.cell_id = c.cell_id
        AND f.date_id = (SELECT max(date_id) FROM fact_cell_daily)
-     WHERE d.region_id = ?
+     WHERE d.region_id = ${numRegionId}
      GROUP BY d.district_id, d.name, rg.name
-     ORDER BY health ASC NULLS LAST, d.name`,
-    [regionId]
+     ORDER BY health ASC NULLS LAST, d.name`
   )
   return r.getRowObjects().map((x) => ({
     id: Number(x.id),
@@ -1240,11 +1243,11 @@ async function buildBreadcrumb(
   const push = (arr: ExplorerBreadcrumb[], id: number, name: string, lvl: ExplorerLevel): void => {
     arr.unshift({ id, name, level: lvl })
   }
+  const numParentId = Number(parentId)
   const out: ExplorerBreadcrumb[] = []
   if (level === 'district') {
     const rr = await conn.runAndReadAll(
-      `SELECT region_id AS id, name FROM dim_region WHERE region_id = ?`,
-      [parentId]
+      `SELECT region_id AS id, name FROM dim_region WHERE region_id = ${numParentId}`
     )
     const row = rr.getRowObjects()[0]
     if (row) push(out, Number(row.id), String(row.name), 'region')
@@ -1252,15 +1255,13 @@ async function buildBreadcrumb(
   }
   if (level === 'site') {
     const dr = await conn.runAndReadAll(
-      `SELECT d.district_id AS id, d.name, d.region_id FROM dim_district d WHERE d.district_id = ?`,
-      [parentId]
+      `SELECT d.district_id AS id, d.name, d.region_id FROM dim_district d WHERE d.district_id = ${numParentId}`
     )
     const drow = dr.getRowObjects()[0]
     if (!drow) return out
     push(out, Number(drow.id), String(drow.name), 'district')
     const rr = await conn.runAndReadAll(
-      `SELECT region_id AS id, name FROM dim_region WHERE region_id = ?`,
-      [Number(drow.region_id)]
+      `SELECT region_id AS id, name FROM dim_region WHERE region_id = ${Number(drow.region_id)}`
     )
     const row = rr.getRowObjects()[0]
     if (row) push(out, Number(row.id), String(row.name), 'region')
@@ -1268,22 +1269,19 @@ async function buildBreadcrumb(
   }
   // cell: parent is the site
   const sr = await conn.runAndReadAll(
-    `SELECT s.site_id AS id, s.name, s.district_id FROM dim_site s WHERE s.site_id = ?`,
-    [parentId]
+    `SELECT s.site_id AS id, s.name, s.district_id FROM dim_site s WHERE s.site_id = ${numParentId}`
   )
   const srow = sr.getRowObjects()[0]
   if (!srow) return out
   push(out, Number(srow.id), String(srow.name), 'site')
   const dr = await conn.runAndReadAll(
-    `SELECT d.district_id AS id, d.name, d.region_id FROM dim_district d WHERE d.district_id = ?`,
-    [Number(srow.district_id)]
+    `SELECT d.district_id AS id, d.name, d.region_id FROM dim_district d WHERE d.district_id = ${Number(srow.district_id)}`
   )
   const drow = dr.getRowObjects()[0]
   if (!drow) return out
   push(out, Number(drow.id), String(drow.name), 'district')
   const rr = await conn.runAndReadAll(
-    `SELECT region_id AS id, name FROM dim_region WHERE region_id = ?`,
-    [Number(drow.region_id)]
+    `SELECT region_id AS id, name FROM dim_region WHERE region_id = ${Number(drow.region_id)}`
   )
   const row = rr.getRowObjects()[0]
   if (row) push(out, Number(row.id), String(row.name), 'region')
@@ -1358,26 +1356,33 @@ export async function getPriorityCenter(
     if (opts.status === 'unset') {
       where.push(`st.status IS NULL`)
     } else {
-      where.push(`st.status = ?`)
-      params.push(opts.status)
+      where.push(`st.status = '${opts.status.replace(/'/g, "''")}'`)
     }
   }
   if (opts.band) {
     const b = BANDS.find((x) => x.band === opts.band)
     if (b) {
-      where.push(`p.score >= ? AND p.score <= ?`)
-      params.push(b.lo, b.hi)
+      where.push(`p.score >= ${b.lo} AND p.score <= ${b.hi}`)
     }
   }
   if (opts.overdueOnly) {
     where.push(`st.target_review_date < CURRENT_DATE AND COALESCE(st.status, '') NOT IN ('Resolved', 'Deferred')`)
   }
   if (opts.search) {
-    where.push(
-      `(c.name ILIKE ? OR COALESCE(s.name,'') ILIKE ? OR COALESCE(d.name,'') ILIKE ? OR COALESCE(rg.name,'') ILIKE ?)`
-    )
-    const like = `%${opts.search}%`
-    params.push(like, like, like, like)
+    const esc = opts.search.replace(/'/g, "''")
+    if (scope === 'cell') {
+      where.push(
+        `(c.name ILIKE '%${esc}%' OR COALESCE(s.name,'') ILIKE '%${esc}%' OR COALESCE(d.name,'') ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
+      )
+    } else if (scope === 'site') {
+      where.push(
+        `(s.name ILIKE '%${esc}%' OR COALESCE(d.name,'') ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
+      )
+    } else {
+      where.push(
+        `(d.name ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
+      )
+    }
   }
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -1392,20 +1397,22 @@ export async function getPriorityCenter(
         ? `ORDER BY name, ${scoreKey} DESC NULLS LAST`
         : `ORDER BY ${scoreKey} DESC NULLS LAST, name`
 
+  const safeMode = mode.replace(/'/g, "''")
+  const safeScope = scope.replace(/'/g, "''")
   const from = `
     FROM ${cfg.from}
     LEFT JOIN cell_priority_history p
-      ON p.cell_id = c.cell_id AND p.mode = ? AND p.as_of = (
-        SELECT max(as_of) FROM cell_priority_history WHERE mode = ?
+      ON p.cell_id = c.cell_id AND p.mode = '${safeMode}' AND p.as_of = (
+        SELECT max(as_of) FROM cell_priority_history WHERE mode = '${safeMode}'
       )
     LEFT JOIN entity_action_status st
-      ON st.entity_type = ? AND st.entity_id = ${cfg.eId}
+      ON st.entity_type = '${safeScope}' AND st.entity_id = ${cfg.eId}
     LEFT JOIN agg_cell_weekly w
       ON w.cell_id = c.cell_id AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
   `
   const base = `${from} ${whereSql}`
 
-  const countR = await conn.runAndReadAll(`SELECT count(*) AS n ${base} ${cfg.groupBy}`, params)
+  const countR = await conn.runAndReadAll(`SELECT count(*) AS n ${base} ${cfg.groupBy}`)
   const countRows = countR.getRowObjects()
   const total = scope === 'cell' ? Number(countRows[0]?.n ?? 0) : countRows.length
   // rollup per status: subquery groups entities first (site/district) or emits
@@ -1414,8 +1421,7 @@ export async function getPriorityCenter(
   const statusR = await conn.runAndReadAll(
     `SELECT COALESCE(x.status, 'unset') AS status, count(*) AS n
      FROM (SELECT st.status ${base} ${cfg.groupBy}) x
-     GROUP BY COALESCE(x.status, 'unset') ORDER BY n DESC`,
-    params
+     GROUP BY COALESCE(x.status, 'unset') ORDER BY n DESC`
   )
   const byStatus: Record<string, number> = {}
   for (const x of statusR.getRowObjects()) {
@@ -1427,16 +1433,14 @@ export async function getPriorityCenter(
      WHERE st.target_review_date < CURRENT_DATE
        AND COALESCE(st.status, '') NOT IN ('Resolved', 'Deferred')
        ${where.length > 0 ? `AND ${where.join(' AND ')}` : ''}
-     ${cfg.groupBy}`,
-    params
+     ${cfg.groupBy}`
   )
   const overdueTotal = scope === 'cell'
     ? Number(overdueR.getRowObjects()[0]?.n ?? 0)
     : overdueR.getRowObjects().length
 
   const r = await conn.runAndReadAll(
-    `SELECT ${cfg.sel} ${base} ${cfg.groupBy} ${sortSql} LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    `SELECT ${cfg.sel} ${base} ${cfg.groupBy} ${sortSql} LIMIT ${limit} OFFSET ${offset}`
   )
 
   const today = new Date().toISOString().slice(0, 10)
@@ -1509,10 +1513,27 @@ function horizonWeeks(h: ForecastHorizon): number {
   return h === '1w' ? 1 : h === '2w' ? 2 : h === '4w' ? 4 : 6
 }
 
-function addWeeks(dateStr: string, weeks: number): string {
+function addPeriod(dateStr: string, steps: number, grain: Grain = 'weekly'): string {
   const d = new Date(dateStr + 'T00:00:00Z')
-  d.setUTCDate(d.getUTCDate() + weeks * 7)
+  if (grain === 'daily') {
+    d.setUTCDate(d.getUTCDate() + steps)
+  } else if (grain === 'monthly') {
+    d.setUTCMonth(d.getUTCMonth() + steps)
+  } else {
+    d.setUTCDate(d.getUTCDate() + steps * 7)
+  }
   return d.toISOString().slice(0, 10)
+}
+
+function formatTimeLabel(dateStr: string, grain: Grain = 'weekly'): string {
+  if (!dateStr) return ''
+  if (grain === 'daily') {
+    return dateStr.length >= 10 ? dateStr.slice(5) : dateStr
+  }
+  if (grain === 'monthly') {
+    return dateStr.slice(0, 7)
+  }
+  return weekLabel(dateStr)
 }
 
 function forecastThreshold(metric: ForecastMetric, prbThreshold: number): number | null {
@@ -1524,20 +1545,23 @@ function forecastThreshold(metric: ForecastMetric, prbThreshold: number): number
 
 /** Forecasting & Early Warning (§45–46): simple-first forecasts for the
  *  network or any entity, with early-warning risk states per cell.
- *  History is read from agg_cell_weekly; all math runs in JS (forecast.ts)
+ *  History is read from the aggregate tables per grain; all math runs in JS (forecast.ts)
  *  so the same model serves network/entity series and per-cell risk rows. */
 export async function getForecast(opts: {
   scope?: ForecastScope
   entityId?: number | null
   metric?: ForecastMetric
   horizon?: ForecastHorizon
+  grain?: Grain
+  period?: PeriodId
 } = {}): Promise<ForecastResult> {
   const conn = ws().connection
   const scope: ForecastScope = opts.scope ?? 'network'
   const entityId = opts.entityId ?? null
   const metric: ForecastMetric = opts.metric ?? 'prb'
   const horizon: ForecastHorizon = opts.horizon ?? '4w'
-  const weeksAhead = horizonWeeks(horizon)
+  const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
+  const stepsAhead = horizonWeeks(horizon)
   const metricDef = FORECAST_METRICS.find((m) => m.metric === metric)!
 
   const rules = await getRules(conn)
@@ -1551,24 +1575,27 @@ export async function getForecast(opts: {
     : scope === 'site' ? `AND s.site_id = ${Number(entityId)}`
     : `AND c.cell_id = ${Number(entityId)}`
 
-  // one pass: every cell-week under the scope, with hierarchy for paths
+  const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
+  const dateCol = grain === 'daily' ? 'w.date' : grain === 'monthly' ? 'w.month_start' : 'w.week_start'
+
+  // one pass: every cell-period under the scope, with hierarchy for paths
   const r = await conn.runAndReadAll(`
     SELECT c.cell_id,
-      CAST(w.week_start AS VARCHAR) AS week_start,
+      CAST(${dateCol} AS VARCHAR) AS week_start,
       w.prb_avg, w.dl_throughput_kbps_avg, w.connected_users_sum,
       w.data_volume_mb_sum, w.availability_pct_avg, w.is_nc,
       rg.name AS region, d.name AS district, s.name AS site, c.name AS cell
-    FROM agg_cell_weekly w
+    FROM ${aggTable} w
     JOIN dim_cell c ON c.cell_id = w.cell_id
     LEFT JOIN dim_site s ON s.site_id = c.site_id
     LEFT JOIN dim_district d ON d.district_id = c.district_id
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
     WHERE 1 = 1 ${scopeWhere}
-    ORDER BY w.week_start, c.cell_id
+    ORDER BY ${dateCol}, c.cell_id
   `)
   const rows = r.getRowObjects()
   if (rows.length === 0) {
-    throw new Error(`No weekly history for ${scope} ${entityId ?? ''}`)
+    throw new Error(`No history for ${scope} ${entityId ?? ''}`)
   }
 
   // per-cell series, plus entity metadata from the first row
@@ -1591,7 +1618,7 @@ export async function getForecast(opts: {
   }
   const cellList = [...cells.values()]
 
-  // week axis = union of weeks (sorted); entity series aggregates all its cells
+  // time axis = union of periods (sorted); entity series aggregates all its cells
   const weekStarts = [...new Set(rows.map((x) => String(x.week_start)))].sort()
 
   const pick = (m: ForecastMetric, w: { prb: number; thr: number; usr: number; vol: number; avail: number; isNc: boolean } | undefined): number | null => {
@@ -1613,32 +1640,36 @@ export async function getForecast(opts: {
     scope === 'district' ? first.district :
     scope === 'site' ? first.site : first.cell
 
-  // entity-level weekly series for every metric
+  // entity-level series for every metric
   const series: ForecastSeries[] = FORECAST_METRICS.map((m) => {
     const points: ForecastPoint[] = weekStarts.map((ws0) => {
       const vals = cellList.map((c) => pick(m.metric, c.weeks.get(ws0))).filter((v): v is number => v != null)
-      if (vals.length === 0) return { weekStart: ws0, label: weekLabel(ws0), value: null, kind: 'actual' as const, lower: null, upper: null }
+      if (vals.length === 0) return { weekStart: ws0, label: formatTimeLabel(ws0, grain), value: null, kind: 'actual' as const, lower: null, upper: null }
       const value = m.metric === 'users' || m.metric === 'traffic'
         ? vals.reduce((a, b) => a + b, 0)
         : vals.reduce((a, b) => a + b, 0) / vals.length
-      return { weekStart: ws0, label: weekLabel(ws0), value: Math.round(value * 100) / 100, kind: 'actual' as const, lower: null, upper: null }
+      return { weekStart: ws0, label: formatTimeLabel(ws0, grain), value: Math.round(value * 100) / 100, kind: 'actual' as const, lower: null, upper: null }
     })
-    const fc = forecastSeries(
+    const traj = forecastTrajectory(
       points.map((p) => ({ weekStart: p.weekStart, value: p.value })),
+      m.metric,
       m.label,
-      m.unit
+      m.unit,
+      stepsAhead
     )
-    // append forecast points at week + 1..weeksAhead
-    let lastWeek = weekStarts[weekStarts.length - 1]
-    for (let i = 1; i <= weeksAhead; i++) {
-      lastWeek = addWeeks(lastWeek, 7)
+    const fc = traj.summary
+    // append forecast points at period + 1..stepsAhead
+    let lastPeriod = weekStarts[weekStarts.length - 1]
+    for (let i = 0; i < stepsAhead; i++) {
+      lastPeriod = addPeriod(lastPeriod, 1, grain)
+      const p = traj.points[i]
       points.push({
-        weekStart: lastWeek,
-        label: weekLabel(lastWeek),
-        value: fc.next == null ? null : Math.round(fc.next * 100) / 100,
+        weekStart: lastPeriod,
+        label: formatTimeLabel(lastPeriod, grain),
+        value: p?.value ?? (fc.next == null ? null : Math.round(fc.next * 100) / 100),
         kind: 'forecast',
-        lower: fc.lower == null ? null : Math.round(fc.lower * 100) / 100,
-        upper: fc.upper == null ? null : Math.round(fc.upper * 100) / 100
+        lower: p?.lower ?? (fc.lower == null ? null : Math.round(fc.lower * 100) / 100),
+        upper: p?.upper ?? (fc.upper == null ? null : Math.round(fc.upper * 100) / 100)
       })
     }
     return {
@@ -1761,7 +1792,7 @@ export async function getSummary(
   if (hit && Date.now() - hit.at < SUMMARY_TTL_MS) return hit.value
   const ws = getCurrent()
   if (!ws) return null
-    const win = summaryWindow(period)
+  const win = summaryWindow(period)
   const r = await ws.connection.runAndReadAll(`
     SELECT
       (SELECT count(*) FROM dim_cell) AS cells,
@@ -1803,4 +1834,299 @@ export async function getSummary(
   }
   summaryCache.set(key, { at: Date.now(), value })
   return value
+}
+
+export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: Grain }): Promise<ExecutiveOverviewResult | null> {
+  const wsObj = getCurrent()
+  if (!wsObj) return null
+  const conn = wsObj.connection
+  const activeTech: Technology = await workspaceTechnology(conn)
+
+  const activeGrain = opts?.grain ?? 'weekly'
+  const healthSeries = await computeNetworkHealth(conn, activeGrain)
+  const curHealth = healthSeries[healthSeries.length - 1]
+  const prevHealth = healthSeries.length > 1 ? healthSeries[healthSeries.length - 2] : null
+
+  const overallHealthScore = curHealth ? curHealth.score : 85
+  const overallHealthDelta = curHealth && prevHealth ? Math.round((curHealth.score - prevHealth.score) * 10) / 10 : null
+
+  // Latest week start
+  const latestWkR = await conn.runAndReadAll(
+    `SELECT CAST(max(week_start) AS VARCHAR) AS max_wk FROM agg_cell_weekly`
+  )
+  const latestWk = latestWkR.getRowObjects()[0]?.max_wk ? String(latestWkR.getRowObjects()[0].max_wk) : null
+  const asOf = latestWk ?? new Date().toISOString().slice(0, 10)
+
+  // Get active rules & KPI definitions
+  const allKpiDefs = await listKpiDefs(conn)
+
+  // Query cell lifecycle counts for Chronic / Persistent / Critical
+  const lifeCountsR = await conn.runAndReadAll(`
+    SELECT
+      count(*) FILTER (WHERE lifecycle = 'Chronic NC') AS chronic_count,
+      count(*) FILTER (WHERE lifecycle = 'Persistent NC') AS persistent_count,
+      count(*) FILTER (WHERE severity = 'Critical') AS critical_count
+    FROM cell_nc_lifecycle
+    WHERE grain = 'weekly' AND ruleset_version = (SELECT max(version) FROM ruleset)
+      AND period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+  `)
+  const lifeCounts = lifeCountsR.getRowObjects()[0] ?? {}
+  const chronicCellCount = Number(lifeCounts.chronic_count ?? 0)
+  const persistentCellCount = Number(lifeCounts.persistent_count ?? 0)
+  const criticalCellCount = Number(lifeCounts.critical_count ?? 0)
+
+  // Degrading districts
+  const distR = await conn.runAndReadAll(`
+    SELECT d.name, avg(w.prb_avg) AS avg_prb
+    FROM agg_cell_weekly w
+    JOIN dim_cell c ON c.cell_id = w.cell_id
+    JOIN dim_district d ON d.district_id = c.district_id
+    WHERE w.week_start = (SELECT max(week_start) FROM agg_cell_weekly) AND w.is_nc
+    GROUP BY d.name
+    ORDER BY count(*) DESC
+    LIMIT 3
+  `)
+  const degradingDistricts = distR.getRowObjects().map((r) => String(r.name))
+
+  // Total cell count in latest week
+  const totalCellsR = await conn.runAndReadAll(`
+    SELECT count(DISTINCT cell_id) AS total_cells FROM agg_cell_weekly
+    WHERE week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+  `)
+  const totalObservedCells = Math.max(1, Number(totalCellsR.getRowObjects()[0]?.total_cells ?? 1))
+
+  // Helper to build Dynamic KPI card data
+  const buildKpiCard = async (def: KpiDefinition): Promise<DynamicKpiCardData> => {
+    let curVal: number | null = null
+    let prevVal: number | null = null
+    const sparkline: number[] = []
+    let ncCellCount = 0
+
+    const isDerived = Boolean(
+      def.isDerived ||
+      def.key.startsWith('3g_') ||
+      def.key.includes('congestion') ||
+      def.key === '3g_dl_power_congestion' ||
+      def.key === '3g_ul_ce_congestion' ||
+      def.key === '3g_phych_failures'
+    )
+
+    if (def.key === 'prb_utilization') {
+      const r = await conn.runAndReadAll(`
+        SELECT period_start, prb_avg FROM agg_network_weekly
+        ORDER BY period_start DESC LIMIT 8
+      `)
+      const rows = r.getRowObjects().reverse()
+      for (const row of rows) {
+        if (row.prb_avg != null) sparkline.push(Math.round(Number(row.prb_avg) * 10) / 10)
+      }
+      if (sparkline.length > 0) curVal = sparkline[sparkline.length - 1]
+      if (sparkline.length > 1) prevVal = sparkline[sparkline.length - 2]
+
+      const ncR = await conn.runAndReadAll(`
+        SELECT count(DISTINCT cell_id) AS nc_count
+        FROM agg_cell_weekly
+        WHERE week_start = (SELECT max(week_start) FROM agg_cell_weekly) AND is_nc
+      `)
+      ncCellCount = Number(ncR.getRowObjects()[0]?.nc_count ?? 0)
+    } else {
+      const numKpiId = Number(def.kpiId)
+      const r = await conn.runAndReadAll(`
+        SELECT d.week_start, avg(w.avg_value) AS avg_val
+        FROM agg_cell_kpi_weekly w
+        JOIN dim_date d ON d.week_start = w.week_start
+        WHERE w.kpi_id = ${numKpiId}
+        GROUP BY d.week_start
+        ORDER BY d.week_start DESC LIMIT 8
+      `)
+      const rows = r.getRowObjects().reverse()
+      for (const row of rows) {
+        if (row.avg_val != null) sparkline.push(Math.round(Number(row.avg_val) * 100) / 100)
+      }
+      if (sparkline.length > 0) curVal = sparkline[sparkline.length - 1]
+      if (sparkline.length > 1) prevVal = sparkline[sparkline.length - 2]
+
+      if (def.target != null) {
+        const breachCond = def.worseIsHigher ? `w.avg_value > ${Number(def.target)}` : `w.avg_value < ${Number(def.target)}`
+        const ncR = await conn.runAndReadAll(`
+          SELECT count(DISTINCT w.cell_id) AS nc_count
+          FROM agg_cell_kpi_weekly w
+          WHERE w.kpi_id = ${numKpiId}
+            AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly WHERE kpi_id = ${numKpiId})
+            AND ${breachCond}
+        `)
+        ncCellCount = Number(ncR.getRowObjects()[0]?.nc_count ?? 0)
+      }
+    }
+
+    let delta: number | null = null
+    let deltaPct: number | null = null
+    if (curVal != null && prevVal != null) {
+      delta = Math.round((curVal - prevVal) * 100) / 100
+      if (prevVal !== 0) deltaPct = Math.round(((curVal - prevVal) / Math.abs(prevVal)) * 1000) / 10
+    }
+
+    const isBreached = curVal != null && def.target != null
+      ? (def.betterDirection === 'lower_is_better' ? curVal > def.target : curVal < def.target)
+      : false
+
+    let complianceStatus: 'compliant' | 'warning' | 'non_compliant' | 'unavailable' = 'unavailable'
+    if (curVal == null) {
+      complianceStatus = 'unavailable'
+    } else if (def.target == null) {
+      complianceStatus = 'compliant'
+    } else if (!isBreached) {
+      complianceStatus = 'compliant'
+    } else {
+      if (def.criticalThreshold != null && (def.worseIsHigher ? curVal >= def.criticalThreshold : curVal <= def.criticalThreshold)) {
+        complianceStatus = 'non_compliant'
+      } else if (def.warningThreshold != null && (def.worseIsHigher ? curVal >= def.warningThreshold : curVal <= def.warningThreshold)) {
+        complianceStatus = 'warning'
+      } else {
+        complianceStatus = 'non_compliant'
+      }
+    }
+
+    let trend: 'improving' | 'worsening' | 'stable' | 'unknown' = 'unknown'
+    if (delta == null || Math.abs(delta) < 0.001) {
+      trend = 'stable'
+    } else if (def.key === 'prb_utilization' || def.key.includes('prb')) {
+      const warnLevel = def.warningThreshold ?? (def.target != null ? def.target * 0.88 : 70)
+      if (curVal != null && curVal >= warnLevel) {
+        trend = delta > 0 ? 'worsening' : 'improving'
+      } else {
+        // Safe PRB levels: increasing utilization is normal network usage/growth, not worsening
+        trend = 'stable'
+      }
+    } else if (def.worseIsHigher) {
+      trend = delta > 0 ? 'worsening' : 'improving'
+    } else {
+      trend = delta > 0 ? 'improving' : 'worsening'
+    }
+
+    const formattedValue = curVal != null ? `${curVal}${def.unit ? ` ${def.unit}` : ''}` : 'Data unavailable'
+    const ncPct = totalObservedCells > 0 ? Math.round((ncCellCount / totalObservedCells) * 1000) / 10 : 0
+
+    return {
+      kpiId: def.kpiId,
+      key: def.key,
+      label: def.label,
+      unit: def.unit,
+      technology: def.technology,
+      category: def.category,
+      isCore: def.isCore,
+      isDerived,
+      currentValue: curVal,
+      previousValue: prevVal,
+      formattedValue,
+      target: def.target,
+      warningThreshold: def.warningThreshold,
+      criticalThreshold: def.criticalThreshold,
+      betterDirection: def.betterDirection,
+      worseIsHigher: def.worseIsHigher,
+      complianceStatus,
+      trend,
+      delta,
+      deltaPct,
+      nonCompliantCellCount: ncCellCount,
+      nonCompliantCellPct: ncPct,
+      persistentNcCount: Math.min(ncCellCount, persistentCellCount),
+      sparkline,
+      isBreached
+    }
+  }
+
+  // Build Tech Cards for 2G, 3G, 4G
+  const techs: Technology[] = ['2G', '3G', '4G']
+  const techCards: TechHealthCard[] = []
+
+  for (const tech of techs) {
+    const techDefs = allKpiDefs.filter((k) => k.technology === tech)
+    const cards: DynamicKpiCardData[] = []
+    for (const d of techDefs) {
+      const card = await buildKpiCard(d)
+      cards.push(card)
+    }
+
+    // Filter and prioritize cards: Core -> Enabled Derived -> Other with data
+    const coreCards = cards.filter((c) => c.isCore)
+    const derivedCards = cards.filter((c) => !c.isCore && c.isDerived)
+    const otherCardsWithData = cards.filter((c) => !c.isCore && !c.isDerived && c.currentValue != null)
+
+    const availableKpiCards = [...coreCards, ...derivedCards, ...otherCardsWithData]
+    const primaryKpis = coreCards.length > 0 ? coreCards : availableKpiCards.slice(0, 4)
+
+    // Cell counts and compliance
+    const techCellsR = await conn.runAndReadAll(`
+      SELECT
+        count(DISTINCT w.cell_id) AS cell_count,
+        count(DISTINCT w.cell_id) FILTER (WHERE w.is_nc) AS nc_count
+      FROM agg_cell_weekly w
+      WHERE w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+    `)
+    const techCellRow = techCellsR.getRowObjects()[0] ?? {}
+    const cellCount = Number(techCellRow.cell_count ?? 0)
+    const ncCellCount = Number(techCellRow.nc_count ?? 0)
+    const compliancePct = cellCount > 0 ? Math.round((1 - ncCellCount / cellCount) * 1000) / 10 : 100
+
+    const breachedCount = primaryKpis.filter((k) => k.isBreached).length
+    const techHealth = Math.round(Math.max(20, Math.min(100, compliancePct - breachedCount * 5)) * 10) / 10
+
+    techCards.push({
+      technology: tech,
+      healthScore: techHealth,
+      previousHealthScore: techHealth,
+      healthDelta: 0,
+      cellCount,
+      ncCellCount,
+      compliancePct,
+      primaryKpis,
+      availableKpiCards
+    })
+  }
+
+  const activeTechCard = techCards.find((t) => t.technology === activeTech) ?? techCards[0]
+  const availableKpiCards = activeTechCard?.availableKpiCards ?? []
+
+  // Network cards (cross-tech)
+  const networkDefs = allKpiDefs.filter((k) => k.showInExecutiveView)
+  const networkKpiCards: DynamicKpiCardData[] = []
+  for (const d of networkDefs.slice(0, 8)) {
+    networkKpiCards.push(await buildKpiCard(d))
+  }
+
+  // Recommendations
+  const recs: string[] = []
+  if (chronicCellCount > 0) {
+    recs.push(`Prioritize physical site investigations for ${chronicCellCount} chronic non-compliant cells (7+ weeks breached).`)
+  }
+  if (degradingDistricts.length > 0) {
+    recs.push(`Focus capacity expansion and tilt optimization on top degraded districts: ${degradingDistricts.join(', ')}.`)
+  }
+  if (overallHealthScore < 80) {
+    recs.push('Schedule parameter optimization audit across high-congestion clusters.')
+  } else {
+    recs.push('Network QoS is currently stable across core indicators. Continue continuous KPI monitoring.')
+  }
+
+  const problemSummary: ExecutiveProblemSummary = {
+    topProblemCategory: chronicCellCount > 0 ? 'Chronic Congestion' : 'Radio Quality',
+    criticalCellCount,
+    chronicCellCount,
+    persistentCellCount,
+    degradingDistricts,
+    keyRecommendations: recs
+  }
+
+  return {
+    asOf,
+    periodLabel: `Week of ${asOf}`,
+    overallHealthScore,
+    overallHealthDelta,
+    activeTechnology: activeTech,
+    technologies: techCards,
+    problemSummary,
+    availableKpiCards,
+    networkKpiCards
+  }
 }

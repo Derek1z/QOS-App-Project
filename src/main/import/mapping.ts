@@ -111,20 +111,61 @@ export const FIELDS: FieldDef[] = [
 ]
 
 
-/** Infer the source technology from its headers (BTS/NodeB/eNodeB/VoLTE
- *  vocabulary, KPI names). Returns null when no signal is found — the file is
- *  then treated under the workspace's own technology. */
-export function detectTechnology(headers: string[]): Technology | null {
-  const norm = headers.map(normalizeHeader).join(' ')
-  if (/\b(tch|sdcch|gprs|bts|cell id cgi)\b/.test(norm)) return '2G'
-  if (/\b(hsdpa|hsupa|rrc|nodeb|wcdma|umts|ce utilization)\b/.test(norm)) return '3G'
-  if (/\b(enodeb|enb|lte|e-utran|prb utilization|volte|mos|vqi|rtp jitter|ims)\b/.test(norm)) return '4G'
+/** Infer the source technology from its headers, filename, or sheet name.
+ *  Uses prioritized signals: Explicit Tech column -> Sheet/Filename -> KPI signatures. */
+export function detectTechnology(
+  headers: string[],
+  filename = '',
+  sampleRows: string[][] = []
+): Technology | null {
+  const normHeaders = headers.map(normalizeHeader)
+  const allHeadersStr = normHeaders.join(' ')
+  const normFile = normalizeHeader(filename)
+
+  // 1. Explicit Technology column inspection
+  const techColIdx = normHeaders.findIndex((h) =>
+    ['technology', 'tech', 'rat', 'system', 'network tech'].includes(h)
+  )
+  if (techColIdx >= 0 && sampleRows.length > 0) {
+    for (const row of sampleRows) {
+      const val = (row[techColIdx] ?? '').trim().toUpperCase()
+      if (/\b(2G|GSM)\b/.test(val)) return '2G'
+      if (/\b(3G|UMTS|WCDMA)\b/.test(val)) return '3G'
+      if (/\b(4G|LTE|VOLTE)\b/.test(val)) return '4G'
+    }
+  }
+
+  // 2. Sheet name / Filename signals
+  if (/\b(2g|gsm|bts)\b/.test(normFile)) return '2G'
+  if (/\b(3g|umts|wcdma|nodeb)\b/.test(normFile)) return '3G'
+  if (/\b(4g|lte|volte|enodeb)\b/.test(normFile)) return '4G'
+
+  // 3. KPI Signature matching (high confidence exact signatures)
+  let score2G = 0
+  let score3G = 0
+  let score4G = 0
+
+  if (/\b(tch|sdcch|gprs|bts|cell id cgi|tch congestion|sdcch congestion)\b/.test(allHeadersStr)) score2G += 3
+  if (/2g\s+(call|drop|cssr|cdr|congestion)/.test(allHeadersStr)) score2G += 4
+
+  if (/\b(hsdpa|hsupa|nodeb|wcdma|umts|ce utilization|channel element|dasr)\b/.test(allHeadersStr)) score3G += 3
+  if (/3g\s+(call|drop|cssr|cdr|data access)/.test(allHeadersStr)) score3G += 4
+  if (/rrc\s+(connection|setup|success)/.test(allHeadersStr)) score3G += 2
+
+  if (/\b(enodeb|enb|lte|e utran|prb utilization|prb utilisation|volte|mos|vqi|rtp jitter|ims|erab|e rab)\b/.test(allHeadersStr)) score4G += 3
+  if (/4g\s+(call|drop|cssr|cdr|prb|data service|traffic utilization)/.test(allHeadersStr)) score4G += 4
+
+  if (score2G > score3G && score2G > score4G) return '2G'
+  if (score3G > score2G && score3G > score4G) return '3G'
+  if (score4G > score2G && score4G > score3G) return '4G'
+
   return null
 }
 
 export function normalizeHeader(h: string): string {
   return h
     .toLowerCase()
+    .replace(/utilisation/g, 'utilization')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ')
@@ -167,15 +208,21 @@ export function autoMap(headers: string[]): Record<string, CanonicalField> {
   return mapping
 }
 
-export function mappingConfidence(mapping: Record<string, CanonicalField>, headers: string[]): number {
+export function mappingConfidence(
+  mapping: Record<string, CanonicalField>,
+  headers: string[],
+  kpiMapping: Record<string, string> = {}
+): number {
   const values = Object.values(mapping)
   const hasDate = values.includes('date')
   const hasCell = values.includes('cell')
   if (!hasDate || !hasCell) return 0.2
-  const kpis: CanonicalField[] = ['prb', 'users', 'volume', 'availability', 'throughput']
-  const mappedKpis = kpis.filter((k) => values.includes(k)).length
-  void headers
-  return Math.round((0.5 + 0.5 * (mappedKpis / kpis.length)) * 100) / 100
+
+  const mappedKpiCount = Object.keys(kpiMapping).length +
+    values.filter((v) => ['prb', 'users', 'volume', 'availability', 'throughput'].includes(v)).length
+
+  const score = 0.5 + Math.min(0.5, (mappedKpiCount / Math.max(3, headers.length - 2)) * 0.5)
+  return Math.round(score * 100) / 100
 }
 
 /** Fingerprint of a source file: normalized header order + sorted header set (spec §13). */

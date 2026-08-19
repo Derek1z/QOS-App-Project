@@ -1,12 +1,12 @@
 import type { EChartsOption, SeriesOption } from 'echarts'
-import type { InvestigationResult } from '../../../shared/api'
+import type { InvestigationResult, Grain } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
-import { weekLabel } from './overviewCharts'
+import { formatTimeLabel } from './overviewCharts'
 
 /** Actual-metrics strip (spec §33, §47): PRB / Throughput / Users / Volume /
- *  Availability on shared week axes, with the intervention week marked. */
-export function investigationChartOption(res: InvestigationResult, prbThreshold: number): EChartsOption {
-  const weeks = res.weeks.map((w) => weekLabel(w.weekStart))
+ *  Availability on shared axes, with the intervention period marked. */
+export function investigationChartOption(res: InvestigationResult, prbThreshold: number, grain: Grain = 'weekly'): EChartsOption {
+  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
   const grids = [0, 1, 2, 3, 4].map((i) => ({
     left: 64,
     right: 30,
@@ -16,7 +16,7 @@ export function investigationChartOption(res: InvestigationResult, prbThreshold:
   const xAxis = [0, 1, 2, 3, 4].map((i) => ({
     type: 'category' as const,
     gridIndex: i,
-    data: weeks,
+    data: timeLabels,
     axisLabel: i === 4 ? axisLabelStyle() : { show: false },
     axisLine: { lineStyle: { color: PALETTE.border } },
     axisTick: { show: i === 4 }
@@ -172,7 +172,7 @@ export function investigationChartOption(res: InvestigationResult, prbThreshold:
         })
         const state = w.isNc ? `${w.lifecycle ?? 'NC'}` : w.lifecycle ?? 'OK'
         return [
-          `<b>${w.weekStart} (${weeks[idx]})</b>`,
+          `<b>${w.weekStart} (${timeLabels[idx]})</b>`,
           `State: ${state}`,
           ...lines
         ].join('<br/>')

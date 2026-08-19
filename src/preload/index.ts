@@ -3,7 +3,7 @@ import type {
   ActionStatus, Api, CompareMetric, CompareScope, ComparisonType, CreateSnapshotOpts,
   ExplorerLevel, ForecastOpts, HealthScope, ImportProgress, InvestigationScope, MaintenanceAction,
   MappingConfig, PriorityMode, PriorityCenterOpts, ReportChartConfig, ReportOpts, ReportSectionId, ReportType, RulesPatch,
-  KpiDefPatch, Technology
+  KpiDefPatch, Technology, Grain, PeriodId
 } from '../../shared/api'
 
 const api: Api = {
@@ -59,31 +59,37 @@ const api: Api = {
   },
   analytics: {
     summary: (opts) => ipcRenderer.invoke('analytics:summary', opts),
-    ncLifecycle: () => ipcRenderer.invoke('analytics:ncLifecycle'),
-    ncMovement: (limit?: number) => ipcRenderer.invoke('analytics:ncMovement', limit),
+    ncLifecycle: (grain) => ipcRenderer.invoke('analytics:ncLifecycle', grain),
+    ncMovement: (limit?: number, grain?: Grain) => ipcRenderer.invoke('analytics:ncMovement', limit, grain),
     priorityQueue: (mode: PriorityMode, limit?: number) =>
       ipcRenderer.invoke('analytics:priorityQueue', mode, limit),
     health: (grain) => ipcRenderer.invoke('analytics:health', grain),
-    kpiOverview: (limit?: number) => ipcRenderer.invoke('analytics:kpiOverview', limit),
+    kpiOverview: (limit?: number, grain?: Grain) => ipcRenderer.invoke('analytics:kpiOverview', limit, grain),
     healthMatrix: (
       scope: HealthScope,
       opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }
     ) => ipcRenderer.invoke('analytics:healthMatrix', scope, opts),
     cellIntelligence: (opts) => ipcRenderer.invoke('analytics:cellIntelligence', opts),
-    cellDetail: (cellId: number) => ipcRenderer.invoke('analytics:cellDetail', cellId),
-    performance: () => ipcRenderer.invoke('analytics:performance'),
+    cellDetail: (cellId: number, grain?: Grain) => ipcRenderer.invoke('analytics:cellDetail', cellId, grain),
+    performance: (opts?: { grain?: Grain; period?: PeriodId }) => ipcRenderer.invoke('analytics:performance', opts),
     comparison: (opts?: {
       type?: ComparisonType
       scope?: CompareScope
       metric?: CompareMetric
+      grain?: Grain
+      period?: PeriodId
     }) => ipcRenderer.invoke('analytics:comparison', opts),
     explorer: (level: ExplorerLevel, parentId?: number | null, opts?: { q?: string }) =>
       ipcRenderer.invoke('analytics:explorer', level, parentId, opts),
     priorityCenter: (opts?: PriorityCenterOpts) =>
       ipcRenderer.invoke('analytics:priorityCenter', opts),
     forecast: (opts?: ForecastOpts) => ipcRenderer.invoke('analytics:forecast', opts),
+    executiveOverview: (opts?: { period?: PeriodId; grain?: Grain }) => ipcRenderer.invoke('analytics:executiveOverview', opts),
     regionMap: () => ipcRenderer.invoke('analytics:regionMap'),
     regionDistricts: (regionId: number) => ipcRenderer.invoke('analytics:regionDistricts', regionId)
+  },
+  synthetic: {
+    generate: (config) => ipcRenderer.invoke('synthetic:generate', config)
   },
   rules: {
     get: () => ipcRenderer.invoke('rules:get'),
@@ -95,11 +101,18 @@ const api: Api = {
     remove: (kpiId: number) => ipcRenderer.invoke('kpis:remove', kpiId),
     discover: (headers: string[], technology?: Technology) =>
       ipcRenderer.invoke('kpis:discover', headers, technology),
-    seed: (technology?: Technology) => ipcRenderer.invoke('kpis:seed', technology)
+    seed: (technology?: Technology) => ipcRenderer.invoke('kpis:seed', technology),
+    resetDefaults: (technology?: Technology) => ipcRenderer.invoke('kpis:resetDefaults', technology)
+  },
+  derived: {
+    list: (technology?: Technology) => ipcRenderer.invoke('derived:list', technology),
+    save: (def) => ipcRenderer.invoke('derived:save', def),
+    detect: (headers: string[], technology?: Technology) =>
+      ipcRenderer.invoke('derived:detect', headers, technology)
   },
   investigation: {
     search: (scope: InvestigationScope, q?: string) => ipcRenderer.invoke('investigation:search', scope, q),
-    get: (scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string }) =>
+    get: (scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }) =>
       ipcRenderer.invoke('investigation:get', scope, entityId, opts),
     setStatus: (
       scope: InvestigationScope,

@@ -4,7 +4,7 @@ import { useAppStore } from '../store'
 import type { CorrelationRow, MetricDistribution, PerformanceResult, PerfMetric } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { distributionOption, scatterOption, formatMetric, QUADRANTS } from '../lib/perfCharts'
-import { weekLabel } from '../lib/overviewCharts'
+import { formatTimeLabel } from '../lib/overviewCharts'
 
 const METRIC_OPTIONS: Array<{ id: PerfMetric; label: string }> = [
   { id: 'prb', label: 'PRB utilization' },
@@ -43,6 +43,8 @@ function Stat({ label, value }: { label: string; value: string }): React.JSX.Ele
 
 export default function PerformanceAnalysis(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
+  const period = useAppStore((s) => s.period)
   const [result, setResult] = useState<PerformanceResult | null>(null)
   const [metric, setMetric] = useState<PerfMetric>('prb')
   const [loading, setLoading] = useState(true)
@@ -54,7 +56,7 @@ export default function PerformanceAnalysis(): React.JSX.Element {
     setError(null)
     void (async () => {
       try {
-        const p = await window.api.analytics.performance()
+        const p = await window.api.analytics.performance({ grain, period })
         if (alive) setResult(p)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
@@ -65,7 +67,7 @@ export default function PerformanceAnalysis(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly])
+  }, [workspace?.path, workspace?.readOnly, grain, period])
 
   const dist: MetricDistribution | null = useMemo(
     () => result?.distributions.find((d) => d.metric === metric) ?? null,
@@ -102,7 +104,7 @@ export default function PerformanceAnalysis(): React.JSX.Element {
         <span className="module-workspace">{workspace?.name}</span>
         {result && (
           <span className="module-workspace">
-            {result.totalCells.toLocaleString()} cells · week {result.weekStart} ({weekLabel(result.weekStart)})
+            {result.totalCells.toLocaleString()} cells · {formatTimeLabel(result.weekStart, grain)}
           </span>
         )}
       </div>
@@ -110,7 +112,7 @@ export default function PerformanceAnalysis(): React.JSX.Element {
       {error && <div className="notice notice-error">{error}</div>}
       {loading && !result && <div className="notice">Loading performance metrics…</div>}
       {!loading && !error && !result && (
-        <div className="notice">No weekly aggregates yet — import data first.</div>
+        <div className="notice">No aggregates yet — import data first.</div>
       )}
 
       {result && dist && (

@@ -5,8 +5,9 @@ import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
   getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
-  getRegionMap, getRegionDistricts, getKpiOverview
+  getRegionMap, getRegionDistricts, getKpiOverview, getExecutiveOverview
 } from './services/queryService'
+import { generateSyntheticMultiTechData } from './services/syntheticGenerator'
 import {
   searchEntities, getInvestigation, setInvestigationStatus, addInvestigationNote,
   exportInvestigationReport
@@ -18,7 +19,7 @@ import {
 import type {
   ActionStatus, CompareMetric, CompareScope, ComparisonType, ExplorerLevel, ForecastOpts,
   Grain, HealthScope, InvestigationScope, Lifecycle, PeriodId, PriorityMode, PriorityCenterOpts, ReportOpts,
-  ReportChartConfig, ReportSectionId, ReportType, RulesPatch, Severity, Trend
+  ReportChartConfig, ReportSectionId, ReportType, RulesPatch, Severity, Trend, SyntheticDataConfig
 } from '../../shared/api'
 import { dirs } from './paths'
 import {
@@ -34,12 +35,15 @@ import {
   getSchedule, setSchedule, runScheduled, scheduleHistory, maybeRunScheduled
 } from './services/maintenanceScheduler'
 import {
-  seedCurrent, listCurrent, saveCurrent, removeCurrent, discoverCurrent
+  seedCurrent, listCurrent, saveCurrent, removeCurrent, discoverCurrent, resetCurrent
 } from './services/kpiService'
+import {
+  listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
+} from './services/derivedKpiService'
 import { lockPath } from './workspace/lock'
 import { existsSync, readFileSync } from 'node:fs'
 import type {
-  CreateSnapshotOpts, MaintenanceAction, MappingConfig, KpiDefPatch, Technology
+  CreateSnapshotOpts, MaintenanceAction, MappingConfig, KpiDefPatch, Technology, DerivedKPI
 } from '../../shared/api'
 
 export const WORKSPACE_CHANGED = 'workspace:changed'
@@ -110,17 +114,33 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('kpis:discover', (_e, headers: string[], technology?: Technology) =>
     discoverCurrent(headers, technology))
   ipcMain.handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
+  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetCurrent(technology))
+
+  ipcMain.handle('derived:list', (_e, technology?: Technology) => {
+    const w = ws.getCurrent()
+    if (!w) return []
+    return listDerivedKpis(w.connection, technology)
+  })
+  ipcMain.handle('derived:save', (_e, def: DerivedKPI) => {
+    const w = ws.getCurrent()
+    if (!w) throw new Error('No workspace is open')
+    return saveDerivedKpi(w.connection, def)
+  })
+  ipcMain.handle('derived:detect', (_e, headers: string[], technology?: Technology) =>
+    detectDerivedKpiSuggestions(headers, technology))
 
   ipcMain.handle('analytics:summary', (_e, opts?: { period?: string; grain?: string }) =>
     getSummary(opts as { period?: PeriodId; grain?: Grain } | undefined))
-  ipcMain.handle('analytics:ncLifecycle', () => getNcLifecycle())
-  ipcMain.handle('analytics:ncMovement', (_e, limit?: number) => getNcMovement(limit))
+  ipcMain.handle('analytics:executiveOverview', (_e, opts?: { period?: PeriodId; grain?: Grain }) => getExecutiveOverview(opts))
+  ipcMain.handle('synthetic:generate', (_e, config?: SyntheticDataConfig) => generateSyntheticMultiTechData(config))
+  ipcMain.handle('analytics:ncLifecycle', (_e, grain?: string) => getNcLifecycle((grain as Grain) ?? 'weekly'))
+  ipcMain.handle('analytics:ncMovement', (_e, limit?: number, grain?: string) => getNcMovement(limit, (grain as Grain) ?? 'weekly'))
   ipcMain.handle('analytics:priorityQueue', (_e, mode: PriorityMode, limit?: number) =>
     getPriorityQueue(mode, limit)
   )
   ipcMain.handle('analytics:health', (_e, grain?: string) =>
     getHealth((grain as Grain) ?? 'weekly'))
-  ipcMain.handle('analytics:kpiOverview', (_e, limit?: number) => getKpiOverview(limit))
+  ipcMain.handle('analytics:kpiOverview', (_e, limit?: number, grain?: string) => getKpiOverview(limit, (grain as Grain) ?? 'weekly'))
   ipcMain.handle(
     'analytics:healthMatrix',
     (_e, scope: HealthScope, opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }) =>
@@ -138,11 +158,11 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       offset?: number
     }) => getCellIntelligence(opts)
   )
-  ipcMain.handle('analytics:cellDetail', (_e, cellId: number) => getCellDetail(cellId))
-  ipcMain.handle('analytics:performance', () => getPerformance())
+  ipcMain.handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain) => getCellDetail(cellId, grain))
+  ipcMain.handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId }) => getPerformance(opts))
   ipcMain.handle(
     'analytics:comparison',
-    (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric }) =>
+    (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric; grain?: Grain; period?: PeriodId }) =>
       getComparison(opts)
   )
   ipcMain.handle(
@@ -158,7 +178,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('investigation:search', (_e, scope: InvestigationScope, q?: string) => searchEntities(scope, q))
   ipcMain.handle(
     'investigation:get',
-    (_e, scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string }) =>
+    (_e, scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }) =>
       getInvestigation(scope, entityId, opts)
   )
   ipcMain.handle(

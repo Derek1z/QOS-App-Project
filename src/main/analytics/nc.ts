@@ -77,6 +77,9 @@ function classifySeverity(
     case 'Persistent NC':
       score += 80
       break
+    case 'Chronic NC':
+      score += 90
+      break
     default:
       score += 40
   }
@@ -95,99 +98,195 @@ function classifySeverity(
 }
 
 /** Recompute lifecycle/trend/severity for the given cells across their full
- *  weekly history (chains need prior weeks, so per-cell full recompute is the
- *  correct incremental unit). */
+ *  weekly, daily, and monthly history. Vectorized in DuckDB SQL for blazing performance. */
 export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: number[]): Promise<void> {
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
   const idList = cellIds.join(',')
 
-  const r = await conn.runAndReadAll(`
-    SELECT w.cell_id, CAST(w.week_start AS VARCHAR) AS week_start,
-      w.is_nc, CAST(w.breach_days AS DOUBLE) AS breach_days,
-      CAST(w.observed_days AS DOUBLE) AS observed_days,
-      w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
-      w.dl_throughput_kbps_avg, w.availability_pct_avg
-    FROM agg_cell_weekly w
-    WHERE w.cell_id IN (${idList})
-    ORDER BY w.cell_id, w.week_start
-  `)
-  const rows = r.getRowObjects()
-
   await conn.run(`DELETE FROM cell_nc_lifecycle WHERE cell_id IN (${idList})`)
-  if (rows.length === 0) return
 
-  const inserts: string[] = []
-  const params: DuckDBValue[] = []
-  let curCell = -1
-  let prev: WeekRow | null = null
-  let streak = 0
-  let prevNc = false
+  const chronicWeeks = rules.chronicWeeks ?? 7
+  const persistentWeeks = rules.persistentWeeks ?? 4
+  const prbThresh = rules.prbThresholdPct ?? 80
 
-  const flushPrev = (): void => {
-    prev = null
-    streak = 0
-    prevNc = false
-  }
-
-  const buildWeekRow = (x: Record<string, unknown>): WeekRow => ({
-    cellId: Number(x.cell_id),
-    weekStart: String(x.week_start),
-    isNc: Boolean(x.is_nc),
-    breachDays: Number(x.breach_days ?? 0),
-    observedDays: Number(x.observed_days ?? 0),
-    prbAvg: x.prb_avg == null ? null : Number(x.prb_avg),
-    prbPeak: x.prb_peak == null ? null : Number(x.prb_peak),
-    volume: x.data_volume_mb_sum == null ? null : Number(x.data_volume_mb_sum),
-    users: x.connected_users_sum == null ? null : Number(x.connected_users_sum),
-    throughput: x.dl_throughput_kbps_avg == null ? null : Number(x.dl_throughput_kbps_avg),
-    availability: x.availability_pct_avg == null ? null : Number(x.availability_pct_avg)
-  })
-
-  for (const x of rows) {
-    const w = buildWeekRow(x)
-    if (w.cellId !== curCell) {
-      flushPrev()
-      curCell = w.cellId
+  const grains: Array<{
+    grain: 'weekly' | 'daily' | 'monthly'
+    fromSql: string
+    obsDaysSql: string
+    breachDaysSql: string
+    chronicThresh: number
+    persistentThresh: number
+  }> = [
+    {
+      grain: 'weekly',
+      fromSql: `
+        SELECT w.cell_id, w.week_start AS period_date, w.is_nc,
+               CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
+               CAST(coalesce(w.observed_days, 1) AS DOUBLE) AS observed_days,
+               w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
+               w.dl_throughput_kbps_avg, w.availability_pct_avg
+        FROM agg_cell_weekly w
+        WHERE w.cell_id IN (${idList})
+      `,
+      obsDaysSql: 'CAST(coalesce(w.observed_days, 1) AS DOUBLE)',
+      breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
+      chronicThresh: chronicWeeks,
+      persistentThresh: persistentWeeks
+    },
+    {
+      grain: 'daily',
+      fromSql: `
+        SELECT f.cell_id, d.date AS period_date,
+               (f.prb_utilization >= ${prbThresh}) AS is_nc,
+               CAST(CASE WHEN f.prb_utilization >= ${prbThresh} THEN 1 ELSE 0 END AS DOUBLE) AS breach_days,
+               1.0 AS observed_days,
+               f.prb_utilization AS prb_avg,
+               f.prb_utilization AS prb_peak,
+               f.data_volume_mb AS data_volume_mb_sum,
+               f.connected_users AS connected_users_sum,
+               f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+               f.availability_pct AS availability_pct_avg
+        FROM fact_cell_daily f
+        JOIN dim_date d USING (date_id)
+        WHERE f.cell_id IN (${idList})
+      `,
+      obsDaysSql: '1.0',
+      breachDaysSql: 'w.breach_days',
+      chronicThresh: Math.max(14, chronicWeeks * 7),
+      persistentThresh: Math.max(7, persistentWeeks * 7)
+    },
+    {
+      grain: 'monthly',
+      fromSql: `
+        SELECT w.cell_id, w.month_start AS period_date, w.is_nc,
+               CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
+               CAST(coalesce(w.observed_days, 30) AS DOUBLE) AS observed_days,
+               w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
+               w.dl_throughput_kbps_avg, w.availability_pct_avg
+        FROM agg_cell_monthly w
+        WHERE w.cell_id IN (${idList})
+      `,
+      obsDaysSql: 'CAST(coalesce(w.observed_days, 30) AS DOUBLE)',
+      breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
+      chronicThresh: Math.max(2, Math.round(chronicWeeks / 4)),
+      persistentThresh: Math.max(2, Math.round(persistentWeeks / 4))
     }
-    if (w.isNc) streak++
-    else streak = 0
+  ]
 
-    let lifecycle: Lifecycle
-    if (w.isNc) {
-      if (streak >= rules.persistentWeeks) lifecycle = 'Persistent NC'
-      else if (streak === 1) lifecycle = 'New NC'
-      else lifecycle = 'Recurring NC'
-    } else if (prevNc) {
-      lifecycle = 'Recovering'
-    } else {
-      lifecycle = 'Healthy'
-    }
-
-    const trend = classifyTrend(prev, w)
-    const severity = classifySeverity(w, lifecycle, trend, rules)
-
-    inserts.push(
-      `(${w.cellId}, ?, 'weekly', ${rules.version}, ${w.isNc ? 'true' : 'false'}, ` +
-        `?, ?, ?, ${w.breachDays}, ?, now())`
-    )
-    params.push(w.weekStart, lifecycle, trend, severity, w.prbAvg)
-
-    prev = w
-    prevNc = w.isNc
-  }
-
-  // batch insert in chunks (DuckDB statement size limits)
-  for (let i = 0; i < inserts.length; i += 500) {
-    const chunk = inserts.slice(i, i + 500)
-    const chunkParams = params.slice(i * 5, (i + 500) * 5)
-    await conn.run(
-      `INSERT INTO cell_nc_lifecycle
-         (cell_id, period_start, grain, ruleset_version, is_nc, lifecycle, trend, severity,
-          breach_days, prb_avg, computed_at)
-       VALUES ${chunk.join(', ')}`,
-      chunkParams
-    )
+  for (const g of grains) {
+    await conn.run(`
+      WITH raw_data AS (
+        ${g.fromSql}
+      ),
+      base AS (
+        SELECT w.cell_id, w.period_date, w.is_nc,
+               ${g.breachDaysSql} AS breach_days,
+               ${g.obsDaysSql} AS observed_days,
+               w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
+               w.dl_throughput_kbps_avg, w.availability_pct_avg,
+               lag(w.is_nc) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_is_nc,
+               lag(w.prb_avg) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_prb,
+               lag(${g.breachDaysSql}) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_breach,
+               lag(w.dl_throughput_kbps_avg) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_thrpt,
+               lag(w.data_volume_mb_sum / NULLIF(${g.obsDaysSql}, 0)) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_vol_per_day,
+               lag(w.connected_users_sum / NULLIF(${g.obsDaysSql}, 0)) OVER (PARTITION BY w.cell_id ORDER BY w.period_date) AS prev_users_per_day,
+               w.data_volume_mb_sum / NULLIF(${g.obsDaysSql}, 0) AS cur_vol_per_day,
+               w.connected_users_sum / NULLIF(${g.obsDaysSql}, 0) AS cur_users_per_day
+        FROM raw_data w
+      ),
+      groups AS (
+        SELECT b.*,
+               sum(CASE WHEN is_nc THEN 0 ELSE 1 END) OVER (PARTITION BY cell_id ORDER BY period_date) AS grp
+        FROM base b
+      ),
+      streaks AS (
+        SELECT g.*,
+               CASE WHEN is_nc THEN row_number() OVER (PARTITION BY cell_id, grp ORDER BY period_date) ELSE 0 END AS streak
+        FROM groups g
+      ),
+      classified AS (
+        SELECT s.cell_id, s.period_date, s.is_nc, s.breach_days, s.prb_avg,
+               CASE
+                 WHEN s.is_nc THEN
+                   CASE
+                     WHEN s.streak >= ${g.chronicThresh} THEN 'Chronic NC'
+                     WHEN s.streak >= ${g.persistentThresh} THEN 'Persistent NC'
+                     WHEN s.streak = 1 THEN 'New NC'
+                     ELSE 'Recurring NC'
+                   END
+                 WHEN s.prev_is_nc IS TRUE THEN 'Recovering'
+                 ELSE 'Healthy'
+               END AS lifecycle,
+               CASE
+                 WHEN s.prev_is_nc IS NULL AND s.prev_prb IS NULL THEN 'Stable'
+                 ELSE
+                   CASE
+                     WHEN (
+                       (CASE WHEN (coalesce(s.prb_avg, 0) - coalesce(s.prev_prb, 0)) <= -3 THEN 1 ELSE 0 END) +
+                       (CASE WHEN (s.breach_days - coalesce(s.prev_breach, 0)) <= -1 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_thrpt IS NOT NULL AND s.prev_thrpt > 0 AND ((s.dl_throughput_kbps_avg - s.prev_thrpt) / s.prev_thrpt) * 100 >= 10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_vol_per_day IS NOT NULL AND s.prev_vol_per_day > 0 AND ((s.cur_vol_per_day - s.prev_vol_per_day) / s.prev_vol_per_day) * 100 <= -10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_users_per_day IS NOT NULL AND s.prev_users_per_day > 0 AND ((s.cur_users_per_day - s.prev_users_per_day) / s.prev_users_per_day) * 100 <= -10 THEN 1 ELSE 0 END)
+                     ) - (
+                       (CASE WHEN (coalesce(s.prb_avg, 0) - coalesce(s.prev_prb, 0)) >= 3 THEN 1 ELSE 0 END) +
+                       (CASE WHEN (s.breach_days - coalesce(s.prev_breach, 0)) >= 1 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_thrpt IS NOT NULL AND s.prev_thrpt > 0 AND ((s.dl_throughput_kbps_avg - s.prev_thrpt) / s.prev_thrpt) * 100 <= -10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_vol_per_day IS NOT NULL AND s.prev_vol_per_day > 0 AND ((s.cur_vol_per_day - s.prev_vol_per_day) / s.prev_vol_per_day) * 100 >= 10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_users_per_day IS NOT NULL AND s.prev_users_per_day > 0 AND ((s.cur_users_per_day - s.prev_users_per_day) / s.prev_users_per_day) * 100 >= 10 THEN 1 ELSE 0 END)
+                     ) >= 2 THEN 'Improving'
+                     WHEN (
+                       (CASE WHEN (coalesce(s.prb_avg, 0) - coalesce(s.prev_prb, 0)) <= -3 THEN 1 ELSE 0 END) +
+                       (CASE WHEN (s.breach_days - coalesce(s.prev_breach, 0)) <= -1 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_thrpt IS NOT NULL AND s.prev_thrpt > 0 AND ((s.dl_throughput_kbps_avg - s.prev_thrpt) / s.prev_thrpt) * 100 >= 10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_vol_per_day IS NOT NULL AND s.prev_vol_per_day > 0 AND ((s.cur_vol_per_day - s.prev_vol_per_day) / s.prev_vol_per_day) * 100 <= -10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_users_per_day IS NOT NULL AND s.prev_users_per_day > 0 AND ((s.cur_users_per_day - s.prev_users_per_day) / s.prev_users_per_day) * 100 <= -10 THEN 1 ELSE 0 END)
+                     ) - (
+                       (CASE WHEN (coalesce(s.prb_avg, 0) - coalesce(s.prev_prb, 0)) >= 3 THEN 1 ELSE 0 END) +
+                       (CASE WHEN (s.breach_days - coalesce(s.prev_breach, 0)) >= 1 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_thrpt IS NOT NULL AND s.prev_thrpt > 0 AND ((s.dl_throughput_kbps_avg - s.prev_thrpt) / s.prev_thrpt) * 100 <= -10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_vol_per_day IS NOT NULL AND s.prev_vol_per_day > 0 AND ((s.cur_vol_per_day - s.prev_vol_per_day) / s.prev_vol_per_day) * 100 >= 10 THEN 1 ELSE 0 END) +
+                       (CASE WHEN s.prev_users_per_day IS NOT NULL AND s.prev_users_per_day > 0 AND ((s.cur_users_per_day - s.prev_users_per_day) / s.prev_users_per_day) * 100 >= 10 THEN 1 ELSE 0 END)
+                     ) <= -2 THEN 'Worsening'
+                     ELSE 'Stable'
+                   END
+               END AS trend,
+               s.availability_pct_avg
+        FROM streaks s
+      )
+      INSERT INTO cell_nc_lifecycle
+        (cell_id, period_start, grain, ruleset_version, is_nc, lifecycle, trend, severity, breach_days, prb_avg, computed_at)
+      SELECT cell_id, CAST(period_date AS VARCHAR), '${g.grain}', ${rules.version}, is_nc, lifecycle, trend,
+             CASE
+               WHEN NOT is_nc THEN 'Normal'
+               ELSE
+                 CASE
+                   WHEN (
+                     (CASE lifecycle WHEN 'New NC' THEN 40 WHEN 'Recurring NC' THEN 60 WHEN 'Persistent NC' THEN 80 WHEN 'Chronic NC' THEN 90 ELSE 40 END) +
+                     (CASE WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 20 THEN 25
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 10 THEN 15
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 5 THEN 10
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 0 THEN 5 ELSE 0 END) +
+                     LEAST(15, breach_days * 2) +
+                     (CASE WHEN trend = 'Worsening' THEN 10 ELSE 0 END) +
+                     (CASE WHEN availability_pct_avg IS NOT NULL AND availability_pct_avg < 99 THEN 5 ELSE 0 END)
+                   ) >= 75 THEN 'Critical'
+                   WHEN (
+                     (CASE lifecycle WHEN 'New NC' THEN 40 WHEN 'Recurring NC' THEN 60 WHEN 'Persistent NC' THEN 80 WHEN 'Chronic NC' THEN 90 ELSE 40 END) +
+                     (CASE WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 20 THEN 25
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 10 THEN 15
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 5 THEN 10
+                           WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 0 THEN 5 ELSE 0 END) +
+                     LEAST(15, breach_days * 2) +
+                     (CASE WHEN trend = 'Worsening' THEN 10 ELSE 0 END) +
+                     (CASE WHEN availability_pct_avg IS NOT NULL AND availability_pct_avg < 99 THEN 5 ELSE 0 END)
+                   ) >= 45 THEN 'High'
+                   ELSE 'Watch'
+                 END
+             END AS severity,
+             breach_days, prb_avg, now()
+      FROM classified
+    `)
   }
 }

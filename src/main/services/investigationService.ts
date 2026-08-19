@@ -5,10 +5,12 @@ import { getCurrent } from '../workspace/manager'
 import { getRules } from '../analytics/rules'
 import type {
   InvestigationScope, InvestigationResult, InvestigationStatus, EvidenceKpi,
-  DiagnosisFinding, Hypothesis, InvestigationEvent, BeforeAfterMetric,
+  DiagnosisFinding, Hypothesis, DiagnosticHypothesis, InvestigationEvent, BeforeAfterMetric,
   InvestigationWeek, InvestigationPeer, EntityOption, ActionStatus, PerfMetric,
-  Lifecycle, Trend, Severity, PriorityBand
+  Lifecycle, Trend, Severity, PriorityBand, Technology, Grain, PeriodId
 } from '../../../shared/api'
+import { runDiagnosticEngine } from '../analytics/investigation/engine'
+import type { DiagnosticContext } from '../analytics/investigation/types'
 
 /** M4 Investigation Workspace (spec §47–50): deterministic, evidence-based
  *  diagnosis with calibrated language; notes/events; before/after; report export.
@@ -55,6 +57,8 @@ function valueOf(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'): number
       return w.availability
     case 'nc':
       return w.isNc ? 1 : 0
+    default:
+      return null
   }
 }
 
@@ -62,40 +66,65 @@ function valueOf(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'): number
 export async function searchEntities(scope: InvestigationScope, q = ''): Promise<EntityOption[]> {
   const conn = ws().connection
   const query = q.trim()
-  const like = `%${query}%`
-  const base: Record<InvestigationScope, { select: string; from: string; where: string; params: number }> = {
-    cell: {
-      select: `c.cell_id AS id, c.name AS name, rg.name AS r, d.name AS d, s.name AS s`,
-      from: `dim_cell c
-             LEFT JOIN dim_site s ON s.site_id = c.site_id
-             LEFT JOIN dim_district d ON d.district_id = c.district_id
-             LEFT JOIN dim_region rg ON rg.region_id = c.region_id`,
-      where: `(c.name ILIKE ? OR COALESCE(s.name,'') ILIKE ? OR COALESCE(d.name,'') ILIKE ? OR COALESCE(rg.name,'') ILIKE ?)`,
-      params: 4
-    },
+  const escQ = query ? query.trim().replace(/'/g, "''") : ''
+
+  if (scope === 'cell') {
+    const whereClause = escQ
+      ? `WHERE (c.name ILIKE '%${escQ}%' OR COALESCE(s.name,'') ILIKE '%${escQ}%' OR COALESCE(d.name,'') ILIKE '%${escQ}%' OR COALESCE(rg.name,'') ILIKE '%${escQ}%')`
+      : ''
+    const r = await conn.runAndReadAll(
+      `SELECT c.cell_id AS id, c.name AS name, rg.name AS r, d.name AS d, s.name AS s,
+              l.severity AS severity, l.lifecycle AS lifecycle, COALESCE(p.score, 0) AS prio_score
+       FROM dim_cell c
+       LEFT JOIN dim_site s ON s.site_id = c.site_id
+       LEFT JOIN dim_district d ON d.district_id = c.district_id
+       LEFT JOIN dim_region rg ON rg.region_id = c.region_id
+       LEFT JOIN cell_nc_lifecycle l ON l.cell_id = c.cell_id AND l.grain = 'weekly'
+         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+       LEFT JOIN cell_priority_history p ON p.cell_id = c.cell_id AND p.mode = 'balanced'
+         AND p.as_of = (SELECT max(as_of) FROM cell_priority_history)
+       ${whereClause}
+       ORDER BY
+         CASE l.severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Watch' THEN 3 ELSE 4 END,
+         CASE l.lifecycle WHEN 'Chronic NC' THEN 1 WHEN 'Persistent NC' THEN 2 WHEN 'Recurring NC' THEN 3 WHEN 'New NC' THEN 4 ELSE 5 END,
+         COALESCE(p.score, 0) DESC,
+         c.name
+       LIMIT 100`
+    )
+    return r.getRowObjects().map((x) => {
+      const path = [x.r, x.d, x.s].filter((v): v is string => v != null && v !== '')
+      path.push(String(x.name ?? ''))
+      return {
+        id: Number(x.id),
+        name: String(x.name ?? ''),
+        path,
+        severity: (x.severity as Severity) || undefined,
+        lifecycle: (x.lifecycle as Lifecycle) || undefined,
+        score: x.prio_score != null ? Number(x.prio_score) : undefined
+      }
+    })
+  }
+
+  const base: Record<'site' | 'district', { select: string; from: string; where: (esc: string) => string }> = {
     site: {
       select: `s.site_id AS id, s.name AS name, rg.name AS r, d.name AS d`,
       from: `dim_site s
              LEFT JOIN dim_district d ON d.district_id = s.district_id
              LEFT JOIN dim_region rg ON rg.region_id = d.region_id`,
-      where: `(s.name ILIKE ? OR COALESCE(d.name,'') ILIKE ? OR COALESCE(rg.name,'') ILIKE ?)`,
-      params: 3
+      where: (esc: string) => `(s.name ILIKE '%${esc}%' OR COALESCE(d.name,'') ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
     },
     district: {
       select: `d.district_id AS id, d.name AS name, rg.name AS r`,
       from: `dim_district d LEFT JOIN dim_region rg ON rg.region_id = d.region_id`,
-      where: `(d.name ILIKE ? OR COALESCE(rg.name,'') ILIKE ?)`,
-      params: 2
+      where: (esc: string) => `(d.name ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
     }
   }
   const b = base[scope]
-  const params = query ? Array(b.params).fill(like) : []
   const r = await conn.runAndReadAll(
-    `SELECT ${b.select} FROM ${b.from} ${query ? `WHERE ${b.where}` : ''} ORDER BY name LIMIT 50`,
-    params
+    `SELECT ${b.select} FROM ${b.from} ${escQ ? `WHERE ${b.where(escQ)}` : ''} ORDER BY name LIMIT 50`
   )
   return r.getRowObjects().map((x) => {
-    const path = [x.r, x.d, x.s].filter((v): v is string => v != null && v !== '')
+    const path = [x.r, x.d].filter((v): v is string => v != null && v !== '')
     path.push(String(x.name ?? ''))
     return { id: Number(x.id), name: String(x.name ?? ''), path }
   })
@@ -104,11 +133,15 @@ export async function searchEntities(scope: InvestigationScope, q = ''): Promise
 export async function getInvestigation(
   scope: InvestigationScope,
   entityId: number,
-  opts: { interventionWeek?: string } = {}
+  opts: { interventionWeek?: string; grain?: Grain; period?: PeriodId } = {}
 ): Promise<InvestigationResult | null> {
   const conn = ws().connection
   const rules = await getRules(conn)
   const threshold = rules?.prbThresholdPct ?? 80
+  const numEntityId = Number(entityId)
+  const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
+  const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
+  const dateCol = grain === 'daily' ? 'w.date' : grain === 'monthly' ? 'w.month_start' : 'w.week_start'
 
   // 1. identity + hierarchy path
   const dimSql: Record<InvestigationScope, string> = {
@@ -117,18 +150,18 @@ export async function getInvestigation(
            LEFT JOIN dim_site s ON s.site_id = c.site_id
            LEFT JOIN dim_district d ON d.district_id = c.district_id
            LEFT JOIN dim_region rg ON rg.region_id = c.region_id
-           WHERE c.cell_id = ?`,
+           WHERE c.cell_id = ${numEntityId}`,
     site: `SELECT s.name AS name, d.name AS d, rg.name AS r
            FROM dim_site s
            LEFT JOIN dim_district d ON d.district_id = s.district_id
            LEFT JOIN dim_region rg ON rg.region_id = d.region_id
-           WHERE s.site_id = ?`,
+           WHERE s.site_id = ${numEntityId}`,
     district: `SELECT d.name AS name, rg.name AS r
                FROM dim_district d
                LEFT JOIN dim_region rg ON rg.region_id = d.region_id
-               WHERE d.district_id = ?`
+               WHERE d.district_id = ${numEntityId}`
   }
-  const dimR = await conn.runAndReadAll(dimSql[scope], [entityId])
+  const dimR = await conn.runAndReadAll(dimSql[scope])
   const dim = dimR.getRowObjects()[0]
   if (!dim) return null
   const path = [dim.r, dim.d, dim.s].filter((v): v is string => v != null && v !== '')
@@ -136,26 +169,25 @@ export async function getInvestigation(
   const entityName = String(dim.name ?? '')
   const idCol = scope === 'cell' ? 'c.cell_id' : `c.${scope}_id`
   const join = scope === 'cell' ? '' : 'JOIN dim_cell c ON c.cell_id = w.cell_id'
-  const filter = scope === 'cell' ? 'w.cell_id = ?' : `c.${scope}_id = ?`
+  const filter = scope === 'cell' ? `w.cell_id = ${numEntityId}` : `c.${scope}_id = ${numEntityId}`
 
-  // 2. weekly series (site/district roll up from cell aggregates)
+  // 2. time series (site/district roll up from cell aggregates)
   const wkR = await conn.runAndReadAll(
     scope === 'cell'
-      ? `SELECT CAST(w.week_start AS VARCHAR) AS week_start, w.prb_avg, w.dl_throughput_kbps_avg AS thr,
+      ? `SELECT CAST(${dateCol} AS VARCHAR) AS week_start, w.prb_avg, w.dl_throughput_kbps_avg AS thr,
                 w.connected_users_sum AS usr, w.data_volume_mb_sum AS vol, w.availability_pct_avg AS avail,
                 w.is_nc, l.lifecycle
-         FROM agg_cell_weekly w
+         FROM ${aggTable} w
          LEFT JOIN cell_nc_lifecycle l
-           ON l.cell_id = w.cell_id AND l.period_start = w.week_start
-           AND l.grain = 'weekly' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-         WHERE w.cell_id = ? ORDER BY w.week_start`
-      : `SELECT CAST(w.week_start AS VARCHAR) AS week_start, avg(w.prb_avg) AS prb_avg,
+           ON l.cell_id = w.cell_id AND l.period_start = ${dateCol}
+           AND l.grain = '${grain}' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
+         WHERE w.cell_id = ${numEntityId} ORDER BY ${dateCol}`
+      : `SELECT CAST(${dateCol} AS VARCHAR) AS week_start, avg(w.prb_avg) AS prb_avg,
                 avg(w.dl_throughput_kbps_avg) AS thr, sum(w.connected_users_sum) AS usr,
                 sum(w.data_volume_mb_sum) AS vol, avg(w.availability_pct_avg) AS avail,
                 sum(w.is_nc) > 0 AS is_nc, NULL AS lifecycle
-         FROM agg_cell_weekly w ${join}
-         WHERE ${filter} GROUP BY w.week_start ORDER BY w.week_start`,
-    [entityId]
+         FROM ${aggTable} w ${join}
+         WHERE ${filter} GROUP BY ${dateCol} ORDER BY ${dateCol}`
   )
   const weeks: InvestigationWeek[] = wkR.getRowObjects().map((x) => ({
     weekStart: String(x.week_start ?? ''),
@@ -179,11 +211,10 @@ export async function getInvestigation(
        FROM cell_nc_lifecycle l
        LEFT JOIN cell_priority_history p
          ON p.cell_id = l.cell_id AND p.mode = 'balanced' AND p.as_of = l.period_start
-       WHERE l.cell_id = ? AND l.grain = 'weekly'
+       WHERE l.cell_id = ${numEntityId} AND l.grain = '${grain}'
          AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE cell_id = ? AND grain = 'weekly')
-       LIMIT 1`,
-      [entityId, entityId]
+         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE cell_id = ${numEntityId} AND grain = '${grain}')
+       LIMIT 1`
     )
     const row = curR.getRowObjects()[0]
     if (row) {
@@ -295,71 +326,53 @@ export async function getInvestigation(
           ? ` — recent history includes ${weeks.filter((w) => w.isNc).length} NC week(s); monitor for recurrence.`
           : ' — the entity is stable under the active ruleset.'))
 
-  // 6. alternative hypotheses with supporting / contradicting evidence (§48)
-  const prbHigh = prbK.current != null && prbK.current >= threshold
-  const thrDrop = thrK.deltaPct != null && thrK.deltaPct <= -10
-  const usersUp = usrK.deltaPct != null && usrK.deltaPct >= 10
-  const volUp = volK.deltaPct != null && volK.deltaPct >= 10
-  const availLow = avK.current != null && avK.current < 99.5
-  const persistent = ncStreak >= 2
-  const entering = isNc && ncStreak === 1
-  const H: Array<{ id: string; title: string; support: number; contra: number; sup: string[]; con: string[] }> = [
-    { id: 'capacity', title: 'Capacity-driven congestion', support: 0, contra: 0, sup: [], con: [] },
-    { id: 'interference', title: 'RF / interference degradation', support: 0, contra: 0, sup: [], con: [] },
-    { id: 'backhaul', title: 'Backhaul / transport limitation', support: 0, contra: 0, sup: [], con: [] },
-    { id: 'growth', title: 'Demand / growth pressure', support: 0, contra: 0, sup: [], con: [] },
-    { id: 'transient', title: 'Transient / event-driven spike', support: 0, contra: 0, sup: [], con: [] }
-  ]
-  const push = (
-    h: (typeof H)[number],
-    side: 'sup' | 'con',
-    w: number,
-    text: string
-  ): void => {
-    if (side === 'sup') {
-      h.support += w
-      h.sup.push(text)
-    } else {
-      h.contra += w
-      h.con.push(text)
+  // 6. Run modular diagnostic heuristics engine
+  const kpiMap = new Map<string, number | null>()
+  if (last?.prbAvg != null) kpiMap.set('prb_utilization', last.prbAvg)
+
+  if (scope === 'cell' && last?.weekStart) {
+    try {
+      const kpiRows = await conn.runAndReadAll(
+        `SELECT k.kpi_key, w.avg_value
+         FROM agg_cell_kpi_weekly w
+         JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+         WHERE w.cell_id = ${numEntityId} AND CAST(w.week_start AS VARCHAR) = '${last.weekStart.replace(/'/g, "''")}'`
+      )
+      for (const r of kpiRows.getRowObjects()) {
+        if (r.kpi_key != null) kpiMap.set(String(r.kpi_key), r.avg_value == null ? null : Number(r.avg_value))
+      }
+    } catch {
+      /* ignore if extra kpis table is empty */
     }
   }
-  const [cap, inter, back, growth, trans] = H
-  if (prbHigh) push(cap, 'sup', 20, `PRB at/above the ${threshold}% threshold`)
-  if (persistent) push(cap, 'sup', 15, `NC for ${ncStreak} consecutive weeks`)
-  if (volUp) push(cap, 'sup', 10, `Data volume up ${round1(volK.deltaPct!)}% week-over-week`)
-  if (usersUp) push(cap, 'sup', 10, `Users up ${round1(usrK.deltaPct!)}% week-over-week`)
-  if (!prbHigh) push(cap, 'con', 15, `PRB below the ${threshold}% threshold`)
-  if (!isNc) push(cap, 'con', 10, `Not currently classified NC`)
-  if (availLow) push(inter, 'sup', 20, `Availability below 99.5%`)
-  if (thrDrop) push(inter, 'sup', 15, `Throughput falling week-over-week`)
-  if (!prbHigh && prbK.delta != null && prbK.delta >= 3) push(inter, 'sup', 10, `PRB rising while below the threshold`)
-  if (prbHigh) push(inter, 'con', 10, `PRB already above the threshold — suggests load rather than RF`)
-  if (thrDrop) push(back, 'sup', 20, `Throughput down ${Math.abs(round1(thrK.deltaPct!))}% under load`)
-  if (prbHigh) push(back, 'sup', 10, `High PRB with constrained throughput`)
-  if (!availLow) push(back, 'sup', 10, `Availability normal — not an RF outage pattern`)
-  if (availLow) push(back, 'con', 10, `Availability low — points to RF rather than backhaul`)
-  if (!thrDrop) push(back, 'con', 15, `Throughput stable`)
-  if (usersUp) push(growth, 'sup', 20, `Users up ${round1(usrK.deltaPct!)}% week-over-week`)
-  if (volUp) push(growth, 'sup', 15, `Volume up ${round1(volK.deltaPct!)}% week-over-week`)
-  if (prbHigh) push(growth, 'sup', 10, `PRB at/above the ${threshold}% threshold`)
-  if (!usersUp) push(growth, 'con', 15, `Users flat or falling`)
-  if (!volUp) push(growth, 'con', 10, `Volume flat or falling`)
-  if (entering) push(trans, 'sup', 20, `New NC classification this week`)
-  if (ncStreak === 1) push(trans, 'sup', 10, `Only ${ncStreak} NC week so far`)
-  if (persistent) push(trans, 'con', 20, `NC for ${ncStreak} consecutive weeks`)
-  if (!isNc) push(trans, 'con', 15, `Not currently classified NC`)
-  const hypotheses: Hypothesis[] = H.map((h) => {
-    const score = Math.max(5, Math.min(95, 40 + h.support - h.contra))
-    return {
-      id: h.id,
-      title: h.title,
-      score,
-      verdict: score >= 65 ? 'consistent' : score >= 45 ? 'suggests' : 'not supported',
-      supporting: h.sup,
-      contradicting: h.con
+
+  const techR = await conn.runAndReadAll(`SELECT value FROM workspace_meta WHERE key = 'technology'`)
+  const wsTech = (String(techR.getRowObjects()[0]?.value ?? '4G') as Technology)
+
+  const diagCtx: DiagnosticContext = {
+    technology: wsTech,
+    entityName,
+    isNc,
+    ncStreak,
+    weeks,
+    latestWeek: last,
+    previousWeek: prev,
+    evidence,
+    kpiMap,
+    thresholds: {
+      prb: rules?.prbThresholdPct ?? 80,
+      tchCongestion: rules?.tchCongestionThresholdPct ?? 2.0,
+      sdcchCongestion: rules?.sdcchCongestionThresholdPct ?? 2.0,
+      cssr: rules?.cssrThresholdPct ?? 98.5,
+      callDrop: rules?.callDropThresholdPct ?? 1.5,
+      dataAccess: rules?.dataAccessThresholdPct ?? 98.0,
+      dataFailure: rules?.dataServiceFailureThresholdPct ?? 1.0,
+      persistentWeeks: rules?.persistentWeeks ?? 3,
+      chronicWeeks: rules?.chronicWeeks ?? 7
     }
-  })
+  }
+
+  const hypotheses: DiagnosticHypothesis[] = runDiagnosticEngine(diagCtx)
 
   // 7. events: derived classification/priority changes + stored notes/status events
   const events: InvestigationEvent[] = []
@@ -367,9 +380,8 @@ export async function getInvestigation(
     const lifeR = await conn.runAndReadAll(
       `SELECT CAST(period_start AS VARCHAR) AS week_start, lifecycle, severity
        FROM cell_nc_lifecycle
-       WHERE cell_id = ? AND grain = 'weekly' AND ruleset_version = (SELECT max(version) FROM ruleset)
-       ORDER BY period_start`,
-      [entityId]
+       WHERE cell_id = ${numEntityId} AND grain = 'weekly' AND ruleset_version = (SELECT max(version) FROM ruleset)
+       ORDER BY period_start`
     )
     let prevLife: string | null = null
     for (const row of lifeR.getRowObjects()) {
@@ -387,8 +399,7 @@ export async function getInvestigation(
     }
     const prR = await conn.runAndReadAll(
       `SELECT CAST(as_of AS VARCHAR) AS as_of, score FROM cell_priority_history
-       WHERE cell_id = ? AND mode = 'balanced' ORDER BY as_of`,
-      [entityId]
+       WHERE cell_id = ${numEntityId} AND mode = 'balanced' ORDER BY as_of`
     )
     const prRows = prR.getRowObjects()
     for (let i = 1; i < prRows.length; i++) {
@@ -404,11 +415,11 @@ export async function getInvestigation(
       }
     }
   }
+  const safeScope = scope.replace(/'/g, "''")
   const neR = await conn.runAndReadAll(
     `SELECT CAST(event_id AS DOUBLE) AS event_id, CAST(occurred_at AS VARCHAR) AS occurred_at, kind, note, author
-     FROM notes_events WHERE entity_type = ? AND entity_id = ?
-     ORDER BY occurred_at DESC, event_id DESC LIMIT 40`,
-    [scope, entityId]
+     FROM notes_events WHERE entity_type = '${safeScope}' AND entity_id = ${numEntityId}
+     ORDER BY occurred_at DESC, event_id DESC LIMIT 40`
   )
   for (const x of neR.getRowObjects()) {
     events.push({
@@ -425,8 +436,7 @@ export async function getInvestigation(
   const stR = await conn.runAndReadAll(
     `SELECT status, owner, external_ticket, CAST(target_review_date AS VARCHAR) AS target_review_date,
             CAST(updated_at AS VARCHAR) AS updated_at
-     FROM entity_action_status WHERE entity_type = ? AND entity_id = ?`,
-    [scope, entityId]
+     FROM entity_action_status WHERE entity_type = '${safeScope}' AND entity_id = ${numEntityId}`
   )
   const stRow = stR.getRowObjects()[0]
   const status: InvestigationStatus = stRow
@@ -478,9 +488,8 @@ export async function getInvestigation(
          AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
        LEFT JOIN cell_health_history h ON h.cell_id = c2.cell_id
          AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
-       WHERE c2.site_id = (SELECT site_id FROM dim_cell WHERE cell_id = ?)
-       ORDER BY h.health_score ASC NULLS LAST, c2.cell_id LIMIT 10`,
-      [entityId]
+       WHERE c2.site_id = (SELECT site_id FROM dim_cell WHERE cell_id = ${numEntityId})
+       ORDER BY h.health_score ASC NULLS LAST, c2.cell_id LIMIT 10`
     )
     peers = pR.getRowObjects().map((x) => ({
       name: String(x.name ?? ''),
@@ -494,8 +503,8 @@ export async function getInvestigation(
     const idC = scope === 'site' ? 'site_id' : 'district_id'
     const parentC = scope === 'site' ? 'district_id' : 'region_id'
     const parentSub = scope === 'site'
-      ? `(SELECT district_id FROM dim_site WHERE site_id = ?)`
-      : `(SELECT region_id FROM dim_district WHERE district_id = ?)`
+      ? `(SELECT district_id FROM dim_site WHERE site_id = ${numEntityId})`
+      : `(SELECT region_id FROM dim_district WHERE district_id = ${numEntityId})`
     const pR = await conn.runAndReadAll(
       `SELECT e.name AS name, round(avg(w.prb_avg), 1) AS prb_avg, round(avg(w.dl_throughput_kbps_avg), 1) AS thr,
               round(avg(h.health_score), 1) AS health_score, sum(w.is_nc) AS nc
@@ -507,8 +516,7 @@ export async function getInvestigation(
          AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
        WHERE e.${parentC} = ${parentSub}
        GROUP BY e.${idC}, e.name
-       ORDER BY health_score ASC NULLS LAST LIMIT 10`,
-      [entityId]
+       ORDER BY health_score ASC NULLS LAST LIMIT 10`
     )
     peers = pR.getRowObjects().map((x) => ({
       name: String(x.name ?? ''),
@@ -548,10 +556,11 @@ export async function setInvestigationStatus(
   }
 ): Promise<InvestigationStatus> {
   const conn = ws().connection
+  const numEntityId = Number(entityId)
+  const safeScope = scope.replace(/'/g, "''")
   const stR = await conn.runAndReadAll(
     `SELECT status, owner, external_ticket, CAST(target_review_date AS VARCHAR) AS trd
-     FROM entity_action_status WHERE entity_type = ? AND entity_id = ?`,
-    [scope, entityId]
+     FROM entity_action_status WHERE entity_type = '${safeScope}' AND entity_id = ${numEntityId}`
   )
   const before = stR.getRowObjects()[0]
   const beforeStatus = before?.status ? String(before.status) : null
@@ -566,14 +575,19 @@ export async function setInvestigationStatus(
       : before?.trd
         ? String(before.trd)
         : null
+
+  const sqlStatus = status ? `'${status.replace(/'/g, "''")}'` : 'NULL'
+  const sqlOwner = owner ? `'${owner.replace(/'/g, "''")}'` : 'NULL'
+  const sqlTicket = ticket ? `'${ticket.replace(/'/g, "''")}'` : 'NULL'
+  const sqlTrd = trd ? `CAST('${trd.replace(/'/g, "''")}' AS DATE)` : 'NULL'
+
   await conn.run(
     `INSERT INTO entity_action_status (entity_type, entity_id, status, owner, external_ticket, target_review_date, updated_at)
-     VALUES (?, ?, ?, ?, ?, CAST(? AS DATE), now())
+     VALUES ('${safeScope}', ${numEntityId}, ${sqlStatus}, ${sqlOwner}, ${sqlTicket}, ${sqlTrd}, now())
      ON CONFLICT (entity_type, entity_id) DO UPDATE SET
        status = excluded.status, owner = excluded.owner,
        external_ticket = excluded.external_ticket,
-       target_review_date = excluded.target_review_date, updated_at = now()`,
-    [scope, entityId, status, owner, ticket, trd]
+       target_review_date = excluded.target_review_date, updated_at = now()`
   )
   const parts: string[] = []
   if (patch.status !== undefined && patch.status !== beforeStatus) {
@@ -583,10 +597,10 @@ export async function setInvestigationStatus(
     parts.push(`owner: ${patch.owner ?? '—'}`)
   }
   if (parts.length > 0) {
+    const safeParts = parts.join('; ').replace(/'/g, "''")
     await conn.run(
       `INSERT INTO notes_events (entity_type, entity_id, kind, note, author)
-       VALUES (?, ?, 'status_change', ?, 'user')`,
-      [scope, entityId, parts.join('; ')]
+       VALUES ('${safeScope}', ${numEntityId}, 'status_change', '${safeParts}', 'user')`
     )
   }
   return { status, owner, externalTicket: ticket, targetReviewDate: trd, updatedAt: new Date().toISOString() }
@@ -598,15 +612,16 @@ export async function addInvestigationNote(
   note: string
 ): Promise<InvestigationEvent> {
   const conn = ws().connection
+  const numEntityId = Number(entityId)
+  const safeScope = scope.replace(/'/g, "''")
+  const safeNote = note.replace(/'/g, "''")
   await conn.run(
     `INSERT INTO notes_events (entity_type, entity_id, kind, note, author)
-     VALUES (?, ?, 'user_note', ?, 'user')`,
-    [scope, entityId, note]
+     VALUES ('${safeScope}', ${numEntityId}, 'user_note', '${safeNote}', 'user')`
   )
   const r = await conn.runAndReadAll(
     `SELECT CAST(event_id AS DOUBLE) AS event_id, CAST(occurred_at AS VARCHAR) AS occurred_at
-     FROM notes_events WHERE entity_type = ? AND entity_id = ? ORDER BY event_id DESC LIMIT 1`,
-    [scope, entityId]
+     FROM notes_events WHERE entity_type = '${safeScope}' AND entity_id = ${numEntityId} ORDER BY event_id DESC LIMIT 1`
   )
   const row = r.getRowObjects()[0]
   return {

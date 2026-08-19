@@ -114,7 +114,7 @@ export function forecastChartOption(series: ForecastSeries): EChartsOption {
       {
         name: 'Forecast',
         type: 'line',
-        data: series.points.map((p) => (p.kind === 'forecast' ? p.value : null)),
+        data: series.points.map((p, idx) => (p.kind === 'forecast' || idx === actual.length - 1 ? p.value : null)),
         smooth: 0.25,
         symbol: 'circle',
         symbolSize: 6,

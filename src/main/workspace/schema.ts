@@ -93,10 +93,18 @@ export const SCHEMA_SQL: string[] = [
      version INTEGER PRIMARY KEY,
      created_at TIMESTAMP DEFAULT now(),
      prb_threshold_pct DOUBLE NOT NULL DEFAULT 80,
+     tch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 2,
+     sdcch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 2,
+     cssr_threshold_pct DOUBLE NOT NULL DEFAULT 98.5,
+     call_drop_threshold_pct DOUBLE NOT NULL DEFAULT 1.5,
+     data_access_threshold_pct DOUBLE NOT NULL DEFAULT 98.0,
+     data_service_failure_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
      weekly_breach_days INTEGER NOT NULL DEFAULT 1,
      persistent_weeks INTEGER NOT NULL DEFAULT 3,
+     chronic_weeks INTEGER NOT NULL DEFAULT 7,
      district_nc_threshold_pct DOUBLE NOT NULL DEFAULT 10,
      priority_weights JSON,
+     kpi_thresholds JSON,
      notes VARCHAR
    )`,
   `INSERT INTO ruleset (version, notes)
@@ -139,8 +147,17 @@ export const SCHEMA_SQL: string[] = [
      label VARCHAR NOT NULL,
      unit VARCHAR NOT NULL DEFAULT '',
      worse_is_higher BOOLEAN NOT NULL DEFAULT true,
+     better_direction VARCHAR NOT NULL DEFAULT 'lower_is_better',
+     category VARCHAR NOT NULL DEFAULT 'Congestion',
      target DOUBLE,
+     warning_threshold DOUBLE,
+     critical_threshold DOUBLE,
      agg VARCHAR NOT NULL DEFAULT 'avg' CHECK (agg IN ('avg', 'sum', 'max', 'min')),
+     is_core BOOLEAN NOT NULL DEFAULT false,
+     supports_congestion BOOLEAN NOT NULL DEFAULT false,
+     supports_persistent_nc BOOLEAN NOT NULL DEFAULT true,
+     show_in_executive BOOLEAN NOT NULL DEFAULT true,
+     decimal_precision INTEGER NOT NULL DEFAULT 1,
      source_headers JSON,
      is_custom BOOLEAN NOT NULL DEFAULT false,
      active BOOLEAN NOT NULL DEFAULT true,
@@ -163,6 +180,14 @@ export const SCHEMA_SQL: string[] = [
      avg_value DOUBLE, sum_value DOUBLE, max_value DOUBLE, min_value DOUBLE,
      observed_days INTEGER,
      PRIMARY KEY (week_start, cell_id, kpi_id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS agg_cell_kpi_monthly (
+     month_start DATE NOT NULL,
+     cell_id BIGINT NOT NULL,
+     kpi_id BIGINT NOT NULL,
+     avg_value DOUBLE, sum_value DOUBLE, max_value DOUBLE, min_value DOUBLE,
+     observed_days INTEGER,
+     PRIMARY KEY (month_start, cell_id, kpi_id)
    )`,
 
   // --- derived intelligence (spec §62; populated by later milestones) ---

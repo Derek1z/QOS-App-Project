@@ -10,6 +10,7 @@ import { validateStaged } from './validator'
 import { recomputeAggregates, updateCoverage } from './aggregates'
 import { refreshIntelligence } from '../analytics/engine'
 import { writeQuality } from './quality'
+import { listDerivedKpis, saveDerivedKpi } from '../services/derivedKpiService'
 import type {
   CanonicalField, ImportResult, MappingConfig, ValidationIssue
 } from '../../../shared/api'
@@ -68,13 +69,18 @@ async function stageCsv(
     return h ? quoteId(h) : `NULL::VARCHAR`
   }
 
-  // extra columns mapped to KPI keys become one JSON object per row:
-  // {"tch_congestion": "1.2", "gprs_traffic": "450"}
+  // extra columns mapped to KPI keys + unmapped source headers become one JSON object per row:
+  // {"tch_congestion": "1.2", "VS.RRC.Rej.DLPower.Cong": "5"}
   const kpiCols = (mapping.kpiColumns ?? {})
+  const mappedCols = new Set(Object.keys(mapping.columns))
+  const unmapped = header.filter((h) => !mappedCols.has(h) && !kpiCols[h])
+  const allKpiEntries = [
+    ...Object.entries(kpiCols).filter(([h, k]) => header.includes(h) && k),
+    ...unmapped.map((h) => [h, h] as [string, string])
+  ]
   const kpiJsonSel = (() => {
-    const entries = Object.entries(kpiCols).filter(([h, k]) => header.includes(h) && k)
-    if (entries.length === 0) return `NULL::VARCHAR`
-    const json = entries.map(([h, k]) => `'${esc(k)}', ${quoteId(h)}`).join(', ')
+    if (allKpiEntries.length === 0) return `NULL::VARCHAR`
+    const json = allKpiEntries.map(([h, k]) => `'${esc(k)}', ${quoteId(h)}`).join(', ')
     return `json_object(${json})`
   })()
 
@@ -183,8 +189,28 @@ async function buildClean(conn: DuckDBConnection): Promise<void> {
   await conn.run(`
     CREATE TEMP TABLE stg_clean AS
     SELECT
-      trim(p.cell_raw) AS cell_name, trim(p.district_raw) AS district_raw,
-      trim(p.region_raw) AS region_raw, trim(p.site_raw) AS site_raw,
+      trim(p.cell_raw) AS cell_name,
+      CASE
+        WHEN try_cast(trim(p.district_raw) AS DOUBLE) IS NOT NULL
+             OR lower(trim(p.district_raw)) IN ('total', 'grand total', 'subtotal', 'average', 'avg', 'sum', 'count', 'summary')
+             OR NOT regexp_matches(trim(p.district_raw), '[a-zA-Z]')
+        THEN NULL
+        ELSE trim(p.district_raw)
+      END AS district_raw,
+      CASE
+        WHEN try_cast(trim(p.region_raw) AS DOUBLE) IS NOT NULL
+             OR lower(trim(p.region_raw)) IN ('total', 'grand total', 'subtotal', 'average', 'avg', 'sum', 'count', 'summary')
+             OR NOT regexp_matches(trim(p.region_raw), '[a-zA-Z]')
+        THEN NULL
+        ELSE trim(p.region_raw)
+      END AS region_raw,
+      CASE
+        WHEN try_cast(trim(p.site_raw) AS DOUBLE) IS NOT NULL
+             OR lower(trim(p.site_raw)) IN ('total', 'grand total', 'subtotal', 'average', 'avg', 'sum', 'count', 'summary')
+             OR NOT regexp_matches(trim(p.site_raw), '[a-zA-Z]')
+        THEN NULL
+        ELSE trim(p.site_raw)
+      END AS site_raw,
       d.date_id, p.parsed_date,
       try_cast(p.prb_raw AS DOUBLE) AS prb,
       try_cast(p.users_raw AS DOUBLE) AS users,
@@ -200,6 +226,11 @@ async function buildClean(conn: DuckDBConnection): Promise<void> {
       FROM stg_import
     ) p
     LEFT JOIN dim_date d ON d.date = CAST(p.parsed_date AS DATE)
+    WHERE p.cell_raw IS NOT NULL
+      AND trim(p.cell_raw) <> ''
+      AND lower(trim(p.cell_raw)) NOT IN ('total', 'grand total', 'subtotal', 'average', 'avg', 'sum', 'count', 'summary')
+      AND regexp_matches(trim(p.cell_raw), '[a-zA-Z]')
+      AND try_cast(trim(p.cell_raw) AS DOUBLE) IS NULL
   `)
 }
 
@@ -338,24 +369,88 @@ async function insertFacts(conn: DuckDBConnection, importId: number): Promise<nu
 }
 
 /** Persist extra per-cell KPI values (spec §54a): unmapped source columns that
- *  were assigned a KpiDefinition.key are unnested from each row's JSON blob. */
+ *  were assigned a KpiDefinition.key are extracted directly from each row's JSON blob. */
 async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
   const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
   if (Number(r.getRowObjects()[0].n) === 0) return
-  await conn.run(`
-    INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
-    SELECT s.date_id, c.cell_id, k.kpi_id, try_cast(j.value AS DOUBLE)
-    FROM stg_clean s
-    JOIN dim_cell c ON c.name = s.cell_name
-    CROSS JOIN LATERAL json_each(s.kpi_json) j
-    JOIN kpi_defs k ON k.kpi_key = j.key
-    WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
-      AND NOT EXISTS (
-        SELECT 1 FROM fact_extra_metrics f
-        WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = k.kpi_id
-      )
-      AND j.value IS NOT NULL AND try_cast(j.value AS DOUBLE) IS NOT NULL
-  `)
+
+  const kpis = await conn.runAndReadAll(`SELECT kpi_id, kpi_key FROM kpi_defs`)
+  const kpiList = kpis.getRowObjects()
+  if (kpiList.length === 0) return
+
+  for (const k of kpiList) {
+    const kpiId = Number(k.kpi_id)
+    const kpiKey = String(k.kpi_key).replace(/'/g, "''")
+    await conn.run(`
+      INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
+      SELECT s.date_id, c.cell_id, ${kpiId}, try_cast(json_extract_string(s.kpi_json, '$.${kpiKey}') AS DOUBLE)
+      FROM stg_clean s
+      JOIN dim_cell c ON c.name = s.cell_name
+      WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
+        AND json_extract_string(s.kpi_json, '$.${kpiKey}') IS NOT NULL
+        AND try_cast(json_extract_string(s.kpi_json, '$.${kpiKey}') AS DOUBLE) IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM fact_extra_metrics f
+          WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = ${kpiId}
+        )
+    `)
+  }
+}
+
+async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
+  const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
+  if (Number(r.getRowObjects()[0].n) === 0) return
+
+  const derivedList = await listDerivedKpis(conn)
+  const enabledDerived = derivedList.filter((d) => d.enabled)
+  if (enabledDerived.length === 0) return
+
+  for (const def of enabledDerived) {
+    await saveDerivedKpi(conn, def)
+    const kpiRow = await conn.runAndReadAll(`SELECT kpi_id FROM kpi_defs WHERE kpi_key = '${def.id.replace(/'/g, "''")}'`)
+    const kpiId = Number(kpiRow.getRowObjects()[0]?.kpi_id)
+    if (!kpiId) continue
+
+    const parts = def.sourceKPIs.map((src) => {
+      const escSrc = src.replace(/'/g, "''")
+      return `COALESCE(try_cast(json_extract_string(s.kpi_json, '$.\"${escSrc}\"') AS DOUBLE), try_cast(json_extract_string(s.kpi_json, '$.${escSrc}') AS DOUBLE))`
+    })
+
+    let calcExpr = ''
+    if (def.operation === 'SUM') {
+      if (def.treatMissingAsZero) {
+        calcExpr = parts.map((p) => `COALESCE(${p}, 0)`).join(' + ')
+      } else {
+        const nullCheck = parts.map((p) => `${p} IS NOT NULL`).join(' AND ')
+        calcExpr = `CASE WHEN ${nullCheck} THEN (${parts.join(' + ')}) ELSE NULL END`
+      }
+    } else if (def.operation === 'AVERAGE') {
+      if (def.treatMissingAsZero) {
+        calcExpr = `(${parts.map((p) => `COALESCE(${p}, 0)`).join(' + ')}) / ${parts.length}`
+      } else {
+        const nullCheck = parts.map((p) => `${p} IS NOT NULL`).join(' AND ')
+        calcExpr = `CASE WHEN ${nullCheck} THEN (${parts.join(' + ')}) / ${parts.length} ELSE NULL END`
+      }
+    } else if (def.operation === 'RATIO' && parts.length >= 2) {
+      calcExpr = `CASE WHEN ${parts[0]} IS NOT NULL AND ${parts[1]} IS NOT NULL AND ${parts[1]} > 0 THEN ${parts[0]} / ${parts[1]} ELSE NULL END`
+    } else {
+      calcExpr = parts.join(' + ')
+    }
+
+    await conn.run(`
+      INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
+      SELECT s.date_id, c.cell_id, ${kpiId}, ${calcExpr}
+      FROM stg_clean s
+      JOIN dim_cell c ON c.name = s.cell_name
+      WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
+        AND s.kpi_json IS NOT NULL
+        AND (${calcExpr}) IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM fact_extra_metrics f
+          WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = ${kpiId}
+        )
+    `)
+  }
 }
 
 async function affectedDateIds(conn: DuckDBConnection): Promise<number[]> {
@@ -514,6 +609,7 @@ async function runImportCoreInner(
     const importId = await nextAuditId(conn)
     const inserted = await insertFacts(conn, importId)
     await insertExtraMetrics(conn)
+    await insertDerivedMetrics(conn)
     const dateIds = await affectedDateIds(conn)
     onPhase?.('Aggregating', `${dateIds.length} day${dateIds.length === 1 ? '' : 's'}`)
     await recomputeAggregates(conn, dateIds)

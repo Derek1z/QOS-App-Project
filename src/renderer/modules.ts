@@ -62,6 +62,13 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         blurb: 'Period, Region, District, Site, Cell and Cohort comparisons.'
       },
       {
+        id: 'simulation-lab',
+        label: 'Simulation Lab',
+        icon: '🧪',
+        milestone: 4,
+        blurb: 'What-If spectral expansions, MIMO upgrades, and traffic offload simulator.'
+      },
+      {
         id: 'investigation',
         label: 'Investigation Workspace',
         icon: '🕵️',

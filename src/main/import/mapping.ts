@@ -15,25 +15,36 @@ export const FIELDS: FieldDef[] = [
     field: 'date',
     label: 'Date / Time',
     required: true,
-    aliases: ['datetime', 'date', 'day', 'time', 'timestamp', 'date/time', 'date_time', 'report date', 'reporting date', 'day (date)', 'measurement date']
+    aliases: [
+      'datetime', 'date', 'day', 'time', 'timestamp', 'date/time', 'date_time',
+      'report date', 'reporting date', 'day (date)', 'measurement date', 'start time',
+      'start_time', 'period start time', 'period_start_time', 'interval start time',
+      'date (yyyy-mm-dd)', 'date(yyyy-mm-dd)', 'time stamp', 'dt', 'report_date',
+      'measurement time'
+    ]
   },
   {
     field: 'cell',
     label: 'Cell',
     required: true,
-    aliases: ['cell', 'cell id', 'cellid', 'cell name', 'cellname', 'lcell', 'cell_id', 'sector']
+    aliases: [
+      'cell', 'cell id', 'cellid', 'cell name', 'cellname', 'lcell', 'cell_id', 'sector',
+      'ucell', 'u_cell', '3g cell', '3g cell name', '2g cell', '2g cell name', '4g cell',
+      '4g cell name', 'wcdma cell', 'umts cell', 'cell_name', 'cell_identity', 'cgi',
+      'ci', 'source cell'
+    ]
   },
   {
     field: 'district',
     label: 'District',
     required: false,
-    aliases: ['district', 'district name', 'districtname', 'dist', 'admin district', 'municipality', 'lga']
+    aliases: ['district', 'district name', 'districtname', 'dist', 'admin district', 'municipality', 'lga', 'district_name']
   },
   {
     field: 'region',
     label: 'Region',
     required: false,
-    aliases: ['region', 'region name', 'regionname', 'admin region', 'province', 'province name']
+    aliases: ['region', 'region name', 'regionname', 'admin region', 'province', 'province name', 'region_name', 'state']
   },
   {
     field: 'site',
@@ -42,20 +53,34 @@ export const FIELDS: FieldDef[] = [
     aliases: [
       'basestation', 'base station', 'base station name', 'bs name', 'site', 'site id', 'siteid',
       'site name', 'site_name', 'bts', 'bts name', 'btsname', 'bts id', 'btsid',
-      'nodeb', 'node b', 'nodeb name', 'nodeb id', 'enodeb', 'enodeb name', 'enodeb id',
-      'enb', 'enb name', 'ne name', 'nename', 'cell site'
+      'nodeb', 'node b', 'nodeb name', 'nodeb id', 'node_b', 'node_b_name', 'wbts', 'wbts name',
+      'enodeb', 'enodeb name', 'enodeb id', 'enb', 'enb name', 'ne name', 'nename', 'cell site',
+      '3g site', '2g site', '4g site', 'rnc', 'rnc name', 'bsc', 'bsc name', 'bsc_name',
+      '2g bts', '2g site name', 'site_id'
     ]
   },
   {
     field: 'prb',
-    label: 'PRB Utilization (%)',
+    label: 'PRB / Traffic Utilization (%)',
     required: false,
     aliases: [
-      '4g peak hour traffic utilization_nca', 'prb utilization', 'prb', 'prb util',
-      'peak hour traffic utilization', 'prb_utilization', 'prb utilisation', '4g prb',
-      '4g peak hour traffic utilization',
-      'peak hour traffic utilization nca',
-      '4g peak hour traffic utilization std',
+      '4g peak hour traffic utilization_nca', '4g peak hour traffic utilization',
+      '4g peak hour traffic utilization std', '4g peak hour traffic utilization_std(%)',
+      '4g prb', 'prb utilization', 'prb', 'prb util', 'peak hour traffic utilization',
+      'prb_utilization', 'prb utilisation', 'peak hour traffic utilization nca',
+      'peak hour traffic utilization std', 'peak hour traffic utilization (%)',
+      'utilization', 'utilization (%)',
+      '3g peak hour traffic utilization_nca', '3g peak hour traffic utilization',
+      '3g peak hour traffic utilization std', '3g peak hour traffic utilization_std(%)',
+      '3g peak hour traffic utilization (%)', '3g utilization', '3g traffic utilization',
+      '3g traffic utilization (%)', 'ce utilization', 'ce utilization (%)',
+      'power utilization', 'power utilization (%)', 'dl power utilization',
+      'carrier power utilization', '3g congestion', 'traffic utilization',
+      'traffic utilization (%)', 'traffic utilization_std(%)',
+      '2g tch congestion', '2g tch congestion (%)', 'tch congestion', 'tch congestion (%)',
+      'tch congestion_std(%)', 'tch congestion rate', 'sdcch congestion',
+      'sdcch congestion (%)', '2g sdcch congestion', '2g congestion', '2g congestion (%)',
+      'tch blocking', 'tch block rate', 'traffic channel congestion', 'signalling congestion'
     ]
   },
   {
@@ -65,9 +90,14 @@ export const FIELDS: FieldDef[] = [
     aliases: [
       'rrc connected ues (avg)_std(#)', 'connected users', 'rrc connected ues',
       'rrc connected users', 'users', 'connected_users', 'rrc connected ues (avg)',
-      'rrc connected ues avg',
-      'rrc connected ues (avg) std',
-      'connected ues (avg)',
+      'rrc connected ues avg', 'rrc connected ues (avg) std', 'connected ues (avg)',
+      '3g connected ues (avg)_std(#)', '3g connected users', '3g connected ues',
+      '3g connected ues (avg)', '3g connected ues avg', '3g users', 'hsdpa users',
+      'hsupa users', 'hspa users', 'active users', 'total connected users',
+      'subscribers', 'simultaneous users', 'average users', 'avg connected users',
+      'rrc connected users (3g)', 'total active users',
+      '2g users', '2g connected users', 'erlang', 'erlangs', 'carried traffic (erl)',
+      'voice traffic (erl)', 'traffic (erl)'
     ]
   },
   {
@@ -77,9 +107,14 @@ export const FIELDS: FieldDef[] = [
     aliases: [
       '4g data volume_std(mb)', 'data volume', 'data volume (mb)', 'data_volume_mb',
       'traffic', 'volume mb', '4g data volume', 'traffic (mb)',
-      '4g data volume std',
-      '4g data volume (mb)',
-      'data volume std',
+      '4g data volume std', '4g data volume (mb)', 'data volume std',
+      '3g data volume_std(mb)', '3g data volume', '3g data volume (mb)',
+      '3g traffic', '3g traffic (mb)', '3g data volume std', 'ps data volume',
+      'ps traffic', 'hspa data volume', 'hsdpa data volume', 'total data volume (mb)',
+      'total traffic (mb)', 'total data volume',
+      '2g gprs traffic', 'gprs traffic', 'gprs traffic (mb)', 'gprs data volume',
+      '2g data volume', '2g data volume (mb)', '2g traffic', '2g traffic (mb)',
+      '2g data volume std', 'edge traffic', 'edge data volume (mb)', 'data traffic (mb)'
     ]
   },
   {
@@ -89,9 +124,14 @@ export const FIELDS: FieldDef[] = [
     aliases: [
       '4g cell availability_std(%)', 'availability', 'cell availability',
       'availability_pct', 'cell availability (%)', '4g cell availability',
-      '4g cell availability std',
-      'cell availability std',
-      '4g cell availability (%)',
+      '4g cell availability std', 'cell availability std', '4g cell availability (%)',
+      '3g cell availability_std(%)', '3g cell availability', '3g cell availability (%)',
+      '3g availability', '3g cell availability std', 'utran cell availability',
+      'utran cell availability (%)',
+      '2g availability', '2g cell availability', '2g cell availability (%)',
+      '2g cell availability_std(%)', '2g tch availability', 'tch availability',
+      'tch availability (%)', 'tch available rate', 'tch availability_std(%)',
+      'network availability', 'radio network availability'
     ]
   },
   {
@@ -102,10 +142,16 @@ export const FIELDS: FieldDef[] = [
       'e-utran ip throughput ue dl_std(kbps)', 'dl throughput', 'throughput',
       'e-utran ip throughput ue dl', 'dl_throughput_kbps', 'throughput dl',
       'eutran ip throughput ue dl', 'ip throughput',
-      'e-utran ip throughput ue dl std',
-      'eutran ip throughput ue dl std',
-      'e-utran ip throughput ue dl (kbps)',
-      'ip throughput ue dl',
+      'e-utran ip throughput ue dl std', 'eutran ip throughput ue dl std',
+      'e-utran ip throughput ue dl (kbps)', 'ip throughput ue dl',
+      '3g dl throughput_std(kbps)', '3g dl throughput', '3g throughput',
+      '3g dl throughput (kbps)', '3g user dl throughput', 'hsdpa throughput',
+      'hsdpa throughput (kbps)', 'hsdpa throughput_std(kbps)', 'hsdpa user dl throughput',
+      'user dl throughput', 'user dl throughput (kbps)', 'user throughput dl',
+      'user throughput dl (kbps)', '3g ip throughput', 'downlink throughput',
+      'dl throughput (kbps)',
+      'gprs throughput', 'edge throughput', 'gprs/edge throughput', '2g throughput',
+      '2g dl throughput', '2g throughput (kbps)', 'gprs throughput (kbps)'
     ]
   }
 ]

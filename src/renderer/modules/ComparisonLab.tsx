@@ -91,6 +91,9 @@ export default function ComparisonLab(): React.JSX.Element {
   const [metric, setMetric] = useState<CompareMetric>('prb')
   const [view, setView] = useState<CompareView>('delta')
   const [sort, setSort] = useState<CompareSort>('worst')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = 50
   const [result, setResult] = useState<ComparisonResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -102,7 +105,10 @@ export default function ComparisonLab(): React.JSX.Element {
     void (async () => {
       try {
         const r = await window.api.analytics.comparison({ type, scope, metric, grain, period })
-        if (alive) setResult(r)
+        if (alive) {
+          setResult(r)
+          setPage(1)
+        }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -119,6 +125,19 @@ export default function ComparisonLab(): React.JSX.Element {
   const option: EChartsOption | null = useMemo(
     () => (result && chartRows.length > 0 ? rankingOption(result, chartRows, view) : null),
     [result, chartRows, view]
+  )
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return ranked
+    const q = search.trim().toLowerCase()
+    return ranked.filter((r) => r.name.toLowerCase().includes(q))
+  }, [ranked, search])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pagedRows = useMemo(
+    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filtered, currentPage, pageSize]
   )
 
   return (
@@ -141,7 +160,7 @@ export default function ComparisonLab(): React.JSX.Element {
             <button
               key={t.id}
               className={`seg-btn${type === t.id ? ' active' : ''}`}
-              onClick={() => setType(t.id)}
+              onClick={() => { setType(t.id); setPage(1) }}
             >
               {t.label}
             </button>
@@ -153,7 +172,7 @@ export default function ComparisonLab(): React.JSX.Element {
               <button
                 key={s.id}
                 className={`seg-btn${scope === s.id ? ' active' : ''}`}
-                onClick={() => setScope(s.id)}
+                onClick={() => { setScope(s.id); setPage(1) }}
               >
                 {s.label}
               </button>
@@ -165,7 +184,7 @@ export default function ComparisonLab(): React.JSX.Element {
             <button
               key={m.id}
               className={`seg-btn${metric === m.id ? ' active' : ''}`}
-              onClick={() => setMetric(m.id)}
+              onClick={() => { setMetric(m.id); setPage(1) }}
             >
               {m.label}
             </button>
@@ -182,7 +201,7 @@ export default function ComparisonLab(): React.JSX.Element {
             </button>
           ))}
         </div>
-        <select className="sel" value={sort} onChange={(e) => setSort(e.target.value as CompareSort)}>
+        <select className="sel" value={sort} onChange={(e) => { setSort(e.target.value as CompareSort); setPage(1) }}>
           {SORTS.map((s) => (
             <option key={s.id} value={s.id}>{s.label}</option>
           ))}
@@ -192,7 +211,7 @@ export default function ComparisonLab(): React.JSX.Element {
       {error && <div className="notice notice-error">{error}</div>}
       {loading && !result && <div className="notice">Loading comparison…</div>}
       {!loading && !error && !result && (
-        <div className="notice">No weekly aggregates yet — import data first.</div>
+        <div className="notice">No {grain} aggregates yet — import data first.</div>
       )}
 
       {result && (
@@ -226,9 +245,21 @@ export default function ComparisonLab(): React.JSX.Element {
           </div>
 
           <div className="card">
-            <div className="card-head-row">
-              <h3>Ranking table</h3>
-              <span className="card-note">{result.totalRows.toLocaleString()} entities</span>
+            <div className="card-head-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <h3>Ranking table</h3>
+                <span className="card-note">
+                  Showing {filtered.length === 0 ? '0' : `${(currentPage - 1) * pageSize + 1}–${Math.min(currentPage * pageSize, filtered.length)}`} of {filtered.length.toLocaleString()} entities
+                  {search && ` (filtered from ${result.totalRows.toLocaleString()})`}
+                </span>
+              </div>
+              <input
+                className="input"
+                style={{ width: 240 }}
+                placeholder={`Search ${scope}…`}
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+              />
             </div>
             <div className="preview-scroll">
               <table className="data-table">
@@ -247,7 +278,8 @@ export default function ComparisonLab(): React.JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {ranked.map((r, i) => {
+                  {pagedRows.map((r, idx) => {
+                    const i = (currentPage - 1) * pageSize + idx
                     const worseIsHigher = result.kpis.find((k) => k.metric === result.metric)?.worseIsHigher ?? false
                     return (
                       <tr key={`${r.id}-${r.name}`}>
@@ -282,9 +314,30 @@ export default function ComparisonLab(): React.JSX.Element {
                       </tr>
                     )
                   })}
+                  {pagedRows.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-dim)' }}>
+                        {search ? 'No matching entities found.' : 'No rows to display.'}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
+
+            {totalPages > 1 && (
+              <div className="table-pagination" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <span className="card-note">Page {currentPage} of {totalPages}</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn" disabled={currentPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                    ← Previous
+                  </button>
+                  <button className="btn" disabled={currentPage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

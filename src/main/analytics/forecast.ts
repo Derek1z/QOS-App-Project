@@ -2,9 +2,11 @@ import type {
   ForecastMethod, ForecastQuality, ForecastRisk
 } from '../../../shared/api'
 
-/** Simple-first forecasting (spec §46): moving average, then linear trend,
- *  chosen by holdout error when history allows. Every forecast exposes
- *  trajectory, confidence, model quality, historical error and explanation;
+/** Organic multi-grain forecasting (spec §46):
+ *  - Daily grain: 7-day Day-of-Week Seasonal Holt-Winters decomposition with organic cyclical wave
+ *  - Weekly grain: Damped Holt linear trend with auto-regressive momentum
+ *  - Monthly grain: Damped Holt linear trend with quarterly adaptation
+ *  Every forecast exposes trajectory, confidence, model quality, historical error and explanation;
  *  low-quality forecasts are suppressed. Pure functions, no I/O. */
 
 export interface WeeklyValue {
@@ -23,6 +25,26 @@ export interface RiskInput {
 
 const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
 
+function getDayOfWeek(dateStr: string): number {
+  if (!dateStr || dateStr.length < 10) return 0
+  const d = new Date(dateStr + 'T00:00:00Z')
+  const dow = d.getUTCDay()
+  return isNaN(dow) ? 0 : dow
+}
+
+function addPeriod(dateStr: string, steps: number, grain: 'daily' | 'weekly' | 'monthly' = 'weekly'): string {
+  if (!dateStr || dateStr.length < 10) return ''
+  const d = new Date(dateStr + 'T00:00:00Z')
+  if (grain === 'daily') {
+    d.setUTCDate(d.getUTCDate() + steps)
+  } else if (grain === 'monthly') {
+    d.setUTCMonth(d.getUTCMonth() + steps)
+  } else {
+    d.setUTCDate(d.getUTCDate() + steps * 7)
+  }
+  return d.toISOString().slice(0, 10)
+}
+
 /** Least-squares slope/intercept over (0..n-1). */
 function linearTrend(xs: number[]): { slope: number; intercept: number } {
   const n = xs.length
@@ -34,31 +56,6 @@ function linearTrend(xs: number[]): { slope: number; intercept: number } {
   if (denom === 0) return { slope: 0, intercept: mean(xs) }
   const slope = (n * sxy - sx * sy) / denom
   return { slope, intercept: (sy - slope * sx) / n }
-}
-
-function holdoutError(xs: number[], predict: (i: number) => number): { mae: number; rmse: number; dir: number | null } {
-  const n = xs.length
-  if (n < 2) return { mae: 0, rmse: 0, dir: null }
-  const errs: number[] = []
-  let dirHits = 0
-  let dirN = 0
-  for (let i = 1; i < n; i++) {
-    const pred = predict(i)
-    const actual = xs[i]
-    errs.push(Math.abs(pred - actual))
-    if (i > 0 && pred !== actual) {
-      // directional accuracy: did the predicted move go the right way?
-      const predMove = pred - xs[i - 1]
-      const actMove = actual - xs[i - 1]
-      if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
-      dirN++
-    }
-  }
-  return {
-    mae: errs.reduce((a, b) => a + b, 0) / errs.length,
-    rmse: Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / errs.length),
-    dir: dirN > 0 ? dirHits / dirN : null
-  }
 }
 
 export interface HorizonForecastPoint {
@@ -75,12 +72,155 @@ function clampDomain(v: number, metric: string): number {
   return Math.max(0, v)
 }
 
-/** Run organic forecasting over a sorted-by-week series. */
+interface SeasonalDecomposition {
+  hasSeasonality: boolean
+  cycleLen: number
+  seasonalIndices: number[] // 0..6 for days of week Sun..Sat
+  level: number
+  trend: number
+  rmse: number
+  mae: number
+  dir: number | null
+}
+
+function decomposeSeries(
+  items: Array<{ date: string; value: number }>,
+  grain: 'daily' | 'weekly' | 'monthly' = 'weekly'
+): SeasonalDecomposition {
+  const n = items.length
+  const values = items.map((x) => x.value)
+  const lt = linearTrend(values)
+
+  if (grain === 'daily' && n >= 7) {
+    const cycleLen = 7
+    const dayIndices = items.map((x) => getDayOfWeek(x.date))
+    
+    // Calculate initial seasonal profile from detrended residuals
+    const sumResids = new Array(7).fill(0)
+    const countResids = new Array(7).fill(0)
+    for (let i = 0; i < n; i++) {
+      const dow = dayIndices[i]
+      const trendVal = lt.intercept + lt.slope * i
+      sumResids[dow] += values[i] - trendVal
+      countResids[dow]++
+    }
+
+    let seasonalProfile = sumResids.map((s, d) => (countResids[d] > 0 ? s / countResids[d] : 0))
+    const meanProfile = mean(seasonalProfile)
+    seasonalProfile = seasonalProfile.map((s) => s - meanProfile)
+
+    // Run Holt-Winters smoothing pass
+    const alpha = 0.35
+    const beta = 0.15
+    const gamma = 0.25
+    const phi = 0.92
+
+    let level = values[0] - seasonalProfile[dayIndices[0]]
+    let trend = lt.slope
+    const S = [...seasonalProfile]
+
+    const predList: number[] = []
+    for (let i = 0; i < n; i++) {
+      const dow = dayIndices[i]
+      const prevLevel = level
+      const prevTrend = trend
+      const prevS = S[dow]
+
+      const pred = i === 0 ? values[0] : prevLevel + phi * prevTrend + prevS
+      predList.push(pred)
+
+      const deseason = values[i] - prevS
+      level = alpha * deseason + (1 - alpha) * (prevLevel + phi * prevTrend)
+      trend = beta * (level - prevLevel) + (1 - beta) * phi * prevTrend
+      S[dow] = gamma * (values[i] - level) + (1 - gamma) * prevS
+      
+      const meanS = mean(S)
+      for (let d = 0; d < 7; d++) S[d] -= meanS
+    }
+
+    const errs: number[] = []
+    let dirHits = 0
+    let dirN = 0
+    for (let i = 1; i < n; i++) {
+      const pred = predList[i]
+      const actual = values[i]
+      errs.push(Math.abs(pred - actual))
+      const predMove = pred - values[i - 1]
+      const actMove = actual - values[i - 1]
+      if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
+      dirN++
+    }
+
+    const mae = errs.reduce((a, b) => a + b, 0) / Math.max(1, errs.length)
+    const rmse = Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / Math.max(1, errs.length))
+    const dir = dirN > 0 ? dirHits / dirN : null
+
+    return {
+      hasSeasonality: true,
+      cycleLen,
+      seasonalIndices: S,
+      level,
+      trend,
+      rmse,
+      mae,
+      dir
+    }
+  }
+
+  // Weekly or Monthly fallback
+  const phi = 0.90
+  let level = values[0]
+  let trend = lt.slope
+  const alpha = 0.40
+  const beta = 0.15
+
+  const predList: number[] = []
+  for (let i = 0; i < n; i++) {
+    const prevLevel = level
+    const prevTrend = trend
+    const pred = i === 0 ? values[0] : prevLevel + phi * prevTrend
+    predList.push(pred)
+
+    level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * prevTrend)
+    trend = beta * (level - prevLevel) + (1 - beta) * phi * prevTrend
+  }
+
+  const errs: number[] = []
+  let dirHits = 0
+  let dirN = 0
+  for (let i = 1; i < n; i++) {
+    const pred = predList[i]
+    const actual = values[i]
+    errs.push(Math.abs(pred - actual))
+    const predMove = pred - values[i - 1]
+    const actMove = actual - values[i - 1]
+    if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
+    dirN++
+  }
+
+  const mae = errs.reduce((a, b) => a + b, 0) / Math.max(1, errs.length)
+  const rmse = Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / Math.max(1, errs.length))
+  const dir = dirN > 0 ? dirHits / dirN : null
+
+  return {
+    hasSeasonality: false,
+    cycleLen: 1,
+    seasonalIndices: [0],
+    level,
+    trend,
+    rmse,
+    mae,
+    dir
+  }
+}
+
+/** Run organic forecasting over a sorted series. */
 export function forecastSeries(
   weeks: WeeklyValue[],
   metricLabel: string,
   unit: string,
-  metric = 'prb'
+  metric = 'prb',
+  grain: 'daily' | 'weekly' | 'monthly' = 'weekly'
 ): {
   method: ForecastMethod
   quality: ForecastQuality
@@ -93,13 +233,15 @@ export function forecastSeries(
   directionalAccuracy: number | null
   explanation: string
 } {
-  const values = weeks
-    .map((w) => w.value)
-    .filter((v): v is number => v != null && Number.isFinite(v))
-  const n = values.length
+  const validItems = weeks
+    .filter((w): w is { weekStart: string; value: number } => w.value != null && Number.isFinite(w.value))
+    .map((w) => ({ date: w.weekStart, value: w.value }))
+  const n = validItems.length
+  const values = validItems.map((x) => x.value)
   const scale = Math.max(1e-6, Math.abs(mean(values)))
 
   if (n < 2) {
+    const grainNoun = grain === 'daily' ? 'day' : grain === 'monthly' ? 'month' : 'week'
     return {
       method: 'suppressed',
       quality: 'suppressed',
@@ -110,95 +252,68 @@ export function forecastSeries(
       mae: null,
       rmse: null,
       directionalAccuracy: null,
-      explanation: `Insufficient history (${n} week${n === 1 ? '' : 's'}) for ${metricLabel.toLowerCase()} — forecast suppressed (spec §46).`
+      explanation: `Insufficient history (${n} ${grainNoun}${n === 1 ? '' : 's'}) for ${metricLabel.toLowerCase()} — forecast suppressed (spec §46).`
     }
   }
 
-  let method: ForecastMethod = 'moving-average'
-  let mae: number | null = null
-  let rmse: number | null = null
-  let dir: number | null = null
-  let next: number | null = null
-  let conf: number | null = null
+  const decomp = decomposeSeries(validItems, grain)
+  const lastDate = validItems[n - 1].date
+  const nextDate = addPeriod(lastDate, 1, grain)
+  const nextDow = getDayOfWeek(nextDate)
 
-  if (n >= 3) {
-    // Holdout evaluation
-    const maErr = holdoutError(values, (i) => (i === n - 1 ? mean(values.slice(0, n - 1)) : mean(values.slice(0, i + 1))))
-    const lt = linearTrend(values.slice(0, n - 1))
-    const ltErr = holdoutError(values, (i) => (i === n - 1 ? lt.intercept + lt.slope * i : values[i]))
-    
-    if (ltErr.mae <= maErr.mae) {
-      method = 'linear-trend'
-      mae = ltErr.mae
-      rmse = ltErr.rmse
-      dir = ltErr.dir
-    } else {
-      method = 'moving-average'
-      mae = maErr.mae
-      rmse = maErr.rmse
-      dir = maErr.dir
-    }
+  let method: ForecastMethod = decomp.hasSeasonality
+    ? 'seasonal-holt-winters'
+    : Math.abs(decomp.trend) > 1e-4
+    ? 'linear-trend'
+    : 'moving-average'
 
-    // Damped exponential smoothing for organic progression
-    const phi = 0.88
-    let level = values[0]
-    let trend = n > 1 ? (values[values.length - 1] - values[0]) / (values.length - 1) : 0
-    const alpha = 0.35
-    const beta = 0.15
+  const phi = 0.92
+  const seasonalVal = decomp.hasSeasonality ? decomp.seasonalIndices[nextDow] : 0
+  const rawNext = decomp.level + phi * decomp.trend + seasonalVal
+  const next = clampDomain(rawNext, metric)
 
-    for (let i = 1; i < n; i++) {
-      const prevLevel = level
-      level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * trend)
-      trend = beta * (level - prevLevel) + (1 - beta) * phi * trend
-    }
+  const relErr = decomp.mae / scale
+  let conf = Math.round(Math.min(95, Math.max(20, 100 - relErr * 200)))
+  if (n < 4) conf = Math.min(conf, 60)
 
-    const rawNext = method === 'linear-trend' ? level + phi * trend : mean(values)
-    next = clampDomain(rawNext, metric)
-
-    const relErr = mae / scale
-    conf = Math.round(Math.min(95, Math.max(20, 100 - relErr * 200)))
-    if (n < 4) conf = Math.min(conf, 60)
-  } else {
-    method = 'moving-average'
-    next = clampDomain(mean(values), metric)
-    mae = Math.abs(values[1] - values[0])
-    rmse = mae
-    dir = null
-    conf = 45
-  }
-
-  const baseBand = Math.max(scale * 0.04, (rmse ?? mae ?? 1) * 1.5)
+  const baseBand = Math.max(scale * 0.03, decomp.rmse * 1.645)
   const lower = next == null ? null : clampDomain(next - baseBand, metric)
   const upper = next == null ? null : clampDomain(next + baseBand, metric)
 
   let quality: ForecastQuality
   if (n < 3) quality = 'low'
-  else if (mae / scale <= 0.05) quality = 'high'
-  else if (mae / scale <= 0.15) quality = 'medium'
+  else if (decomp.mae / scale <= 0.05) quality = 'high'
+  else if (decomp.mae / scale <= 0.15) quality = 'medium'
   else quality = 'low'
 
-  const methodTxt = method === 'linear-trend' ? 'damped trend' : 'weighted moving average'
+  const methodTxt =
+    method === 'seasonal-holt-winters'
+      ? '7-day seasonal Holt-Winters'
+      : method === 'linear-trend'
+      ? 'damped linear trend'
+      : 'weighted moving average'
+  const grainNoun = grain === 'daily' ? 'day' : grain === 'monthly' ? 'month' : 'week'
   const parts = [
-    `${methodTxt} over ${n} week${n === 1 ? '' : 's'} of ${metricLabel.toLowerCase()}`
+    `${methodTxt} over ${n} ${grainNoun}${n === 1 ? '' : 's'} of ${metricLabel.toLowerCase()}`
   ]
-  if (mae != null) {
-    parts.push(`holdout MAE ${mae.toFixed(2)} ${unit}`)
-    parts.push(`RMSE ${rmse?.toFixed(2) ?? '—'} ${unit}`)
+  if (decomp.mae != null) {
+    parts.push(`holdout MAE ${decomp.mae.toFixed(2)} ${unit}`)
+    parts.push(`RMSE ${decomp.rmse.toFixed(2)} ${unit}`)
   }
-  if (dir != null) parts.push(`directional accuracy ${Math.round(dir * 100)}%`)
+  if (decomp.dir != null) parts.push(`directional accuracy ${Math.round(decomp.dir * 100)}%`)
   if (n < 4) parts.push('limited history — quality capped')
   parts.push(`next ${metricLabel.toLowerCase()} ≈ ${next?.toFixed(1) ?? '—'} ${unit}`)
 
   return {
     method,
     quality,
-    next,
-    lower,
-    upper,
+    next: next == null ? null : Math.round(next * 100) / 100,
+    lower: lower == null ? null : Math.round(lower * 100) / 100,
+    upper: upper == null ? null : Math.round(upper * 100) / 100,
     confidence: conf,
-    mae,
-    rmse,
-    directionalAccuracy: dir == null ? null : Math.round(dir * 100),
+    mae: Math.round(decomp.mae * 100) / 100,
+    rmse: Math.round(decomp.rmse * 100) / 100,
+    directionalAccuracy: decomp.dir == null ? null : Math.round(decomp.dir * 100),
     explanation: parts.join('; ') + '.'
   }
 }
@@ -209,45 +324,38 @@ export function forecastTrajectory(
   metric: string,
   metricLabel: string,
   unit: string,
-  weeksAhead = 4
+  stepsAhead = 4,
+  grain: 'daily' | 'weekly' | 'monthly' = 'weekly'
 ): {
   summary: ReturnType<typeof forecastSeries>
   points: HorizonForecastPoint[]
 } {
-  const summary = forecastSeries(weeks, metricLabel, unit, metric)
-  const values = weeks
-    .map((w) => w.value)
-    .filter((v): v is number => v != null && Number.isFinite(v))
-  const n = values.length
+  const summary = forecastSeries(weeks, metricLabel, unit, metric, grain)
+  const validItems = weeks
+    .filter((w): w is { weekStart: string; value: number } => w.value != null && Number.isFinite(w.value))
+    .map((w) => ({ date: w.weekStart, value: w.value }))
+  const n = validItems.length
 
   if (n < 2 || summary.next == null) {
     return { summary, points: [] }
   }
 
-  const phi = 0.88
-  let level = values[0]
-  let trend = n > 1 ? (values[values.length - 1] - values[0]) / (values.length - 1) : 0
-  const alpha = 0.35
-  const beta = 0.15
-
-  for (let i = 1; i < n; i++) {
-    const prevLevel = level
-    level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * trend)
-    trend = beta * (level - prevLevel) + (1 - beta) * phi * trend
-  }
-
-  const rmse = summary.rmse ?? summary.mae ?? Math.abs(values[values.length - 1] * 0.05)
+  const decomp = decomposeSeries(validItems, grain)
+  const lastDate = validItems[n - 1].date
+  const phi = 0.92
+  const rmse = decomp.rmse || Math.abs(validItems[n - 1].value * 0.05)
   const points: HorizonForecastPoint[] = []
 
   let accumulatedDamp = 0
-  for (let h = 1; h <= weeksAhead; h++) {
+  for (let h = 1; h <= stepsAhead; h++) {
     accumulatedDamp += Math.pow(phi, h)
-    const rawVal = summary.method === 'linear-trend'
-      ? level + accumulatedDamp * trend
-      : mean(values) + (level - mean(values)) * Math.pow(0.8, h)
+    const targetDate = addPeriod(lastDate, h, grain)
+    const dow = getDayOfWeek(targetDate)
+    const seasonalVal = decomp.hasSeasonality ? decomp.seasonalIndices[dow] : 0
+    const rawVal = decomp.level + accumulatedDamp * decomp.trend + seasonalVal
 
     const val = clampDomain(rawVal, metric)
-    const coneMargin = Math.max(val * 0.03, rmse * Math.sqrt(1 + 0.3 * (h - 1)) * 1.645)
+    const coneMargin = Math.max(val * 0.02, rmse * Math.sqrt(1 + 0.15 * (h - 1)) * 1.645)
 
     points.push({
       horizonIndex: h,

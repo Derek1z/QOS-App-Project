@@ -301,6 +301,53 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', 'volume', '3g data volume', '3g traffic']
     },
     {
+      key: 'peak_hour_traffic_utilization_3g',
+      label: '3G Peak Hour Traffic Utilization',
+      unit: '%',
+      worseIsHigher: true,
+      betterDirection: 'lower_is_better',
+      category: 'Congestion',
+      target: 80.0,
+      warningThreshold: 75.0,
+      criticalThreshold: 90.0,
+      agg: 'avg',
+      isCore: false,
+      supportsCongestionAnalysis: true,
+      supportsPersistentNc: true,
+      showInExecutiveView: false,
+      decimalPrecision: 2,
+      aliases: [
+        '3g peak hour traffic utilization', '3g peak hour traffic utilization_nca',
+        '3g peak hour traffic utilization std', '3g peak hour traffic utilization_std(%)',
+        '3g utilization', '3g traffic utilization', 'peak hour traffic utilization',
+        'peak hour traffic utilization_nca', 'peak hour traffic utilization std',
+        'peak hour traffic utilization (%)', '3g peak hour traffic utilization (%)',
+        '3g traffic utilization (%)', 'utilization (%)', 'utilization'
+      ]
+    },
+    {
+      key: 'availability_3g',
+      label: '3G Cell Availability',
+      unit: '%',
+      worseIsHigher: false,
+      betterDirection: 'higher_is_better',
+      category: 'Availability',
+      target: 99.5,
+      warningThreshold: 99.0,
+      criticalThreshold: 95.0,
+      agg: 'avg',
+      isCore: false,
+      supportsCongestionAnalysis: false,
+      supportsPersistentNc: false,
+      showInExecutiveView: false,
+      decimalPrecision: 2,
+      aliases: [
+        '3g cell availability', '3g cell availability_std(%)', '3g cell availability (%)',
+        '3g availability', '3g cell availability std', 'utran cell availability',
+        'cell availability', 'cell availability (%)', 'availability'
+      ]
+    },
+    {
       key: 'connected_users',
       label: 'Connected Users',
       unit: '',

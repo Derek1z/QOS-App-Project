@@ -82,67 +82,73 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
-  const idList = cellIds.join(',')
-
-  await conn.run(`DELETE FROM cell_health_history WHERE cell_id IN (${idList})`)
 
   const prbThresh = rules.prbThresholdPct ?? 80
 
-  await conn.run(`
-    WITH peers AS (
-      SELECT week_start,
-        avg(dl_throughput_kbps_avg) AS avg_throughput
-      FROM agg_cell_weekly GROUP BY week_start
-    ),
-    vol AS (
-      SELECT cell_id, week_start, data_volume_mb_sum,
-        lag(data_volume_mb_sum) OVER (PARTITION BY cell_id ORDER BY week_start) AS prev_volume
-      FROM agg_cell_weekly
-    ),
-    prep AS (
-      SELECT w.cell_id, d.date_id,
-        ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - (100.0 * (COALESCE(w.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS capacity,
-        CASE WHEN p.avg_throughput > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)), 1) ELSE 100.0 END AS throughput,
-        ROUND(LEAST(100.0, GREATEST(0.0, COALESCE(w.availability_pct_avg, 100.0))), 1) AS availability,
-        CASE COALESCE(l.lifecycle, 'Healthy')
-          WHEN 'Healthy' THEN 100.0
-          WHEN 'Recovering' THEN 90.0
-          WHEN 'New NC' THEN 60.0
-          WHEN 'Recurring NC' THEN 50.0
-          WHEN 'Persistent NC' THEN 40.0
-          WHEN 'Chronic NC' THEN 30.0
-          ELSE 100.0
-        END AS nc_health,
-        CASE
-          WHEN v.prev_volume IS NOT NULL AND v.prev_volume > 0 THEN
-            ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - LEAST(100.0, GREATEST(0.0, ((w.data_volume_mb_sum - v.prev_volume) / v.prev_volume) * 100.0)) / 0.3)), 1)
-          ELSE 100.0
-        END AS growth
-      FROM agg_cell_weekly w
-      JOIN peers p USING (week_start)
-      JOIN vol v USING (cell_id, week_start)
-      LEFT JOIN cell_nc_lifecycle l
-        ON l.cell_id = w.cell_id AND l.period_start = w.week_start
-        AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
-      JOIN dim_date d ON d.date = w.week_end
-      WHERE w.cell_id IN (${idList})
-    ),
-    scored AS (
-      SELECT cell_id, date_id,
-        ROUND(0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * nc_health + 0.1 * growth, 1) AS final_score,
-        json_object(
-          'capacity', capacity,
-          'throughput', throughput,
-          'availability', availability,
-          'ncHealth', nc_health,
-          'growth', growth,
-          'kpiHealth', 100.0
-        ) AS comps_json
-      FROM prep
-    )
-    INSERT INTO cell_health_history (cell_id, date_id, health_score, components)
-    SELECT cell_id, date_id, final_score, comps_json
-    FROM scored
-  `)
+  const BATCH_SIZE = 2500
+  for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
+    const chunk = cellIds.slice(b, b + BATCH_SIZE)
+    const idList = chunk.join(',')
+
+    await conn.run(`DELETE FROM cell_health_history WHERE cell_id IN (${idList})`)
+
+    await conn.run(`
+      WITH peers AS (
+        SELECT week_start,
+          avg(dl_throughput_kbps_avg) AS avg_throughput
+        FROM agg_cell_weekly GROUP BY week_start
+      ),
+      vol AS (
+        SELECT cell_id, week_start, data_volume_mb_sum,
+          lag(data_volume_mb_sum) OVER (PARTITION BY cell_id ORDER BY week_start) AS prev_volume
+        FROM agg_cell_weekly
+        WHERE cell_id IN (${idList})
+      ),
+      prep AS (
+        SELECT w.cell_id, d.date_id,
+          ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - (100.0 * (COALESCE(w.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS capacity,
+          CASE WHEN p.avg_throughput > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)), 1) ELSE 100.0 END AS throughput,
+          ROUND(LEAST(100.0, GREATEST(0.0, COALESCE(w.availability_pct_avg, 100.0))), 1) AS availability,
+          CASE COALESCE(l.lifecycle, 'Healthy')
+            WHEN 'Healthy' THEN 100.0
+            WHEN 'Recovering' THEN 90.0
+            WHEN 'New NC' THEN 60.0
+            WHEN 'Recurring NC' THEN 50.0
+            WHEN 'Persistent NC' THEN 40.0
+            WHEN 'Chronic NC' THEN 30.0
+            ELSE 100.0
+          END AS nc_health,
+          CASE
+            WHEN v.prev_volume IS NOT NULL AND v.prev_volume > 0 THEN
+              ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - LEAST(100.0, GREATEST(0.0, ((w.data_volume_mb_sum - v.prev_volume) / v.prev_volume) * 100.0)) / 0.3)), 1)
+            ELSE 100.0
+          END AS growth
+        FROM agg_cell_weekly w
+        JOIN peers p USING (week_start)
+        JOIN vol v USING (cell_id, week_start)
+        LEFT JOIN cell_nc_lifecycle l
+          ON l.cell_id = w.cell_id AND l.period_start = w.week_start
+          AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
+        JOIN dim_date d ON d.date = w.week_end
+        WHERE w.cell_id IN (${idList})
+      ),
+      scored AS (
+        SELECT cell_id, date_id,
+          ROUND(0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * nc_health + 0.1 * growth, 1) AS final_score,
+          json_object(
+            'capacity', capacity,
+            'throughput', throughput,
+            'availability', availability,
+            'ncHealth', nc_health,
+            'growth', growth,
+            'kpiHealth', 100.0
+          ) AS comps_json
+        FROM prep
+      )
+      INSERT INTO cell_health_history (cell_id, date_id, health_score, components)
+      SELECT cell_id, date_id, final_score, comps_json
+      FROM scored
+    `)
+  }
 }
 

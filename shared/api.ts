@@ -589,6 +589,15 @@ export interface NcMovementRow {
   ncCells: number
   totalCells: number
   ncRate: number | null
+  coreKpiNcRates?: Record<string, {
+    key: string
+    label: string
+    unit: string
+    ncRate: number
+    breachedCells: number
+    totalCells: number
+    worseIsHigher: boolean
+  }>
 }
 
 export interface PriorityRow {
@@ -713,7 +722,7 @@ export interface CellDetail {
   kpis: CellKpiValue[]
 }
 
-export type PerfMetric = 'prb' | 'throughput' | 'users' | 'volume' | 'availability'
+export type PerfMetric = 'prb' | 'throughput' | 'users' | 'volume' | 'availability' | string
 
 export interface PercentilePoint {
   p: number
@@ -722,8 +731,12 @@ export interface PercentilePoint {
 
 export interface MetricDistribution {
   metric: PerfMetric
+  kpiKey?: string
   label: string
   unit: string
+  target?: number | null
+  worseIsHigher?: boolean
+  isCore?: boolean
   points: PercentilePoint[]
   mean: number | null
   min: number | null
@@ -733,11 +746,12 @@ export interface MetricDistribution {
   n: number
 }
 
-export type ScatterQuadrant = 'congested' | 'busy' | 'quiet' | 'healthy'
+export type ScatterQuadrant = 'congested' | 'busy' | 'quiet' | 'healthy' | string
 
 export interface ScatterPoint {
   cellId: number
   cellName: string
+  site?: string | null
   district: string | null
   region: string | null
   prb: number | null
@@ -745,20 +759,25 @@ export interface ScatterPoint {
   users: number | null
   isNc: boolean
   quadrant: ScatterQuadrant
+  kpis?: Record<string, number | null>
 }
 
 export interface CorrelationRow {
   a: PerfMetric
   b: PerfMetric
+  aLabel?: string
+  bLabel?: string
   pearson: number | null
   n: number
 }
 
 export interface PerformanceResult {
   weekStart: string
+  technology?: Technology
   totalCells: number
   prbThreshold: number
   throughputMedianKbps: number | null
+  kpis?: KpiDefinition[]
   distributions: MetricDistribution[]
   scatter: ScatterPoint[]
   correlations: CorrelationRow[]
@@ -845,6 +864,17 @@ export interface ExplorerResult {
 
 // --- Ghana map (Executive Overview): per-region KPIs + district drill-down ---
 
+export interface KpiMapMetric {
+  key: string
+  label: string
+  unit: string
+  avg: number | null
+  ncCells: number
+  ncRate: number
+  worseIsHigher: boolean
+  isCore: boolean
+}
+
 export interface RegionMapRow {
   id: number
   name: string
@@ -856,13 +886,14 @@ export interface RegionMapRow {
   users: number | null
   volumeMb: number | null
   availability: number | null
+  kpiMetrics?: Record<string, KpiMapMetric>
 }
 
 export interface DistrictMapRow extends RegionMapRow {
   region: string | null
 }
 
-export type InvestigationScope = 'cell' | 'site' | 'district'
+export type InvestigationScope = 'cell' | 'site' | 'district' | 'region'
 export type ActionStatus =
   | 'Unreviewed'
   | 'Investigating'
@@ -1000,7 +1031,7 @@ export interface EntityOption {
 export type ForecastMetric = 'prb' | 'traffic' | 'users' | 'throughput' | 'availability'
 export type ForecastRisk = 'Stable' | 'Watch' | 'At Risk' | 'Likely Breach' | 'Already Breached'
 export type ForecastHorizon = '1w' | '2w' | '4w' | '6w'
-export type ForecastMethod = 'moving-average' | 'linear-trend' | 'suppressed'
+export type ForecastMethod = 'moving-average' | 'linear-trend' | 'seasonal-holt-winters' | 'suppressed'
 export type ForecastQuality = 'high' | 'medium' | 'low' | 'suppressed'
 export type ForecastScope = 'network' | 'region' | 'district' | 'site' | 'cell'
 
@@ -1288,6 +1319,7 @@ export interface DynamicKpiCardData {
   nonCompliantCellPct: number | null
   persistentNcCount: number
   sparkline?: number[]
+  sparklineDates?: string[]
   missingSources?: string[]
   isBreached: boolean
 }
@@ -1438,7 +1470,7 @@ export interface Api {
       grain?: Grain
     }): Promise<ExecutiveOverviewResult>
     ncLifecycle(grain?: Grain): Promise<NcLifecycleResult>
-    ncMovement(limit?: number, grain?: Grain): Promise<NcMovementRow[]>
+    ncMovement(limit?: number, grain?: Grain, technology?: Technology): Promise<NcMovementRow[]>
     priorityQueue(mode: PriorityMode, limit?: number): Promise<PriorityRow[]>
     health(grain?: Grain): Promise<HealthResult>
     healthMatrix(
@@ -1457,7 +1489,7 @@ export interface Api {
       offset?: number
     }): Promise<CellIntelligenceResult>
     cellDetail(cellId: number, grain?: Grain): Promise<CellDetail | null>
-    performance(opts?: { grain?: Grain; period?: PeriodId }): Promise<PerformanceResult>
+    performance(opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }): Promise<PerformanceResult>
     comparison(opts?: {
       type?: ComparisonType
       scope?: CompareScope
@@ -1471,9 +1503,9 @@ export interface Api {
       opts?: { q?: string }
     ): Promise<ExplorerResult>
     /** Ghana map: one row per region with latest-week KPIs. */
-    regionMap(): Promise<RegionMapRow[]>
+    regionMap(technology?: Technology, grain?: Grain, period?: PeriodId): Promise<RegionMapRow[]>
     /** Ghana map drill-down: districts of one region with latest-week KPIs. */
-    regionDistricts(regionId: number): Promise<DistrictMapRow[]>
+    regionDistricts(regionId: number, technology?: Technology, grain?: Grain, period?: PeriodId): Promise<DistrictMapRow[]>
     priorityCenter(opts?: PriorityCenterOpts): Promise<PriorityCenterResult>
     forecast(opts?: ForecastOpts): Promise<ForecastResult>
   }

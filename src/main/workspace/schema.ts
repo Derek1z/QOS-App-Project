@@ -286,5 +286,30 @@ export const SCHEMA_SQL: string[] = [
           CAST(strftime(d, '%G') AS INTEGER), CAST(strftime(d, '%V') AS INTEGER),
           CAST(date_trunc('week', d) AS DATE),
           month(d), year(d), quarter(d)
-   FROM (SELECT unnest(range(DATE '2020-01-01', DATE '2036-01-01', INTERVAL 1 DAY)) AS d)`
+   FROM (SELECT unnest(range(DATE '2020-01-01', DATE '2036-01-01', INTERVAL 1 DAY)) AS d)`,
+
+  // --- daily cell aggregates view (derived from fact_cell_daily + dim_date + ruleset) ---
+  `CREATE VIEW IF NOT EXISTS agg_cell_daily AS
+   SELECT
+     d.date,
+     d.date AS period_start,
+     d.date AS period_end,
+     d.date AS week_start,
+     d.date AS month_start,
+     d.iso_year,
+     d.iso_week,
+     d.month,
+     d.year,
+     f.cell_id,
+     1 AS observed_days,
+     CASE WHEN f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
+     f.prb_utilization AS prb_avg,
+     f.prb_utilization AS prb_peak,
+     f.data_volume_mb AS data_volume_mb_sum,
+     f.connected_users AS connected_users_sum,
+     f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+     f.availability_pct AS availability_pct_avg,
+     (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
+   FROM fact_cell_daily f
+   JOIN dim_date d USING (date_id)`
 ]

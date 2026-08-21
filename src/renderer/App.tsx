@@ -17,12 +17,14 @@ import HealthMatrix from './modules/HealthMatrix'
 import CellIntelligence from './modules/CellIntelligence'
 import PerformanceAnalysis from './modules/PerformanceAnalysis'
 import ComparisonLab from './modules/ComparisonLab'
+import SimulationLab from './modules/SimulationLab'
 import NetworkExplorer from './modules/NetworkExplorer'
 import InvestigationWorkspace from './modules/InvestigationWorkspace'
 import PriorityCenter from './modules/PriorityCenter'
 import Forecasting from './modules/Forecasting'
 import ReportingCenter from './modules/ReportingCenter'
 import KpiDefinitions from './modules/KpiDefinitions'
+import CellCompareModal from './components/CellCompareModal'
 
 export default function App(): React.JSX.Element {
   const module = useAppStore((s) => s.module)
@@ -125,6 +127,8 @@ export default function App(): React.JSX.Element {
           <PerformanceAnalysis />
         ) : module === 'comparison-lab' ? (
           <ComparisonLab />
+        ) : module === 'simulation-lab' ? (
+          <SimulationLab />
         ) : module === 'explorer' ? (
           <NetworkExplorer />
         ) : module === 'investigation' ? (
@@ -144,6 +148,7 @@ export default function App(): React.JSX.Element {
       <StatusBar />
       <CommandPalette />
       <CreateWorkspaceModal />
+      <CellCompareModal />
     </div>
   )
 }

@@ -31,17 +31,21 @@ const BAND_COLOR: Record<string, string> = {
 export default function CellIntelligence(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const grain = useAppStore((s) => s.grain)
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const togglePin = useAppStore((s) => s.togglePin)
+  const isPinned = useAppStore((s) => s.isPinned)
+  const setModule = useAppStore((s) => s.setModule)
   const [data, setData] = useState<CellIntelligenceResult>({ total: 0, rows: [] })
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [fLifecycle, setFLifecycle] = useState('')
-  const [fTrend, setFTrend] = useState('')
-  const [fSeverity, setFSeverity] = useState('')
-  const [fPriority, setFPriority] = useState(0)
+  const [fLifecycle, setFLifecycle] = useState<string>('')
+  const [fTrend, setFTrend] = useState<string>('')
+  const [fSeverity, setFSeverity] = useState<string>('')
+  const [fPriority, setFPriority] = useState<number>(0)
+  const [prbThreshold, setPrbThreshold] = useState(80)
   const [detail, setDetail] = useState<CellDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
-  const [prbThreshold, setPrbThreshold] = useState(80)
   const [detailLoading, setDetailLoading] = useState(false)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -278,7 +282,34 @@ export default function CellIntelligence(): React.JSX.Element {
                   {[detail.site, detail.district, detail.region].filter(Boolean).join(' · ') || '—'}
                 </div>
               </div>
-              <button className="btn" onClick={() => setDetailOpen(false)}>✕</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className={`btn btn-sm ${isPinned(`cell:${detail.cellId}`) ? 'btn-primary' : 'btn-ghost'}`}
+                  style={{ border: '1px solid var(--border)' }}
+                  onClick={() => {
+                    togglePin({
+                      id: `cell:${detail.cellId}`,
+                      type: 'cell',
+                      name: detail.cellName,
+                      detail: detail.site ?? undefined
+                    })
+                  }}
+                >
+                  {isPinned(`cell:${detail.cellId}`) ? '⭐ Pinned' : '☆ Pin'}
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  style={{ border: '1px solid var(--border)' }}
+                  title="Open in Simulation Lab"
+                  onClick={() => {
+                    setDetailOpen(false)
+                    setModule('simulation-lab')
+                  }}
+                >
+                  🧪 Simulate
+                </button>
+                <button className="btn btn-sm" onClick={() => setDetailOpen(false)}>✕</button>
+              </div>
             </div>
 
             {detail.current && (
@@ -318,11 +349,11 @@ export default function CellIntelligence(): React.JSX.Element {
             )}
 
             {detailLoading ? (
-              <p className="card-note">Loading…</p>
+              <p className="card-note">Loading {grain} data…</p>
             ) : detail.weeks.length > 0 ? (
-              <Chart option={cellDetailOption(detail, prbThreshold, grain)} height={490} />
+              <Chart option={cellDetailOption(detail, prbThreshold, grain, selectedTech)} height={480} />
             ) : (
-              <p className="card-note">No history for this cell yet.</p>
+              <p className="card-note">No {grain} history for this cell yet.</p>
             )}
 
             {detail.weeks.length > 0 && (
@@ -338,10 +369,12 @@ export default function CellIntelligence(): React.JSX.Element {
                 ))}
               </div>
             )}
-            <p className="card-note">
-              Weekly history (ISO weeks, Monday–Sunday). The PRB grid shows the ruleset threshold
-              ({prbThreshold}%); the strip marks each week's NC state (N new · R recurring ·
-              P persistent · C recovering). Hover the charts for synchronized values.
+            <p className="card-note" style={{ marginTop: 4 }}>
+              {grain === 'daily'
+                ? `Daily history (day-by-day observations). ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
+                : grain === 'monthly'
+                ? `Monthly history. ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
+                : `Weekly history (ISO weeks). ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%; strip marks NC state (N new · R recurring · P persistent · C recovering).`}
             </p>
           </div>
         </div>

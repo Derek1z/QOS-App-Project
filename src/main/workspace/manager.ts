@@ -1,5 +1,6 @@
 import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync } from 'node:fs'
 import { join, basename } from 'node:path'
+import os from 'node:os'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
 import { SCHEMA_SQL } from './schema'
 import { acquireLock, releaseLock } from './lock'
@@ -7,7 +8,21 @@ import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
+import { recomputeNcLifecycle } from '../analytics/nc'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
+
+export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
+  const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
+  const memLimitGb = Math.max(4, Math.min(32, Math.floor(totalRamGb * 0.75)))
+  const cpuThreads = Math.max(1, os.cpus().length)
+  try {
+    await connection.run(
+      `PRAGMA memory_limit = '${memLimitGb}GB'; PRAGMA preserve_insertion_order = false; PRAGMA threads = ${cpuThreads};`
+    )
+  } catch (err) {
+    console.warn('[duckdb] session config warning:', err)
+  }
+}
 
 function isValidDuckDbFile(path: string): boolean {
   try {
@@ -140,6 +155,43 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
      ran_at TIMESTAMP DEFAULT now(),
      ok BOOLEAN, actions JSON, summary VARCHAR, duration_ms BIGINT
    )`)
+  await connection.run(`
+    CREATE OR REPLACE VIEW agg_cell_daily AS
+    SELECT
+      d.date,
+      d.date AS period_start,
+      d.date AS period_end,
+      d.date AS week_start,
+      d.date AS month_start,
+      d.iso_year,
+      d.iso_week,
+      d.month,
+      d.year,
+      f.cell_id,
+      1 AS observed_days,
+      CASE WHEN f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
+      f.prb_utilization AS prb_avg,
+      f.prb_utilization AS prb_peak,
+      f.data_volume_mb AS data_volume_mb_sum,
+      f.connected_users AS connected_users_sum,
+      f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+      f.availability_pct AS availability_pct_avg,
+      (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
+    FROM fact_cell_daily f
+    JOIN dim_date d USING (date_id)
+  `)
+
+  // Auto-backfill daily/monthly NC lifecycle if missing in existing workspaces
+  const dailyLifeR = await connection.runAndReadAll(
+    `SELECT count(*) AS n FROM cell_nc_lifecycle WHERE grain = 'daily'`
+  )
+  if (Number(dailyLifeR.getRowObjects()[0]?.n ?? 0) === 0) {
+    const cellsR = await connection.runAndReadAll(`SELECT DISTINCT cell_id FROM fact_cell_daily`)
+    const cellIds = cellsR.getRowObjects().map((r) => Number(r.cell_id)).filter((id) => !isNaN(id))
+    if (cellIds.length > 0) {
+      await recomputeNcLifecycle(connection, cellIds)
+    }
+  }
 }
 
 // --- description / validation ---
@@ -224,9 +276,7 @@ export async function createWorkspace(dir: string, name: string, technology?: st
     instance = await DuckDBInstance.create(path)
     const connection = await instance.connect()
     try {
-      try {
-        await connection.run(`PRAGMA memory_limit = '512MB'; PRAGMA threads = auto; PRAGMA preserve_insertion_order = false;`)
-      } catch {}
+      await configureDuckDbSession(connection)
       for (const sql of SCHEMA_SQL) await connection.run(sql)
       const now = new Date().toISOString()
       const esc = safe.replace(/'/g, "''")
@@ -292,9 +342,7 @@ export async function openWorkspace(
     instance = await DuckDBInstance.create(path, config)
     const connection = await instance.connect()
     try {
-      try {
-        await connection.run(`PRAGMA memory_limit = '512MB'; PRAGMA threads = auto; PRAGMA preserve_insertion_order = false;`)
-      } catch {}
+      await configureDuckDbSession(connection)
       if (!readOnly) {
         await ensureUpgradeSchema(connection)
         await seedKpiDefs(connection, '2G')

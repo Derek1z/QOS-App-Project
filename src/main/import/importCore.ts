@@ -1,6 +1,7 @@
 import { statSync, readdirSync, unlinkSync, mkdirSync, createReadStream, createWriteStream } from 'node:fs'
 import { createGzip } from 'node:zlib'
 import { basename, join } from 'node:path'
+import os from 'node:os'
 import { isExcelPath, excelToTempCsv } from './excel'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import {
@@ -570,9 +571,13 @@ async function runImportCoreInner(
   const { mapping, header } = job
   const path = job.csvPath
 
-  // Enable multi-threaded vectorized execution and parallel hashing for 4M+ row datasets
+  // Enable multi-threaded vectorized execution and scalable memory limit for large datasets
   try {
-    await conn.run('PRAGMA threads = auto')
+    const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
+    const memLimitGb = Math.max(4, Math.min(32, Math.floor(totalRamGb * 0.75)))
+    const cpuThreads = Math.max(1, os.cpus().length)
+    await conn.run(`PRAGMA memory_limit = '${memLimitGb}GB'`)
+    await conn.run(`PRAGMA threads = ${cpuThreads}`)
     await conn.run('PRAGMA preserve_insertion_order = false')
   } catch {
     /* ignore if unsupported */

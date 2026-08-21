@@ -105,7 +105,12 @@ export async function searchEntities(scope: InvestigationScope, q = ''): Promise
     })
   }
 
-  const base: Record<'site' | 'district', { select: string; from: string; where: (esc: string) => string }> = {
+  const base: Record<'site' | 'district' | 'region', { select: string; from: string; where: (esc: string) => string }> = {
+    region: {
+      select: `rg.region_id AS id, rg.name AS name, NULL AS r, NULL AS d`,
+      from: `dim_region rg`,
+      where: (esc: string) => `rg.name ILIKE '%${esc}%'`
+    },
     site: {
       select: `s.site_id AS id, s.name AS name, rg.name AS r, d.name AS d`,
       from: `dim_site s
@@ -114,7 +119,7 @@ export async function searchEntities(scope: InvestigationScope, q = ''): Promise
       where: (esc: string) => `(s.name ILIKE '%${esc}%' OR COALESCE(d.name,'') ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
     },
     district: {
-      select: `d.district_id AS id, d.name AS name, rg.name AS r`,
+      select: `d.district_id AS id, d.name AS name, rg.name AS r, NULL AS d`,
       from: `dim_district d LEFT JOIN dim_region rg ON rg.region_id = d.region_id`,
       where: (esc: string) => `(d.name ILIKE '%${esc}%' OR COALESCE(rg.name,'') ILIKE '%${esc}%')`
     }
@@ -145,6 +150,9 @@ export async function getInvestigation(
 
   // 1. identity + hierarchy path
   const dimSql: Record<InvestigationScope, string> = {
+    region: `SELECT rg.name AS name, NULL AS s, NULL AS d, NULL AS r
+             FROM dim_region rg
+             WHERE rg.region_id = ${numEntityId}`,
     cell: `SELECT c.name AS name, s.name AS s, d.name AS d, rg.name AS r
            FROM dim_cell c
            LEFT JOIN dim_site s ON s.site_id = c.site_id
@@ -156,7 +164,7 @@ export async function getInvestigation(
            LEFT JOIN dim_district d ON d.district_id = s.district_id
            LEFT JOIN dim_region rg ON rg.region_id = d.region_id
            WHERE s.site_id = ${numEntityId}`,
-    district: `SELECT d.name AS name, rg.name AS r
+    district: `SELECT d.name AS name, rg.name AS r, NULL AS s
                FROM dim_district d
                LEFT JOIN dim_region rg ON rg.region_id = d.region_id
                WHERE d.district_id = ${numEntityId}`

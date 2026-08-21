@@ -99,8 +99,29 @@ export default function Forecasting(): React.JSX.Element {
     void load()
   }, [load, workspace?.path])
 
-  // entity search (debounced), non-network scopes only; the dropdown only
-  // opens while the input is focused, so picking an entity closes it
+  const changeScope = async (newScope: ForecastScope) => {
+    setScope(newScope)
+    setQuery('')
+    if (newScope === 'network') {
+      setEntity(null)
+      setOptions([])
+    } else {
+      try {
+        const opts = await searchOptions(newScope, '')
+        setOptions(opts)
+        if (opts.length > 0) {
+          setEntity(opts[0])
+        } else {
+          setEntity(null)
+        }
+      } catch (err) {
+        console.error('Failed to load scope entities:', err)
+        setEntity(null)
+      }
+    }
+  }
+
+  // entity search (debounced), non-network scopes only
   useEffect(() => {
     if (scope === 'network') {
       setOptions([])
@@ -109,24 +130,24 @@ export default function Forecasting(): React.JSX.Element {
       setPickerOpen(false)
       return
     }
-    if (query === '' && !pickerOpen) {
-      setOptions([])
-      return
-    }
     if (debounce.current) clearTimeout(debounce.current)
     debounce.current = setTimeout(() => {
       void (async () => {
         try {
-          setOptions(await searchOptions(scope, query))
+          const opts = await searchOptions(scope, query)
+          setOptions(opts)
+          if (!entity && opts.length > 0) {
+            setEntity(opts[0])
+          }
         } catch {
           setOptions([])
         }
       })()
-    }, query === '' ? 0 : 300)
+    }, query === '' ? 0 : 250)
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [scope, query, pickerOpen])
+  }, [scope, query])
 
   useEffect(() => {
     setRiskFilter('')
@@ -135,7 +156,6 @@ export default function Forecasting(): React.JSX.Element {
   function pick(ent: EntityOption): void {
     setEntity(ent)
     setQuery('')
-    setOptions([])
     setPickerOpen(false)
   }
 
@@ -174,36 +194,74 @@ export default function Forecasting(): React.JSX.Element {
             <button
               key={s.id}
               className={`seg-btn${scope === s.id ? ' active' : ''}`}
-              onClick={() => {
-                setScope(s.id)
-                setEntity(null)
-              }}
+              onClick={() => void changeScope(s.id)}
             >
               {s.label}
             </button>
           ))}
         </div>
         {scope !== 'network' && (
-          <div className="fc-picker">
-            <input
-              className="input"
-              placeholder={entity ? entity.name : `Search ${scope}s… (or select below)`}
-              value={query}
-              onFocus={() => {
-                if (blurTimer.current) clearTimeout(blurTimer.current)
-                setPickerOpen(true)
-              }}
-              onBlur={() => {
-                blurTimer.current = setTimeout(() => setPickerOpen(false), 150)
-              }}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+          <div className="fc-picker" style={{ position: 'relative', minWidth: '240px', maxWidth: '340px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+              <input
+                className="input"
+                style={{ width: '100%', paddingRight: entity ? '30px' : '10px' }}
+                placeholder={entity ? `Current: ${entity.name}` : `Search ${scope}s…`}
+                value={query}
+                onFocus={() => {
+                  if (blurTimer.current) clearTimeout(blurTimer.current)
+                  setPickerOpen(true)
+                }}
+                onBlur={() => {
+                  blurTimer.current = setTimeout(() => setPickerOpen(false), 220)
+                }}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setPickerOpen(true)
+                }}
+              />
+              {entity && !query && (
+                <button
+                  type="button"
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-dim)',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    padding: '2px'
+                  }}
+                  title="Clear entity selection"
+                  onClick={() => {
+                    setEntity(null)
+                    setQuery('')
+                    setPickerOpen(true)
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
             {pickerOpen && options.length > 0 && (
-              <div className="fc-options">
-                {options.slice(0, 12).map((o) => (
-                  <button key={`${scope}-${o.id}`} className="fc-option" onClick={() => pick(o)}>
-                    <span className="fc-option-name">{o.name}</span>
-                    <span className="fc-option-path">{o.path.join(' › ')}</span>
+              <div className="fc-options glass-card" style={{ width: '100%', maxHeight: '250px', overflowY: 'auto' }}>
+                {options.map((o) => (
+                  <button
+                    key={`${scope}-${o.id}`}
+                    type="button"
+                    className="fc-option"
+                    style={{
+                      background: entity?.id === o.id ? 'var(--bg-hover)' : 'transparent',
+                      borderLeft: entity?.id === o.id ? '3px solid var(--accent)' : '3px solid transparent'
+                    }}
+                    onMouseDown={() => pick(o)}
+                  >
+                    <span className="fc-option-name" style={{ color: entity?.id === o.id ? 'var(--accent)' : 'var(--text)' }}>
+                      {o.name}
+                    </span>
+                    {o.path.length > 0 && <span className="fc-option-path">{o.path.join(' › ')}</span>}
                   </button>
                 ))}
               </div>
@@ -290,7 +348,13 @@ export default function Forecasting(): React.JSX.Element {
                     <div className="fc-metric-label">{s.label}</div>
                     <div className="fc-metric-next">{fmtFc(fc.next, s.unit)}</div>
                     <div className="fc-metric-sub">
-                      {fc.quality === 'suppressed' ? 'suppressed' : `method ${fc.method}`}
+                      {fc.quality === 'suppressed'
+                        ? 'suppressed'
+                        : fc.method === 'seasonal-holt-winters'
+                        ? 'Method Seasonal-Trend'
+                        : fc.method === 'linear-trend'
+                        ? 'Method Linear-Trend'
+                        : 'Method Moving-Average'}
                       {' · '}{fc.quality}
                     </div>
                     {fc.next != null && fc.lower != null && fc.upper != null && (

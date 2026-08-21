@@ -2172,6 +2172,7 @@ function invMetricValue(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'):
     case 'volume': return w.volumeMb
     case 'availability': return w.availability
     case 'nc': return w.isNc ? 1 : 0
+    default: return null
   }
 }
 
@@ -2893,7 +2894,7 @@ export const previewApi: Api & { demo: true } = {
       offset?: number
     }): Promise<CellIntelligenceResult> => demoCellIntelligence(opts),
     cellDetail: async (cellId: number, _grain?: Grain): Promise<CellDetail | null> => demoCellDetail(cellId),
-    performance: async (_opts?: { grain?: Grain; period?: PeriodId }): Promise<PerformanceResult> => demoPerformance(),
+    performance: async (_opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }): Promise<PerformanceResult> => demoPerformance(),
     comparison: async (opts?: {
       type?: ComparisonType
       scope?: CompareScope

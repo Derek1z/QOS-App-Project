@@ -12,7 +12,7 @@ import { GHANA_REGIONS_GEOJSON } from '../lib/ghanaRegions'
 import { GHANA_DISTRICTS_GEOJSON } from '../lib/ghanaDistricts'
 import { useAppStore } from '../store'
 import { PALETTE, tooltipStyle } from '../lib/Chart'
-import type { DistrictMapRow, RegionMapRow } from '../../../shared/api'
+import type { DistrictMapRow, RegionMapRow, Technology } from '../../../shared/api'
 
 echarts.use([MapChart, TooltipComponent, VisualMapContinuousComponent, GeoComponent, CanvasRenderer])
 
@@ -31,13 +31,39 @@ try {
   /* already registered */
 }
 
-type Metric = 'health' | 'prb' | 'nc'
+interface MapMetricDef {
+  id: string
+  label: string
+  unit: string
+  worseIsHigher: boolean
+  isCore: boolean
+}
 
-const METRICS: Array<{ id: Metric; label: string }> = [
-  { id: 'health', label: 'Health' },
-  { id: 'nc', label: 'NC Rate %' },
-  { id: 'prb', label: 'PRB %' }
-]
+const TECH_CORE_METRICS: Record<Technology, MapMetricDef[]> = {
+  '2G': [
+    { id: 'nc', label: '2G Total NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_setup_success_2g', label: '2G CSSR NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_drop_rate_2g', label: '2G TCH Drop NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'sdcch_congestion', label: '2G SDCCH Cong NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'tch_congestion', label: '2G TCH Cong NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'health', label: 'Health', unit: '', worseIsHigher: false, isCore: true }
+  ],
+  '3G': [
+    { id: 'nc', label: '3G Total NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_setup_success_3g', label: '3G CSSR NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_drop_rate_3g', label: '3G Call Drop NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'data_access_success_3g', label: '3G Data Access NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'health', label: 'Health', unit: '', worseIsHigher: false, isCore: true }
+  ],
+  '4G': [
+    { id: 'nc', label: '4G Total NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_setup_success_4g', label: '4G Call Setup NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'call_drop_rate_4g', label: '4G Call Drop NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'data_service_failure_4g', label: '4G DSAF NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'prb_utilization', label: '4G DL PRB NC %', unit: '%', worseIsHigher: true, isCore: true },
+    { id: 'health', label: 'Health', unit: '', worseIsHigher: false, isCore: true }
+  ]
+}
 
 function fmt(n: number | null | undefined, digits = 1): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -49,22 +75,34 @@ function healthColor(s: number | null): string {
   return s >= 80 ? 'var(--green)' : s >= 65 ? 'var(--accent)' : s >= 50 ? 'var(--warn)' : 'var(--danger)'
 }
 
-function metricValue(r: RegionMapRow | DistrictMapRow, m: Metric): number | null {
+function metricValue(r: RegionMapRow | DistrictMapRow, m: string): number | null {
   if (m === 'health') return r.healthScore
-  if (m === 'prb') return r.prbAvg
-  // 'nc' represents percentage of non-compliant cells (lower is better)
-  return r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0
+  if (m === 'nc') return r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0
+  if (r.kpiMetrics && r.kpiMetrics[m]) {
+    // Return Core KPI NC Rate % (percentage of cells breaching this KPI)
+    return r.kpiMetrics[m].ncRate
+  }
+  return 0
 }
 
-function metricLabel(m: Metric): string {
-  return m === 'prb' ? 'PRB %' : m === 'nc' ? 'NC Rate %' : 'Health'
+function isHigherBetter(m: string, _tech: Technology): boolean {
+  // Only overall Health is higher-is-better; all Core KPIs and NC metrics are NC Rates (lower is better)
+  return m === 'health'
 }
 
-// visualMap text labels: [top (high values), bottom (low values)]. Health is
-// higher-better; PRB utilization and NC rate % are higher-worse (lower is better),
-// so the red end sits at the top.
-function scaleLabels(m: Metric): [string, string] {
-  return m === 'health' ? ['Best (100)', 'Worst (0)'] : ['Worst', 'Best (0%)']
+function metricLabel(m: string, tech: Technology): string {
+  if (m === 'health') return 'Health Score'
+  if (m === 'nc') return `${tech} Total NC Rate`
+  const def = TECH_CORE_METRICS[tech]?.find((x) => x.id === m)
+  return def?.label || m
+}
+
+function metricUnit(_m: string, _tech: Technology): string {
+  return '%'
+}
+
+function scaleLabels(m: string, _tech: Technology): [string, string] {
+  return m === 'health' ? ['Best (100)', 'Worst (0)'] : ['Worst', 'Best (0% NC)']
 }
 
 function cleanName(s: string): string {
@@ -147,6 +185,9 @@ function matchDistrict(districts: DistrictMapRow[], geoDistrictName: string): Di
 
 export default function GhanaMap(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const grain = useAppStore((s) => s.grain)
+  const period = useAppStore((s) => s.period)
   const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
   const setModule = useAppStore((s) => s.setModule)
   const chartRef = useRef<HTMLDivElement>(null)
@@ -155,7 +196,7 @@ export default function GhanaMap(): React.JSX.Element {
   const districtsRef = useRef<DistrictMapRow[]>([])
   const selectedRef = useRef<RegionMapRow | null>(null)
   const [regions, setRegions] = useState<RegionMapRow[]>([])
-  const [metric, setMetric] = useState<Metric>('health')
+  const [metric, setMetric] = useState<string>('health')
   const [selected, setSelected] = useState<RegionMapRow | null>(null)
   const [districts, setDistricts] = useState<DistrictMapRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -164,14 +205,24 @@ export default function GhanaMap(): React.JSX.Element {
   selectedRef.current = selected
   districtsRef.current = districts
 
-  // load per-region KPIs whenever the workspace changes
+  const currentTech: Technology = selectedTech || workspace?.technology || '4G'
+  const activeMetrics = TECH_CORE_METRICS[currentTech] || TECH_CORE_METRICS['4G']
+
+  // reset metric if not available in current technology
+  useEffect(() => {
+    if (metric !== 'health' && metric !== 'nc' && !activeMetrics.some((m) => m.id === metric)) {
+      setMetric('health')
+    }
+  }, [currentTech, activeMetrics, metric])
+
+  // load per-region KPIs whenever the workspace, tech, grain, or period changes
   useEffect(() => {
     let alive = true
     setSelected(null)
     setDistricts([])
     void (async () => {
       try {
-        const rows = await window.api.analytics.regionMap()
+        const rows = await window.api.analytics.regionMap(currentTech, grain, period)
         if (!alive) return
         regionsRef.current = rows
         setRegions(rows)
@@ -182,7 +233,7 @@ export default function GhanaMap(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly])
+  }, [workspace?.path, workspace?.readOnly, currentTech, grain, period])
 
   // drill into a region's districts
   useEffect(() => {
@@ -196,7 +247,7 @@ export default function GhanaMap(): React.JSX.Element {
       try {
         let rows: DistrictMapRow[] = []
         if (selected.id > 0) {
-          rows = await window.api.analytics.regionDistricts(selected.id)
+          rows = await window.api.analytics.regionDistricts(selected.id, currentTech, grain, period)
         }
         if (alive) setDistricts(rows)
       } catch {
@@ -208,7 +259,7 @@ export default function GhanaMap(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [selected])
+  }, [selected, currentTech, grain, period])
 
   // open a district's diagnosis in the Investigation Workspace
   function openDistrict(d: DistrictMapRow): void {
@@ -282,12 +333,10 @@ export default function GhanaMap(): React.JSX.Element {
     const chart = instRef.current
     if (!chart) return
 
+    const higherBetter = isHigherBetter(metric, currentTech)
+
     if (selected) {
       const canonicalRegion = getCanonicalRegionName(selected.name)
-      // district choropleth: the selected region's ADM2 boundaries colored by metric,
-      // with the parent region's boundary drawn on top as an outline so users keep
-      // geographic context while drilled in. Both live in ONE registered map so the
-      // outline stays perfectly aligned with the districts during roam/zoom.
       const regionFeature = GHANA_REGIONS_GEOJSON.features.find(
         (f) => getCanonicalRegionName(f.properties.name) === canonicalRegion
       )
@@ -319,9 +368,16 @@ export default function GhanaMap(): React.JSX.Element {
           }
         })
         .map((x) => ({ name: x.name, value: x.value ?? undefined, meta: x.row }))
-      const max = metric === 'health' ? 100 : metric === 'prb' ? 100 : Math.max(10, Math.min(100, Math.ceil(Math.max(1, ...districts.map((d) => d.cells > 0 ? (d.ncCells / d.cells) * 100 : 0)) * 1.15)))
-      // health is higher-better; PRB utilization and NC Rate % are higher-worse (lower is better)
-      const higherBetter = metric === 'health'
+
+      let max = 100
+      if (metric === 'health') {
+        max = 100
+      } else {
+        const vals = districts.map((d) => metricValue(d, metric)).filter((v): v is number => v != null)
+        const highest = vals.length > 0 ? Math.max(...vals) : 10
+        max = Math.max(10, Math.min(100, Math.ceil(highest * 1.15)))
+      }
+
       const option: EChartsOption = {
         backgroundColor: 'transparent',
         tooltip: {
@@ -332,11 +388,14 @@ export default function GhanaMap(): React.JSX.Element {
             if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No active cell data for this district.</span>`
             const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
             const ncPct = m.cells > 0 ? (m.ncCells / m.cells) * 100 : 0
+            const currentVal = metricValue(m, metric)
+            const curLabel = metricLabel(metric, currentTech)
+            const curUnit = metricUnit(metric, currentTech)
             return [
-              `<b>${m.name}</b>`,
-              `Health <b>${v(m.healthScore)}</b> / 100`,
-              `NC Rate <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
-              `PRB <b>${v(m.prbAvg, '%')}</b> · Avail <b>${v(m.availability, '%')}</b>`,
+              `<b>${m.name}</b> (${currentTech})`,
+              `${curLabel}: <b>${v(currentVal, curUnit)}</b>`,
+              `Health: <b>${v(m.healthScore)}</b> / 100`,
+              `${currentTech} Core NC Rate: <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
               `<span style="color:${PALETTE.dim}">Click to open this district's investigation.</span>`
             ].join('<br/>')
           }
@@ -348,8 +407,8 @@ export default function GhanaMap(): React.JSX.Element {
           left: 8,
           bottom: 10,
           calculable: true,
-          formatter: metric === 'health' ? '{value}' : '{value}%',
-          text: scaleLabels(metric),
+          formatter: metricUnit(metric, currentTech) ? `{value}${metricUnit(metric, currentTech)}` : '{value}',
+          text: scaleLabels(metric, currentTech),
           textStyle: { color: PALETTE.dim, fontSize: 10 },
           inRange: {
             color: higherBetter
@@ -357,9 +416,6 @@ export default function GhanaMap(): React.JSX.Element {
               : ['#10b981', '#a3e635', '#f59e0b', '#dc2626', '#7f1d1d']
           }
         },
-        // a shared geo draws the whole drill map (district polygons + the parent
-        // region's outline), and the map series colors the district data onto it.
-        // One geo means the outline stays perfectly aligned while zooming/panning.
         geo: {
           map: 'ghanaDrill',
           roam: true,
@@ -372,7 +428,6 @@ export default function GhanaMap(): React.JSX.Element {
             borderWidth: 0.6,
             areaColor: 'rgba(148,163,184,0.12)'
           },
-          // the parent region renders as a labelled outline for geographic context
           regions: [
             {
               name: regionFeature?.properties.name ?? canonicalRegion,
@@ -406,9 +461,15 @@ export default function GhanaMap(): React.JSX.Element {
       return
     }
 
-    const max = metric === 'health' ? 100 : metric === 'prb' ? 100 : Math.max(10, Math.min(100, Math.ceil(Math.max(1, ...regions.map((r) => r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0)) * 1.15)))
-    // health is higher-better; PRB utilization and NC Rate % are higher-worse (lower is better)
-    const higherBetter = metric === 'health'
+    let max = 100
+    if (metric === 'health') {
+      max = 100
+    } else {
+      const vals = regions.map((r) => metricValue(r, metric)).filter((v): v is number => v != null)
+      const highest = vals.length > 0 ? Math.max(...vals) : 10
+      max = Math.max(10, Math.min(100, Math.ceil(highest * 1.15)))
+    }
+
     const data = GHANA_REGIONS_GEOJSON.features
       .map((f) => {
         const row = matchRegion(regions, f.properties.name)
@@ -431,13 +492,14 @@ export default function GhanaMap(): React.JSX.Element {
           if (!m) return `<b>${item.name}</b><br/><span style="color:${PALETTE.dim}">No cell data for this region.</span>`
           const v = (val: number | null, unit = ''): string => (val == null ? '—' : `${fmt(val)}${unit}`)
           const ncPct = m.cells > 0 ? (m.ncCells / m.cells) * 100 : 0
+          const currentVal = metricValue(m, metric)
+          const curLabel = metricLabel(metric, currentTech)
+          const curUnit = metricUnit(metric, currentTech)
           return [
-            `<b>${m.name}</b>`,
-            `Health <b>${v(m.healthScore)}</b> / 100`,
-            `NC Rate <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
-            `PRB <b>${v(m.prbAvg, '%')}</b> · Avail <b>${v(m.availability, '%')}</b>`,
-            `Throughput <b>${v(m.throughputKbps == null ? null : m.throughputKbps / 1024, ' Mbps')}</b>`,
-            `Users <b>${fmt(m.users, 0)}</b> · Volume <b>${fmt((m.volumeMb ?? 0) / 1024, 1)} GB</b>`,
+            `<b>${m.name}</b> (${currentTech})`,
+            `${curLabel}: <b>${v(currentVal, curUnit)}</b>`,
+            `Health: <b>${v(m.healthScore)}</b> / 100`,
+            `${currentTech} Core NC Rate: <b>${v(ncPct, '%')}</b> (${m.ncCells} of ${m.cells} cells)`,
             `<span style="color:${PALETTE.dim}">Click to drill into districts.</span>`
           ].join('<br/>')
         }
@@ -449,8 +511,8 @@ export default function GhanaMap(): React.JSX.Element {
         left: 8,
         bottom: 10,
         calculable: true,
-        formatter: metric === 'health' ? '{value}' : '{value}%',
-        text: scaleLabels(metric),
+        formatter: metricUnit(metric, currentTech) ? `{value}${metricUnit(metric, currentTech)}` : '{value}',
+        text: scaleLabels(metric, currentTech),
         textStyle: { color: PALETTE.dim, fontSize: 10 },
         inRange: {
           color: higherBetter
@@ -480,16 +542,29 @@ export default function GhanaMap(): React.JSX.Element {
       ]
     }
     chart.setOption(option, { notMerge: true })
-  }, [regions, districts, metric, selected])
+  }, [regions, districts, metric, selected, currentTech])
 
-  const worstFirst = [...districts].sort((a, b) => (a.healthScore ?? 101) - (b.healthScore ?? 101))
+  const worstFirst = [...districts].sort((a, b) => {
+    const valA = metricValue(a, metric) ?? -1
+    const valB = metricValue(b, metric) ?? -1
+    if (metric === 'health') {
+      return (a.healthScore ?? 101) - (b.healthScore ?? 101)
+    }
+    // For NC rate: higher NC rate is worse, so put highest first
+    return valB - valA
+  })
 
   return (
     <div className="card ghana-card card-wide">
-      <div className="file-head">
-        <h3>Ghana Regional Intelligence</h3>
-        <div className="seg">
-          {METRICS.map((m) => (
+      <div className="file-head" style={{ flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h3>Ghana Regional Intelligence</h3>
+          <span className="badge" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border)' }}>
+            {currentTech}
+          </span>
+        </div>
+        <div className="seg" style={{ flexWrap: 'wrap' }}>
+          {activeMetrics.map((m) => (
             <button
               key={m.id}
               className={`seg-btn${metric === m.id ? ' active' : ''}`}
@@ -506,14 +581,12 @@ export default function GhanaMap(): React.JSX.Element {
           {!selected ? (
             <div className="ghana-hint">
               <p className="card-note">
-                Color-coded <b>region health</b> (best green → worst red).{' '}
-                <b>PRB % and NC Rate % are reversed — higher = worse (red)</b> (lower is better), since high
-                utilization and higher non-compliance rates represent network degradation. Hover for details,
+                Color-coded <b>{currentTech} Non-Compliance Rates & Core KPIs</b> (0% NC is Best Green → High NC is Worst Red). Hover for details,
                 <b> click a region to drill into its district choropleth</b>.
               </p>
               <div className="kpi-strip">
                 <div className="kpi">
-                  <div className="kpi-value">{regions.filter((r) => r.healthScore != null).length}</div>
+                  <div className="kpi-value">{regions.filter((r) => r.cells > 0).length}</div>
                   <div className="kpi-label">Regions with data</div>
                 </div>
                 <div className="kpi">
@@ -524,18 +597,32 @@ export default function GhanaMap(): React.JSX.Element {
                   <div className="kpi-value">
                     {(() => {
                       const total = regions.reduce((s, r) => s + r.cells, 0)
-                      const nc = regions.reduce((s, r) => s + r.ncCells, 0)
-                      return total > 0 ? `${((nc / total) * 100).toFixed(1)}%` : '0.0%'
+                      if (metric === 'health') {
+                        const valid = regions.filter((r) => r.healthScore != null)
+                        return valid.length > 0 ? (valid.reduce((s, r) => s + (r.healthScore ?? 0), 0) / valid.length).toFixed(1) : '—'
+                      }
+                      if (metric === 'nc') {
+                        const nc = regions.reduce((s, r) => s + r.ncCells, 0)
+                        return total > 0 ? `${((nc / total) * 100).toFixed(1)}%` : '0.0%'
+                      }
+                      const kpiNc = regions.reduce((s, r) => s + (r.kpiMetrics?.[metric]?.ncCells ?? 0), 0)
+                      return total > 0 ? `${((kpiNc / total) * 100).toFixed(1)}%` : '0.0%'
                     })()}
                   </div>
-                  <div className="kpi-label">Network NC Rate ({regions.reduce((s, r) => s + r.ncCells, 0)} cells)</div>
+                  <div className="kpi-label">
+                    {metric === 'health'
+                      ? 'Average Health'
+                      : metric === 'nc'
+                      ? `${currentTech} Total NC Rate (${regions.reduce((s, r) => s + r.ncCells, 0)} cells)`
+                      : `${metricLabel(metric, currentTech)} (${regions.reduce((s, r) => s + (r.kpiMetrics?.[metric]?.ncCells ?? 0), 0)} cells)`}
+                  </div>
                 </div>
               </div>
             </div>
           ) : (
             <div className="ghana-drill">
               <div className="file-head">
-                <b>{selected.name} — districts by {metricLabel(metric).toLowerCase()}</b>
+                <b>{selected.name} — districts by {metricLabel(metric, currentTech).toLowerCase()}</b>
                 <button className="btn" onClick={() => setSelected(null)}>
                   ← All regions
                 </button>
@@ -553,22 +640,33 @@ export default function GhanaMap(): React.JSX.Element {
                 </div>
                 <div className="kpi">
                   <div className="kpi-value">
-                    {selected.cells > 0 ? `${((selected.ncCells / selected.cells) * 100).toFixed(1)}%` : '0.0%'}
+                    {(() => {
+                      if (metric === 'health') return fmt(selected.healthScore, 0)
+                      if (metric === 'nc') {
+                        return `${selected.cells > 0 ? ((selected.ncCells / selected.cells) * 100).toFixed(1) : '0.0'}%`
+                      }
+                      const kpiBreached = selected.kpiMetrics?.[metric]?.ncCells ?? 0
+                      return `${selected.cells > 0 ? ((kpiBreached / selected.cells) * 100).toFixed(1) : '0.0'}%`
+                    })()}
                   </div>
-                  <div className="kpi-label">NC Rate ({selected.ncCells} cells)</div>
+                  <div className="kpi-label">
+                    {metric === 'health'
+                      ? 'Health Score'
+                      : metric === 'nc'
+                      ? `${currentTech} NC Rate (${selected.ncCells} cells)`
+                      : `${metricLabel(metric, currentTech)} (${selected.kpiMetrics?.[metric]?.ncCells ?? 0} cells)`}
+                  </div>
                 </div>
-                <div className="kpi">
-                  <div className="kpi-value">{fmt(selected.prbAvg)}%</div>
-                  <div className="kpi-label">PRB</div>
-                </div>
-                <div className="kpi">
-                  <div className="kpi-value">{fmt(selected.availability, 2)}%</div>
-                  <div className="kpi-label">Availability</div>
-                </div>
+                {metric !== 'health' && metric !== 'nc' && selected.kpiMetrics?.[metric] && (
+                  <div className="kpi">
+                    <div className="kpi-value">{fmt(selected.kpiMetrics[metric].avg)}{selected.kpiMetrics[metric].unit}</div>
+                    <div className="kpi-label">Average Value</div>
+                  </div>
+                )}
               </div>
               <p className="card-note">
                 The map shows <b>district boundaries</b> colored by{' '}
-                {metricLabel(metric).toLowerCase()} (lower is better for PRB & NC Rate). Click any district to open its diagnosis
+                {metricLabel(metric, currentTech).toLowerCase()}. Click any district to open its diagnosis
                 in the Investigation Workspace.
               </p>
               {loading ? (
@@ -577,18 +675,23 @@ export default function GhanaMap(): React.JSX.Element {
                 <p className="card-note">No district data for this region yet — import cell-level data to populate the drill-down.</p>
               ) : (
                 <div className="ghana-districts">
-                  <b className="card-note">Districts ({metricLabel(metric)})</b>
-                  {worstFirst.slice(0, 15).map((d) => (
-                    <button key={d.id} className="district-row" onClick={() => openDistrict(d)}>
-                      <span className="district-dot" style={{ background: healthColor(d.healthScore) }} />
-                      <span className="district-name">{d.name}</span>
-                      <span className="district-cell">
-                        {d.cells} cells · {d.cells > 0 ? `${((d.ncCells / d.cells) * 100).toFixed(1)}%` : '0%'} NC
-                      </span>
-                      <span className="district-score">{fmt(d.healthScore, 0)}</span>
-                      <span className="district-prb">{fmt(d.prbAvg)}%</span>
-                    </button>
-                  ))}
+                  <b className="card-note">Districts ({metricLabel(metric, currentTech)})</b>
+                  {worstFirst.slice(0, 15).map((d) => {
+                    const kpiNcCells = d.kpiMetrics?.[metric]?.ncCells ?? 0
+                    const districtKpiNcPct = d.cells > 0 ? ((kpiNcCells / d.cells) * 100).toFixed(1) : '0.0'
+                    return (
+                      <button key={d.id} className="district-row" onClick={() => openDistrict(d)}>
+                        <span className="district-dot" style={{ background: healthColor(d.healthScore) }} />
+                        <span className="district-name">{d.name}</span>
+                        <span className="district-cell">
+                          {d.cells} cells · {metric === 'health' ? `${fmt(d.healthScore, 0)} Health` : metric === 'nc' ? `${d.cells > 0 ? ((d.ncCells / d.cells) * 100).toFixed(1) : '0'}% NC` : `${districtKpiNcPct}% NC (${kpiNcCells} cells)`}
+                        </span>
+                        <span className="district-score">
+                          {metric === 'health' ? fmt(d.healthScore, 0) : metric === 'nc' ? `${d.cells > 0 ? ((d.ncCells / d.cells) * 100).toFixed(1) : '0'}%` : `${districtKpiNcPct}%`}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -596,8 +699,8 @@ export default function GhanaMap(): React.JSX.Element {
         </div>
       </div>
       <p className="card-note">
-        Source: region/district rollups from <code>cell_health_history</code> + <code>agg_cell_weekly</code> —
-        the same methodology as the Health Matrix. District drill-down uses the same rollups at district scope.
+        Source: region/district rollups from <code>cell_health_history</code> + <code>agg_cell_kpi_weekly</code> —
+        computed strictly against active <b>{currentTech} Core KPIs</b>.
       </p>
     </div>
   )

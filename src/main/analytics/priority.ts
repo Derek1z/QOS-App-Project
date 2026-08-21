@@ -52,19 +52,24 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
-  const idList = cellIds.join(',')
-
-  await conn.run(`DELETE FROM cell_priority_history WHERE cell_id IN (${idList})`)
 
   const w = rules.priorityWeights ?? [25, 20, 15, 15, 15, 10]
   const prbThresh = rules.prbThresholdPct ?? 80
 
-  await conn.run(`
-    WITH latest AS (
-      SELECT cell_id, week_start,
-        row_number() OVER (PARTITION BY cell_id ORDER BY week_start DESC) AS rn
-      FROM agg_cell_weekly
-    ),
+  const BATCH_SIZE = 2500
+  for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
+    const chunk = cellIds.slice(b, b + BATCH_SIZE)
+    const idList = chunk.join(',')
+
+    await conn.run(`DELETE FROM cell_priority_history WHERE cell_id IN (${idList})`)
+
+    await conn.run(`
+      WITH latest AS (
+        SELECT cell_id, week_start,
+          row_number() OVER (PARTITION BY cell_id ORDER BY week_start DESC) AS rn
+        FROM agg_cell_weekly
+        WHERE cell_id IN (${idList})
+      ),
     peers AS (
       SELECT week_start,
         avg(connected_users_sum) AS avg_users,
@@ -181,4 +186,5 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
       mode_name, weights_json, ${rules.version}
     FROM scored
   `)
+  }
 }

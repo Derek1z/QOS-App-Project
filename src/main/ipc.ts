@@ -134,7 +134,9 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('analytics:executiveOverview', (_e, opts?: { period?: PeriodId; grain?: Grain }) => getExecutiveOverview(opts))
   ipcMain.handle('synthetic:generate', (_e, config?: SyntheticDataConfig) => generateSyntheticMultiTechData(config))
   ipcMain.handle('analytics:ncLifecycle', (_e, grain?: string) => getNcLifecycle((grain as Grain) ?? 'weekly'))
-  ipcMain.handle('analytics:ncMovement', (_e, limit?: number, grain?: string) => getNcMovement(limit, (grain as Grain) ?? 'weekly'))
+  ipcMain.handle('analytics:ncMovement', (_e, limit?: number, grain?: string, technology?: Technology) =>
+    getNcMovement(limit, (grain as Grain) ?? 'weekly', technology)
+  )
   ipcMain.handle('analytics:priorityQueue', (_e, mode: PriorityMode, limit?: number) =>
     getPriorityQueue(mode, limit)
   )
@@ -159,7 +161,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     }) => getCellIntelligence(opts)
   )
   ipcMain.handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain) => getCellDetail(cellId, grain))
-  ipcMain.handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId }) => getPerformance(opts))
+  ipcMain.handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) => getPerformance(opts))
   ipcMain.handle(
     'analytics:comparison',
     (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric; grain?: Grain; period?: PeriodId }) =>
@@ -172,8 +174,12 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   )
   ipcMain.handle('analytics:priorityCenter', (_e, opts?: PriorityCenterOpts) => getPriorityCenter(opts))
   ipcMain.handle('analytics:forecast', (_e, opts?: ForecastOpts) => getForecast(opts))
-  ipcMain.handle('analytics:regionMap', () => getRegionMap())
-  ipcMain.handle('analytics:regionDistricts', (_e, regionId: number) => getRegionDistricts(regionId))
+  ipcMain.handle('analytics:regionMap', (_e, technology?: Technology, grain?: Grain, period?: PeriodId) =>
+    getRegionMap(technology, grain, period)
+  )
+  ipcMain.handle('analytics:regionDistricts', (_e, regionId: number, technology?: Technology, grain?: Grain, period?: PeriodId) =>
+    getRegionDistricts(regionId, technology, grain, period)
+  )
 
   ipcMain.handle('investigation:search', (_e, scope: InvestigationScope, q?: string) => searchEntities(scope, q))
   ipcMain.handle(

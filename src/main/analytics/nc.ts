@@ -103,79 +103,83 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
-  const idList = cellIds.join(',')
-
-  await conn.run(`DELETE FROM cell_nc_lifecycle WHERE cell_id IN (${idList})`)
 
   const chronicWeeks = rules.chronicWeeks ?? 7
   const persistentWeeks = rules.persistentWeeks ?? 4
   const prbThresh = rules.prbThresholdPct ?? 80
 
-  const grains: Array<{
-    grain: 'weekly' | 'daily' | 'monthly'
-    fromSql: string
-    obsDaysSql: string
-    breachDaysSql: string
-    chronicThresh: number
-    persistentThresh: number
-  }> = [
-    {
-      grain: 'weekly',
-      fromSql: `
-        SELECT w.cell_id, w.week_start AS period_date, w.is_nc,
-               CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
-               CAST(coalesce(w.observed_days, 1) AS DOUBLE) AS observed_days,
-               w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
-               w.dl_throughput_kbps_avg, w.availability_pct_avg
-        FROM agg_cell_weekly w
-        WHERE w.cell_id IN (${idList})
-      `,
-      obsDaysSql: 'CAST(coalesce(w.observed_days, 1) AS DOUBLE)',
-      breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
-      chronicThresh: chronicWeeks,
-      persistentThresh: persistentWeeks
-    },
-    {
-      grain: 'daily',
-      fromSql: `
-        SELECT f.cell_id, d.date AS period_date,
-               (f.prb_utilization >= ${prbThresh}) AS is_nc,
-               CAST(CASE WHEN f.prb_utilization >= ${prbThresh} THEN 1 ELSE 0 END AS DOUBLE) AS breach_days,
-               1.0 AS observed_days,
-               f.prb_utilization AS prb_avg,
-               f.prb_utilization AS prb_peak,
-               f.data_volume_mb AS data_volume_mb_sum,
-               f.connected_users AS connected_users_sum,
-               f.dl_throughput_kbps AS dl_throughput_kbps_avg,
-               f.availability_pct AS availability_pct_avg
-        FROM fact_cell_daily f
-        JOIN dim_date d USING (date_id)
-        WHERE f.cell_id IN (${idList})
-      `,
-      obsDaysSql: '1.0',
-      breachDaysSql: 'w.breach_days',
-      chronicThresh: Math.max(14, chronicWeeks * 7),
-      persistentThresh: Math.max(7, persistentWeeks * 7)
-    },
-    {
-      grain: 'monthly',
-      fromSql: `
-        SELECT w.cell_id, w.month_start AS period_date, w.is_nc,
-               CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
-               CAST(coalesce(w.observed_days, 30) AS DOUBLE) AS observed_days,
-               w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
-               w.dl_throughput_kbps_avg, w.availability_pct_avg
-        FROM agg_cell_monthly w
-        WHERE w.cell_id IN (${idList})
-      `,
-      obsDaysSql: 'CAST(coalesce(w.observed_days, 30) AS DOUBLE)',
-      breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
-      chronicThresh: Math.max(2, Math.round(chronicWeeks / 4)),
-      persistentThresh: Math.max(2, Math.round(persistentWeeks / 4))
-    }
-  ]
+  const BATCH_SIZE = 2500
+  for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
+    const chunk = cellIds.slice(b, b + BATCH_SIZE)
+    const idList = chunk.join(',')
 
-  for (const g of grains) {
+    await conn.run(`DELETE FROM cell_nc_lifecycle WHERE cell_id IN (${idList})`)
+
+    const grains: Array<{
+      grain: 'weekly' | 'daily' | 'monthly'
+      fromSql: string
+      obsDaysSql: string
+      breachDaysSql: string
+      chronicThresh: number
+      persistentThresh: number
+    }> = [
+      {
+        grain: 'weekly',
+        fromSql: `
+          SELECT w.cell_id, w.week_start AS period_date, w.is_nc,
+                 CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
+                 CAST(coalesce(w.observed_days, 1) AS DOUBLE) AS observed_days,
+                 w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
+                 w.dl_throughput_kbps_avg, w.availability_pct_avg
+          FROM agg_cell_weekly w
+          WHERE w.cell_id IN (${idList})
+        `,
+        obsDaysSql: 'CAST(coalesce(w.observed_days, 1) AS DOUBLE)',
+        breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
+        chronicThresh: chronicWeeks,
+        persistentThresh: persistentWeeks
+      },
+      {
+        grain: 'daily',
+        fromSql: `
+          SELECT f.cell_id, d.date AS period_date,
+                 (f.prb_utilization >= ${prbThresh}) AS is_nc,
+                 CAST(CASE WHEN f.prb_utilization >= ${prbThresh} THEN 1 ELSE 0 END AS DOUBLE) AS breach_days,
+                 1.0 AS observed_days,
+                 f.prb_utilization AS prb_avg,
+                 f.prb_utilization AS prb_peak,
+                 f.data_volume_mb AS data_volume_mb_sum,
+                 f.connected_users AS connected_users_sum,
+                 f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+                 f.availability_pct AS availability_pct_avg
+          FROM fact_cell_daily f
+          JOIN dim_date d USING (date_id)
+          WHERE f.cell_id IN (${idList})
+        `,
+        obsDaysSql: '1.0',
+        breachDaysSql: 'w.breach_days',
+        chronicThresh: Math.max(14, chronicWeeks * 7),
+        persistentThresh: Math.max(7, persistentWeeks * 7)
+      },
+      {
+        grain: 'monthly',
+        fromSql: `
+          SELECT w.cell_id, w.month_start AS period_date, w.is_nc,
+                 CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
+                 CAST(coalesce(w.observed_days, 30) AS DOUBLE) AS observed_days,
+                 w.prb_avg, w.prb_peak, w.data_volume_mb_sum, w.connected_users_sum,
+                 w.dl_throughput_kbps_avg, w.availability_pct_avg
+          FROM agg_cell_monthly w
+          WHERE w.cell_id IN (${idList})
+        `,
+        obsDaysSql: 'CAST(coalesce(w.observed_days, 30) AS DOUBLE)',
+        breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
+        chronicThresh: Math.max(2, Math.round(chronicWeeks / 4)),
+        persistentThresh: Math.max(2, Math.round(persistentWeeks / 4))
+      }
+    ]
+
+    for (const g of grains) {
     await conn.run(`
       WITH raw_data AS (
         ${g.fromSql}
@@ -288,5 +292,6 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
              breach_days, prb_avg, now()
       FROM classified
     `)
+    }
   }
 }

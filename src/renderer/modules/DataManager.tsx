@@ -608,6 +608,30 @@ export default function DataManager(): React.JSX.Element {
 
           {analyses.length > 0 && (
             <div className="file-list">
+              {analyses.length > 1 && (
+                <div className="card glass-card" style={{ marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderLeft: '3px solid var(--accent)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '20px' }}>📦</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--accent)' }}>
+                        Multi-File Batch Queue ({analyses.length} files detected)
+                      </div>
+                      <div className="card-note">
+                        {analyses.filter(a => a.errors.length === 0).length} valid schemas · {analyses.reduce((acc, a) => acc + (a.sample?.length || 0), 0) > 0 ? `${analyses.length} files staged` : `${analyses.length} files staged`}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className="btn btn-primary"
+                      disabled={busy || !canRun}
+                      onClick={() => void run()}
+                    >
+                      🚀 Ingest All {analyses.length} Files in Batch
+                    </button>
+                  </div>
+                </div>
+              )}
               {analyses.map((a) => {
                 const mapping = mappings[a.id] ?? { columns: a.suggestedMapping }
                 const prev = previews[a.id]

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store'
-import type { CellDetail, ExplorerLevel, ExplorerNode, ExplorerResult } from '../../../shared/api'
+import type { CellDetail, ExplorerLevel, ExplorerNode, ExplorerResult, Grain, Technology } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { cellDetailOption } from '../lib/cellCharts'
 
@@ -43,8 +43,104 @@ const BAND_COLOR: Record<string, string> = {
   Low: 'var(--text-faint)'
 }
 
+function computeCellAnalytics(detail: CellDetail, prbThreshold: number, grain: Grain, tech: Technology) {
+  const points = detail.weeks
+  const observed = points.length
+  if (observed === 0) return null
+
+  const breaches = points.filter((w) => w.isNc || w.breachDays > 0).length
+  const breachRate = ((breaches / observed) * 100).toFixed(1)
+
+  const prbValues = points.map((w) => w.prbAvg).filter((v): v is number => v != null)
+  const avgPrb = prbValues.length > 0 ? prbValues.reduce((a, b) => a + b, 0) / prbValues.length : null
+  const maxPrb = prbValues.length > 0 ? Math.max(...prbValues) : null
+
+  const latest = points[points.length - 1]
+  const currentPrb = detail.current?.prbAvg ?? latest?.prbAvg ?? avgPrb
+  const delta = currentPrb != null ? currentPrb - prbThreshold : null
+
+  let insight = ''
+  let rec = ''
+
+  if (tech === '4G') {
+    if (currentPrb != null && currentPrb >= prbThreshold) {
+      insight = `Capacity Saturation (${currentPrb.toFixed(1)}% vs ${prbThreshold}% SLA target): High resource block utilization is constraining user throughput.`
+      rec = 'Prioritize carrier aggregation (CA) layer activation, inter-frequency load balancing, or physical antenna tilt optimization to relieve sector load.'
+    } else if (latest?.availability != null && latest.availability < 98) {
+      insight = `Availability Degradation (${latest.availability.toFixed(1)}%): Cell availability is sub-optimal.`
+      rec = 'Verify transmission backhaul, eNodeB board alarms, and DC power backup stability.'
+    } else {
+      insight = 'Nominal Operations: Cell metrics remain within standard operational tolerance.'
+      rec = 'Maintain standard monitoring and verify peak-hour headroom.'
+    }
+  } else if (tech === '3G') {
+    if (currentPrb != null && currentPrb >= prbThreshold) {
+      insight = `Power & CE Congestion (${currentPrb.toFixed(1)}%): High channel element / downlink carrier power utilization observed.`
+      rec = 'Reallocate Channel Elements (CE) on NodeB, review soft handover parameters, and offload traffic to LTE overlay.'
+    } else {
+      insight = 'Nominal 3G Operations: Accessibility and retainability metrics are within threshold.'
+      rec = 'Maintain regular drive test validation and neighbor list audits.'
+    }
+  } else {
+    // 2G
+    if (currentPrb != null && currentPrb >= prbThreshold) {
+      insight = `TCH Channel Congestion (${currentPrb.toFixed(1)}%): High voice channel starvation causing call setup failures.`
+      rec = 'Enable dynamic Half-Rate (HR) codec allocation, evaluate TRX expansion, or adjust cell handover margins.'
+    } else {
+      insight = 'Nominal 2G Voice Operations: TCH and SDCCH blocking within SLA margins.'
+      rec = 'Perform routine frequency hopping checks and interference matrix updates.'
+    }
+  }
+
+  let peakDayText = ''
+  if (grain === 'daily' && points.length >= 7) {
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    const daySums = new Array(7).fill(0)
+    const dayCounts = new Array(7).fill(0)
+    for (const p of points) {
+      const d = new Date(p.weekStart).getDay()
+      if (!isNaN(d) && p.prbAvg != null) {
+        daySums[d] += p.prbAvg
+        dayCounts[d] += 1
+      }
+    }
+    let maxDayIdx = -1
+    let maxDayAvg = -1
+    for (let i = 0; i < 7; i++) {
+      if (dayCounts[i] > 0) {
+        const dayAvg = daySums[i] / dayCounts[i]
+        if (dayAvg > maxDayAvg) {
+          maxDayAvg = dayAvg
+          maxDayIdx = i
+        }
+      }
+    }
+    if (maxDayIdx >= 0) {
+      peakDayText = `Weekly Peak: ${daysOfWeek[maxDayIdx]}s (Avg ${maxDayAvg.toFixed(1)}%)`
+    }
+  }
+
+  return {
+    observed,
+    breaches,
+    breachRate,
+    avgPrb: avgPrb != null ? `${avgPrb.toFixed(1)}%` : '—',
+    maxPrb: maxPrb != null ? `${maxPrb.toFixed(1)}%` : '—',
+    deltaText: delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—',
+    isDeltaBad: delta != null ? delta > 0 : false,
+    insight,
+    rec,
+    peakDayText
+  }
+}
+
 export default function NetworkExplorer(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const grain = useAppStore((s) => s.grain)
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const togglePin = useAppStore((s) => s.togglePin)
+  const isPinned = useAppStore((s) => s.isPinned)
+  const setModule = useAppStore((s) => s.setModule)
   const [level, setLevel] = useState<ExplorerLevel>('region')
   const [parentId, setParentId] = useState<number | null>(null)
   const [q, setQ] = useState('')
@@ -52,6 +148,7 @@ export default function NetworkExplorer(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [detail, setDetail] = useState<CellDetail | null>(null)
+  const [selectedCellNode, setSelectedCellNode] = useState<ExplorerNode | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [prbThreshold, setPrbThreshold] = useState(80)
@@ -100,6 +197,21 @@ export default function NetworkExplorer(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Auto reload cell detail if grain changes while drawer is open
+  useEffect(() => {
+    if (detailOpen && selectedCellNode) {
+      void (async () => {
+        setDetailLoading(true)
+        try {
+          const d = await window.api.analytics.cellDetail(selectedCellNode.id, grain)
+          if (d) setDetail(d)
+        } finally {
+          setDetailLoading(false)
+        }
+      })()
+    }
+  }, [grain, selectedCellNode, detailOpen])
+
   function drill(node: ExplorerNode): void {
     if (level === 'cell') return
     setQ('')
@@ -120,9 +232,10 @@ export default function NetworkExplorer(): React.JSX.Element {
   }
 
   async function openDetail(node: ExplorerNode): Promise<void> {
+    setSelectedCellNode(node)
     setDetailLoading(true)
     try {
-      const d = await window.api.analytics.cellDetail(node.id)
+      const d = await window.api.analytics.cellDetail(node.id, grain)
       if (d) {
         setDetail(d)
         setDetailOpen(true)
@@ -134,6 +247,10 @@ export default function NetworkExplorer(): React.JSX.Element {
 
   const nodes = result?.nodes ?? []
   const isCellLevel = level === 'cell'
+  const is4G = selectedTech === '4G'
+  const is3G = selectedTech === '3G'
+
+  const analytics = detail ? computeCellAnalytics(detail, prbThreshold, grain, selectedTech) : null
 
   return (
     <div className="module">
@@ -195,11 +312,16 @@ export default function NetworkExplorer(): React.JSX.Element {
                       <th>Priority</th>
                     </>
                   )}
-                  <th>PRB</th>
+                  <th>{is4G ? 'PRB' : is3G ? '3G Util' : 'TCH Cong'}</th>
                   <th>Speed</th>
-                  <th>Users</th>
-                  <th>Vol</th>
+                  {is4G && (
+                    <>
+                      <th>Users</th>
+                      <th>Vol</th>
+                    </>
+                  )}
                   <th>Avail</th>
+                  {!is4G && <th>Breach Count</th>}
                 </tr>
               </thead>
               <tbody>
@@ -263,9 +385,14 @@ export default function NetworkExplorer(): React.JSX.Element {
                     )}
                     <td>{fmtPct(n.prbAvg)}</td>
                     <td>{fmtMbps(n.throughputKbps)}</td>
-                    <td>{fmtN(n.users)}</td>
-                    <td>{fmtG(n.volumeMb)}</td>
+                    {is4G && (
+                      <>
+                        <td>{fmtN(n.users)}</td>
+                        <td>{fmtG(n.volumeMb)}</td>
+                      </>
+                    )}
                     <td>{fmtPct(n.availability)}</td>
+                    {!is4G && <td>{n.ncCells > 0 ? n.ncCells : '0'}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -273,8 +400,8 @@ export default function NetworkExplorer(): React.JSX.Element {
           </div>
           <p className="card-note">
             {isCellLevel
-              ? 'Click a cell to open its detail view. Health rolls up from cell health history; KPIs are the latest week.'
-              : `Click a ${LEVEL_LABEL[level].toLowerCase()} to drill into its ${CHILD_LEVEL[level].toLowerCase()}s. Health rolls up from cell health history (same methodology as the Health Matrix).`}
+              ? 'Click a cell to open its detail view. Health rolls up from cell health history; KPIs reflect the latest grain period.'
+              : `Click a ${LEVEL_LABEL[level].toLowerCase()} to drill into its ${CHILD_LEVEL[level].toLowerCase()}s. Health rolls up from cell health history.`}
           </p>
         </div>
       )}
@@ -287,7 +414,36 @@ export default function NetworkExplorer(): React.JSX.Element {
                 <div className="drawer-title">{detail.cellName}</div>
                 <div className="drawer-sub">{[detail.site, detail.district, detail.region].filter(Boolean).join(' · ') || '—'}</div>
               </div>
-              <button className="btn" onClick={() => setDetailOpen(false)}>✕</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className={`btn btn-sm ${isPinned(`cell:${selectedCellNode?.id}`) ? 'btn-primary' : 'btn-ghost'}`}
+                  style={{ border: '1px solid var(--border)' }}
+                  onClick={() => {
+                    if (selectedCellNode) {
+                      togglePin({
+                        id: `cell:${selectedCellNode.id}`,
+                        type: 'cell',
+                        name: detail.cellName,
+                        detail: detail.site ?? undefined
+                      })
+                    }
+                  }}
+                >
+                  {isPinned(`cell:${selectedCellNode?.id}`) ? '⭐ Pinned' : '☆ Pin'}
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  style={{ border: '1px solid var(--border)' }}
+                  title="Open in Simulation Lab"
+                  onClick={() => {
+                    setDetailOpen(false)
+                    setModule('simulation-lab')
+                  }}
+                >
+                  🧪 Simulate
+                </button>
+                <button className="btn btn-sm" onClick={() => setDetailOpen(false)}>✕</button>
+              </div>
             </div>
 
             {detail.current && (
@@ -307,11 +463,11 @@ export default function NetworkExplorer(): React.JSX.Element {
             )}
 
             {detailLoading ? (
-              <p className="card-note">Loading…</p>
+              <p className="card-note">Loading {grain} data…</p>
             ) : detail.weeks.length > 0 ? (
-              <Chart option={cellDetailOption(detail, prbThreshold)} height={490} />
+              <Chart option={cellDetailOption(detail, prbThreshold, grain, selectedTech)} height={480} />
             ) : (
-              <p className="card-note">No weekly history for this cell yet.</p>
+              <p className="card-note">No {grain} history for this cell yet.</p>
             )}
 
             {detail.weeks.length > 0 && (
@@ -327,9 +483,56 @@ export default function NetworkExplorer(): React.JSX.Element {
                 ))}
               </div>
             )}
-            <p className="card-note">
-              Weekly history (ISO weeks, Monday–Sunday). PRB grid shows the ruleset threshold ({prbThreshold}%); the strip
-              marks each week's NC state (N new · R recurring · P persistent · C recovering).
+
+            {/* Deep Cell Analytics & Diagnostics */}
+            {analytics && (
+              <div className="drawer-analytics-section">
+                <div className="drawer-analytics-grid">
+                  <div className="drawer-stat-card">
+                    <span className="drawer-stat-label">Observed {grain === 'daily' ? 'Days' : grain === 'monthly' ? 'Months' : 'Weeks'}</span>
+                    <span className="drawer-stat-val">{analytics.observed}</span>
+                  </div>
+                  <div className="drawer-stat-card">
+                    <span className="drawer-stat-label">Breach Count</span>
+                    <span className="drawer-stat-val" style={{ color: 'var(--danger)' }}>{analytics.breaches}</span>
+                  </div>
+                  <div className="drawer-stat-card">
+                    <span className="drawer-stat-label">Breach Rate</span>
+                    <span className="drawer-stat-val">{analytics.breachRate}%</span>
+                  </div>
+                  <div className="drawer-stat-card">
+                    <span className="drawer-stat-label">Peak Metric</span>
+                    <span className="drawer-stat-val">{analytics.maxPrb}</span>
+                  </div>
+                </div>
+
+                <div className="drawer-insight-box">
+                  <div className="drawer-insight-header">
+                    <span>⚡</span>
+                    <span>Automated Diagnostic & Root Cause</span>
+                  </div>
+                  <div className="drawer-insight-text">
+                    {analytics.insight}
+                    {analytics.peakDayText && <span style={{ display: 'block', marginTop: 3, fontWeight: 600, color: 'var(--text)' }}>{analytics.peakDayText}</span>}
+                  </div>
+                </div>
+
+                <div className="drawer-rec-box">
+                  <div className="drawer-rec-header">
+                    <span>🔧</span>
+                    <span>Engineering Recommendation</span>
+                  </div>
+                  <div className="drawer-rec-text">{analytics.rec}</div>
+                </div>
+              </div>
+            )}
+
+            <p className="card-note" style={{ marginTop: 4 }}>
+              {grain === 'daily'
+                ? `Daily history (day-by-day observations). ${is4G ? 'PRB' : is3G ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
+                : grain === 'monthly'
+                ? `Monthly history. ${is4G ? 'PRB' : is3G ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
+                : `Weekly history (ISO weeks). ${is4G ? 'PRB' : is3G ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%; strip marks NC state (N new · R recurring · P persistent · C recovering).`}
             </p>
           </div>
         </div>
@@ -337,3 +540,4 @@ export default function NetworkExplorer(): React.JSX.Element {
     </div>
   )
 }
+

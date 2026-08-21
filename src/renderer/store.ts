@@ -11,6 +11,7 @@ export type ModuleId =
   | 'nc-intelligence'
   | 'health-matrix'
   | 'comparison-lab'
+  | 'simulation-lab'
   | 'investigation'
   | 'priority-center'
   | 'forecasting'
@@ -19,6 +20,22 @@ export type ModuleId =
   | 'workspace'
   | 'kpi-definitions'
 
+export interface PinnedItem {
+  id: string
+  type: 'cell' | 'district' | 'kpi'
+  name: string
+  detail?: string
+}
+
+function loadPinned(): PinnedItem[] {
+  try {
+    const raw = localStorage.getItem('qos_pinned_watchlist')
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
 import type { PeriodId, Grain } from '../../shared/api'
 
 export type { PeriodId, Grain } from '../../shared/api'
@@ -26,6 +43,7 @@ export type { PeriodId, Grain } from '../../shared/api'
 interface AppStore {
   module: ModuleId
   workspace: WorkspaceInfo | null
+  selectedTech: Technology
   summary: Summary | null
   recent: RecentWorkspace[]
   period: PeriodId
@@ -33,9 +51,12 @@ interface AppStore {
   paletteOpen: boolean
   busy: boolean
   error: string | null
-  investigationTarget: { scope: 'cell' | 'site' | 'district'; id: number; name: string; path: string[] } | null
+  pinned: PinnedItem[]
+  compareCellIds: [number, number] | null
+  investigationTarget: { scope: 'cell' | 'site' | 'district' | 'region'; id: number; name: string; path: string[] } | null
   setModule(m: ModuleId): void
   setWorkspace(w: WorkspaceInfo | null): void
+  setSelectedTech(t: Technology): void
   setSummary(s: Summary | null): void
   setRecent(r: RecentWorkspace[]): void
   setPeriod(p: PeriodId): void
@@ -43,15 +64,19 @@ interface AppStore {
   setPaletteOpen(v: boolean): void
   setBusy(v: boolean): void
   setError(e: string | null): void
-  setInvestigationTarget(t: { scope: 'cell' | 'site' | 'district'; id: number; name: string; path: string[] } | null): void
+  togglePin(item: PinnedItem): void
+  isPinned(id: string): boolean
+  setCompareCellIds(ids: [number, number] | null): void
+  setInvestigationTarget(t: { scope: 'cell' | 'site' | 'district' | 'region'; id: number; name: string; path: string[] } | null): void
   createPrompt: { defaultName: string; defaultTech?: Technology; resolve: (c: CreateWorkspaceChoice | null) => void } | null
   openCreatePrompt(defaultName: string, defaultTech: Technology | undefined, resolve: (c: CreateWorkspaceChoice | null) => void): void
   answerCreatePrompt(c: CreateWorkspaceChoice | null): void
 }
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   module: 'overview',
   workspace: null,
+  selectedTech: '4G',
   summary: null,
   recent: [],
   period: '4w',
@@ -59,9 +84,12 @@ export const useAppStore = create<AppStore>((set) => ({
   paletteOpen: false,
   busy: false,
   error: null,
+  pinned: loadPinned(),
+  compareCellIds: null,
   investigationTarget: null,
   setModule: (module) => set({ module }),
-  setWorkspace: (workspace) => set({ workspace }),
+  setWorkspace: (workspace) => set({ workspace, selectedTech: workspace?.technology ?? '4G' }),
+  setSelectedTech: (selectedTech) => set({ selectedTech }),
   setSummary: (summary) => set({ summary }),
   setRecent: (recent) => set({ recent }),
   setPeriod: (period) => set({ period }),
@@ -69,6 +97,18 @@ export const useAppStore = create<AppStore>((set) => ({
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setBusy: (busy) => set({ busy }),
   setError: (error) => set({ error }),
+  togglePin: (item) => {
+    set((state) => {
+      const exists = state.pinned.some((p) => p.id === item.id)
+      const next = exists ? state.pinned.filter((p) => p.id !== item.id) : [...state.pinned, item]
+      try {
+        localStorage.setItem('qos_pinned_watchlist', JSON.stringify(next))
+      } catch {}
+      return { pinned: next }
+    })
+  },
+  isPinned: (id) => get().pinned.some((p) => p.id === id),
+  setCompareCellIds: (compareCellIds) => set({ compareCellIds }),
   setInvestigationTarget: (investigationTarget) => set({ investigationTarget }),
   createPrompt: null,
   openCreatePrompt: (defaultName, defaultTech, resolve) =>
@@ -86,6 +126,7 @@ export type BusEvent =
   | 'FILTER_CHANGED'
   | 'PERIOD_CHANGED'
   | 'GRAIN_CHANGED'
+  | 'TECH_CHANGED'
   | 'MODULE_CHANGED'
   | 'WORKSPACE_CHANGED'
   | 'RULESET_CHANGED'

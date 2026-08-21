@@ -12,21 +12,27 @@ function normalizeDateStr(dateStr: string): string {
 
 /** ISO week label (spec §19: W31-style, Monday–Sunday). */
 export function weekLabel(dateStr: string): string {
+  if (!dateStr) return ''
+  if (/^W\d+$/i.test(dateStr)) return dateStr.toUpperCase()
   const norm = normalizeDateStr(dateStr)
-  const d = new Date(norm + 'T00:00:00Z')
+  const d = new Date(norm + (norm.includes('T') ? '' : 'T00:00:00Z'))
+  if (isNaN(d.getTime())) return dateStr
   const day = (d.getUTCDay() + 6) % 7
   d.setUTCDate(d.getUTCDate() - day + 3)
   const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4))
   const week = 1 + Math.round(((d.getTime() - firstThu.getTime()) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7)
-  return 'W' + week
+  return isNaN(week) ? dateStr : 'W' + week
 }
 
 /** Multi-grain time label supporting daily (07-05), weekly (W27), and monthly (2026-07). */
 export function formatTimeLabel(dateStr: string, grain: Grain = 'weekly'): string {
   if (!dateStr) return ''
+  if (!/^\d{4}/.test(dateStr) && !/^\d{8}/.test(dateStr)) {
+    return dateStr
+  }
   const norm = normalizeDateStr(dateStr)
   if (grain === 'daily') {
-    return norm.length >= 10 ? norm.slice(5) : norm
+    return norm.length >= 10 ? norm.slice(5, 10) : norm
   }
   if (grain === 'monthly') {
     return norm.slice(0, 7)
@@ -184,3 +190,89 @@ export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'week
     ]
   }
 }
+
+const CORE_COLORS = [
+  '#38bdf8', // Sky blue
+  '#f87171', // Red
+  '#fbbf24', // Amber
+  '#a78bfa', // Violet
+  '#34d399', // Emerald
+  '#fb923c'  // Orange
+]
+
+/** Core KPI Breach Rates: multi-line trend of individual Core KPI NC rates over time. */
+export function coreKpiNcRateOption(
+  movement: NcMovementRow[],
+  activeKpiKeys?: string[],
+  grain: Grain = 'weekly'
+): EChartsOption {
+  const timeLabels = movement.map((m) => formatTimeLabel(m.weekStart, grain))
+
+  const allKpiKeys = new Set<string>()
+  const kpiLabels = new Map<string, string>()
+
+  for (const m of movement) {
+    if (m.coreKpiNcRates) {
+      for (const [k, obj] of Object.entries(m.coreKpiNcRates)) {
+        allKpiKeys.add(k)
+        if (obj.label) kpiLabels.set(k, obj.label)
+      }
+    }
+  }
+
+  const keysToRender = Array.from(allKpiKeys).filter((k) => !activeKpiKeys || activeKpiKeys.length === 0 || activeKpiKeys.includes(k))
+
+  const series = keysToRender.map((k, idx) => {
+    const color = CORE_COLORS[idx % CORE_COLORS.length]
+    const label = kpiLabels.get(k) || k
+    const data = movement.map((m) => {
+      const obj = m.coreKpiNcRates?.[k]
+      return obj ? obj.ncRate : null
+    })
+    return {
+      name: label,
+      type: 'line' as const,
+      data,
+      smooth: 0.25,
+      symbol: 'circle',
+      symbolSize: 6,
+      lineStyle: { width: 2, color },
+      itemStyle: { color },
+      emphasis: { focus: 'series' as const }
+    }
+  })
+
+  return {
+    backgroundColor: 'transparent',
+    grid: { left: 42, right: 14, top: 24, bottom: 26 },
+    tooltip: {
+      trigger: 'axis',
+      ...tooltipStyle(),
+      formatter: (params) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const idx = Number(arr[0]?.dataIndex ?? 0)
+        const row = movement[idx]
+        if (!row) return ''
+        const lines = arr.map((p: any) => {
+          const v = p.value != null ? `${p.value}%` : '—'
+          return `${p.marker ?? ''}${p.seriesName}: <b>${v}</b>`
+        })
+        return [`<b>${row.weekStart} (${timeLabels[idx]})</b>`, ...lines].join('<br/>')
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: timeLabels,
+      axisLabel: axisLabelStyle(),
+      axisLine: { lineStyle: { color: PALETTE.border } }
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+    },
+    series
+  }
+}
+

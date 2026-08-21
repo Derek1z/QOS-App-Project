@@ -6,7 +6,7 @@ import type {
 } from '../../../shared/api'
 import { techProfile, fmtCompactNumber, fmtCompactVolume, fmtCompactRate } from '../lib/techProfile'
 import Chart from '../lib/Chart'
-import { healthLineOption, ncMovementOption, formatTimeLabel } from '../lib/overviewCharts'
+import { healthLineOption, ncMovementOption, coreKpiNcRateOption, formatTimeLabel } from '../lib/overviewCharts'
 import GhanaMap from './GhanaMap'
 import TargetsModal from './TargetsModal'
 
@@ -157,18 +157,24 @@ export default function Overview(): React.JSX.Element {
   const [kpiOverview, setKpiOverview] = useState<KpiOverviewResult | null>(null)
   const [execOverview, setExecOverview] = useState<ExecutiveOverviewResult | null>(null)
   const [ncLifecycle, setNcLifecycle] = useState<NcLifecycleResult | null>(null)
-  const [selectedTech, setSelectedTech] = useState<Technology>(workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
+  const pinned = useAppStore((s) => s.pinned)
+  const togglePin = useAppStore((s) => s.togglePin)
+  const isPinned = useAppStore((s) => s.isPinned)
   const [targetsOpen, setTargetsOpen] = useState(false)
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({ techCards: true, health: true, movement: true, other: true })
+  const [movementMode, setMovementMode] = useState<'lifecycle' | 'core_kpis'>('lifecycle')
+  const [activeKpiFilters, setActiveKpiFilters] = useState<string[]>([])
   const s = summary
 
   const loadData = async () => {
     try {
-      const movementLimit = grain === 'daily' ? 14 : grain === 'monthly' ? 6 : 8
+      const movementLimit = grain === 'daily' ? 30 : grain === 'monthly' ? 6 : 8
       const [sum, h, m, p, ko, eo, ncl] = await Promise.all([
         window.api.analytics.summary({ period, grain }),
         window.api.analytics.health(grain),
-        window.api.analytics.ncMovement(movementLimit, grain),
+        window.api.analytics.ncMovement(movementLimit, grain, selectedTech),
         window.api.analytics.priorityQueue('balanced', 8),
         window.api.analytics.kpiOverview(8, grain),
         window.api.analytics.executiveOverview({ period, grain }),
@@ -202,7 +208,7 @@ export default function Overview(): React.JSX.Element {
       offRules()
       offKpi()
     }
-  }, [workspace?.path, workspace?.readOnly, workspace?.technology, period, grain, setSummary])
+  }, [workspace?.path, workspace?.readOnly, workspace?.technology, selectedTech, period, grain, setSummary])
 
   const profile = techProfile(selectedTech)
   const currentTechHealth = execOverview?.technologies.find((t) => t.technology === selectedTech) ?? execOverview?.technologies[0]
@@ -242,7 +248,7 @@ export default function Overview(): React.JSX.Element {
     if (selectedTech === '4G') {
       kpis.push(
         { label: profile.utilizationLabel, value: s?.avgPrb == null ? '—' : fmt(s.avgPrb) + '%' },
-        { label: 'Traffic', value: fmtCompactVolume(s?.totalVolumeMb) },
+        { label: 'Data volume', value: fmtCompactVolume(s?.totalVolumeMb) },
         { label: 'Connected users', value: fmtCompactNumber(s?.totalUsers) },
         { label: 'DL throughput', value: fmtCompactRate(s?.avgThroughputKbps) },
         { label: 'Availability', value: s?.avgAvailability == null ? '—' : fmt(s.avgAvailability, 2) + '%' }
@@ -250,15 +256,13 @@ export default function Overview(): React.JSX.Element {
     } else if (selectedTech === '3G') {
       kpis.push(
         { label: profile.utilizationLabel, value: s?.avgPrb == null ? '—' : fmt(s.avgPrb) + '%' },
-        { label: 'Traffic', value: fmtCompactVolume(s?.totalVolumeMb) },
         { label: 'HSDPA Throughput', value: fmtCompactRate(s?.avgThroughputKbps) },
-        { label: 'Availability', value: s?.avgAvailability == null ? '—' : fmt(s.avgAvailability, 2) + '%' }
+        { label: 'Cell Availability', value: s?.avgAvailability == null ? '—' : fmt(s.avgAvailability, 2) + '%' }
       )
     } else {
       kpis.push(
         { label: profile.utilizationLabel, value: s?.avgPrb == null ? '—' : fmt(s.avgPrb) + '%' },
-        { label: 'Traffic', value: fmtCompactVolume(s?.totalVolumeMb) },
-        { label: 'Availability', value: s?.avgAvailability == null ? '—' : fmt(s.avgAvailability, 2) + '%' }
+        { label: 'TCH Availability', value: s?.avgAvailability == null ? '—' : fmt(s.avgAvailability, 2) + '%' }
       )
     }
   }
@@ -285,13 +289,18 @@ export default function Overview(): React.JSX.Element {
     emit('MODULE_CHANGED')
   }
 
+  const meterRadius = 26
+  const meterCirc = 2 * Math.PI * meterRadius
+  const meterScore = currentTechHealth?.healthScore ?? 85
+  const meterOffset = meterCirc - (Math.min(100, Math.max(0, meterScore)) / 100) * meterCirc
+  const meterColor = meterScore >= 80 ? 'var(--green, #10b981)' : meterScore >= 60 ? 'var(--amber, #f59e0b)' : 'var(--danger, #ef4444)'
+
   return (
     <div className="module">
       {/* Top Bar Header */}
       <div className="module-head ov-module-head">
         <div className="ov-head-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2>Executive Overview</h2>
-          {/* Quick Technology Switcher */}
           <div className="seg-control" style={{ height: '28px' }}>
             {(['2G', '3G', '4G'] as Technology[]).map((t) => (
               <button
@@ -322,42 +331,76 @@ export default function Overview(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Customizable Pinned Watchlist */}
+      {pinned.length > 0 && (
+        <div className="pinned-watchlist-section glass-card">
+          <div className="pinned-watchlist-head">
+            <div className="pinned-watchlist-title">
+              <span>⭐</span> Pinned Executive Watchlist ({pinned.length})
+            </div>
+            <span className="card-note">1-Click Quick Drill-Down</span>
+          </div>
+          <div className="pinned-chip-grid">
+            {pinned.map((item) => (
+              <div
+                key={item.id}
+                className="pinned-entity-chip"
+                onClick={() => {
+                  if (item.type === 'cell') {
+                    const cId = Number(item.id.replace('cell:', ''))
+                    if (!isNaN(cId)) openInvestigation(cId, item.name)
+                  }
+                }}
+              >
+                <span>{item.type === 'cell' ? '📱' : item.type === 'district' ? '📍' : '📊'}</span>
+                <span style={{ fontWeight: 600 }}>{item.name}</span>
+                {item.detail && <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>({item.detail})</span>}
+                <button
+                  className="pin-btn pinned"
+                  title="Unpin from watchlist"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    togglePin(item)
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Main Selected Technology Health Card Banner */}
       {currentTechHealth && (
-        <div className="active-domain-health-banner">
+        <div className="active-domain-health-banner glass-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="badge badge-tech" style={{ fontSize: '14px', padding: '4px 10px' }}>
-                {currentTechHealth.technology}
-              </span>
+            <div className="radial-health-wrap">
+              <svg className="radial-meter-svg" viewBox="0 0 68 68">
+                <circle className="radial-meter-bg" cx="34" cy="34" r={meterRadius} />
+                <circle
+                  className="radial-meter-progress"
+                  cx="34"
+                  cy="34"
+                  r={meterRadius}
+                  strokeDasharray={meterCirc}
+                  strokeDashoffset={meterOffset}
+                  stroke={meterColor}
+                />
+              </svg>
               <div>
-                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>
-                  {currentTechHealth.technology} Network Health
-                </h3>
-                <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                  {currentTechHealth.cellCount} Total Cells · {currentTechHealth.ncCellCount} Non-Compliant
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="badge badge-tech" style={{ fontSize: '13px', padding: '3px 8px' }}>
+                    {currentTechHealth.technology}
+                  </span>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>
+                    {currentTechHealth.technology} Health Score: {currentTechHealth.healthScore}/100
+                  </h3>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
+                  {currentTechHealth.cellCount} Total Cells · {currentTechHealth.ncCellCount} Non-Compliant ({currentTechHealth.compliancePct}% Compliant)
                 </div>
               </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span className="badge" style={{
-                background: currentTechHealth.healthScore >= 80 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                color: currentTechHealth.healthScore >= 80 ? 'var(--green)' : 'var(--danger)',
-                fontWeight: 800,
-                fontSize: '14px',
-                padding: '4px 10px'
-              }}>
-                Health: {currentTechHealth.healthScore}/100
-              </span>
-              <span className="badge" style={{
-                background: currentTechHealth.compliancePct >= 90 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                color: currentTechHealth.compliancePct >= 90 ? 'var(--green)' : 'var(--amber, #f59e0b)',
-                fontWeight: 700,
-                fontSize: '13px',
-                padding: '4px 10px'
-              }}>
-                {currentTechHealth.compliancePct}% Compliant
-              </span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -370,7 +413,7 @@ export default function Overview(): React.JSX.Element {
 
       {/* Executive Problem Summary Banner */}
       {execOverview?.problemSummary && (
-        <div className="executive-problem-summary" style={{ marginBottom: 16 }}>
+        <div className="executive-problem-summary glass-card" style={{ marginBottom: 16 }}>
           <div className="problem-header">
             <div>
               <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Executive Summary</span>
@@ -385,17 +428,17 @@ export default function Overview(): React.JSX.Element {
             </div>
             <div className="problem-badges">
               {execOverview.problemSummary.chronicCellCount > 0 && (
-                <span className="problem-badge-chronic">
+                <span className="problem-badge-chronic pulse-badge-critical">
                   🔥 {execOverview.problemSummary.chronicCellCount} Chronic Cells (7+ wks)
                 </span>
               )}
               {execOverview.problemSummary.persistentCellCount > 0 && (
-                <span className="problem-badge-persistent">
+                <span className="problem-badge-persistent pulse-badge-warning">
                   ⚠️ {execOverview.problemSummary.persistentCellCount} Persistent NC
                 </span>
               )}
               {execOverview.problemSummary.criticalCellCount > 0 && (
-                <span className="problem-badge-critical">
+                <span className="problem-badge-critical pulse-badge-critical">
                   🚨 {execOverview.problemSummary.criticalCellCount} Critical Severity
                 </span>
               )}
@@ -423,13 +466,13 @@ export default function Overview(): React.JSX.Element {
         </div>
 
         {dynamicKpiCards.length === 0 ? (
-          <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-dim)' }}>
+          <div className="card glass-card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-dim)' }}>
             No KPI data available for {selectedTech} in the current dataset. Import {selectedTech} data in Data Manager.
           </div>
         ) : (
           <div className="dynamic-kpi-grid">
             {dynamicKpiCards.map((k) => (
-              <div key={k.key} className="dynamic-kpi-card">
+              <div key={k.key} className="dynamic-kpi-card glass-card">
                 <div className="dynamic-kpi-header">
                   <div>
                     <div className="dynamic-kpi-name">
@@ -449,12 +492,21 @@ export default function Overview(): React.JSX.Element {
                       Target: {k.betterDirection === 'lower_is_better' ? '≤' : '≥'} {k.target != null ? `${k.target} ${k.unit}` : '—'}
                     </div>
                   </div>
-                  <span className={`badge badge-compliance-${k.complianceStatus}`}>
-                    {k.complianceStatus === 'compliant' && '✓ Compliant'}
-                    {k.complianceStatus === 'warning' && '⚠ Warning'}
-                    {k.complianceStatus === 'non_compliant' && '✕ Non-Compliant'}
-                    {k.complianceStatus === 'unavailable' && '— Unavailable'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      className={`pin-btn ${isPinned(`kpi:${k.key}`) ? 'pinned' : ''}`}
+                      title={isPinned(`kpi:${k.key}`) ? 'Unpin from Watchlist' : 'Pin to Watchlist'}
+                      onClick={() => togglePin({ id: `kpi:${k.key}`, type: 'kpi', name: k.label, detail: `${k.formattedValue}` })}
+                    >
+                      ⭐
+                    </button>
+                    <span className={`badge badge-compliance-${k.complianceStatus}`}>
+                      {k.complianceStatus === 'compliant' && '✓ Compliant'}
+                      {k.complianceStatus === 'warning' && '⚠ Warning'}
+                      {k.complianceStatus === 'non_compliant' && '✕ Non-Compliant'}
+                      {k.complianceStatus === 'unavailable' && '— Unavailable'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="dynamic-kpi-main">
@@ -506,12 +558,13 @@ export default function Overview(): React.JSX.Element {
                     <div style={{ marginTop: '6px' }}>
                       <KpiSparkline
                         trend={k.sparkline.map((v, i) => ({
-                          weekStart: `W${i}`,
+                          weekStart: k.sparklineDates?.[i] ?? `W${i + 1}`,
                           value: v,
                           breached: k.target != null ? (k.worseIsHigher ? v > k.target : v < k.target) : false
                         }))}
                         target={k.target}
                         worseIsHigher={k.worseIsHigher}
+                        grain={grain}
                       />
                     </div>
                   )}
@@ -567,7 +620,7 @@ export default function Overview(): React.JSX.Element {
         <OverviewSection
           id="movement"
           icon="📈"
-          label="NC Movement"
+          label="NC Movement & Core Breach Rates"
           open={open.movement}
           onToggle={toggleSection}
         >
@@ -575,12 +628,90 @@ export default function Overview(): React.JSX.Element {
             <p className="card-note">No NC classifications yet — import data first.</p>
           ) : (
             <>
-              <Chart option={ncMovementOption(movement, grain)} height={230} />
-              <p className="card-note">
-                Last {movement.length} completed {grain === 'daily' ? 'days' : grain === 'monthly' ? 'months' : 'weeks'} — stacked
-                areas are lifecycle counts; the dashed line is the {grain === 'daily' ? 'daily' : grain === 'monthly' ? 'monthly' : 'weekly'} NC rate with the
-                district NC threshold (10%) marked.
-              </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="seg">
+                  <button
+                    className={`seg-btn${movementMode === 'lifecycle' ? ' active' : ''}`}
+                    onClick={() => setMovementMode('lifecycle')}
+                  >
+                    🧬 Lifecycle Movement
+                  </button>
+                  <button
+                    className={`seg-btn${movementMode === 'core_kpis' ? ' active' : ''}`}
+                    onClick={() => setMovementMode('core_kpis')}
+                  >
+                    📊 {selectedTech} Core KPI Breach Rates
+                  </button>
+                </div>
+
+                {movementMode === 'core_kpis' && (
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Filter:</span>
+                    {(() => {
+                      const allKeys: Array<{ key: string; label: string }> = []
+                      for (const m of movement) {
+                        if (m.coreKpiNcRates) {
+                          for (const [k, obj] of Object.entries(m.coreKpiNcRates)) {
+                            if (!allKeys.some((x) => x.key === k)) {
+                              allKeys.push({ key: k, label: obj.label })
+                            }
+                          }
+                        }
+                      }
+                      if (allKeys.length === 0) return null
+                      return allKeys.map((item) => {
+                        const isSelected = activeKpiFilters.length === 0 || activeKpiFilters.includes(item.key)
+                        return (
+                          <button
+                            key={item.key}
+                            className={`chip ${isSelected ? 'chip-ok' : 'chip-dim'}`}
+                            style={{ cursor: 'pointer', fontSize: '11px', border: isSelected ? '1px solid var(--accent)' : '1px solid var(--border)' }}
+                            onClick={() => {
+                              if (activeKpiFilters.length === 0) {
+                                setActiveKpiFilters(allKeys.filter((x) => x.key !== item.key).map((x) => x.key))
+                              } else if (activeKpiFilters.includes(item.key)) {
+                                if (activeKpiFilters.length === 1) {
+                                  setActiveKpiFilters([])
+                                } else {
+                                  setActiveKpiFilters(activeKpiFilters.filter((k) => k !== item.key))
+                                }
+                              } else {
+                                const next = [...activeKpiFilters, item.key]
+                                if (next.length === allKeys.length) {
+                                  setActiveKpiFilters([])
+                                } else {
+                                  setActiveKpiFilters(next)
+                                }
+                              }
+                            }}
+                          >
+                            {isSelected ? '✓ ' : ''}{item.label}
+                          </button>
+                        )
+                      })
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {movementMode === 'lifecycle' ? (
+                <>
+                  <Chart option={ncMovementOption(movement, grain)} height={230} />
+                  <p className="card-note">
+                    Last {movement.length} completed {grain === 'daily' ? 'days' : grain === 'monthly' ? 'months' : 'weeks'} — stacked
+                    areas are lifecycle counts; the dashed line is the overall NC rate with the
+                    district NC threshold (10%) marked.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Chart option={coreKpiNcRateOption(movement, activeKpiFilters, grain)} height={230} />
+                  <p className="card-note">
+                    Historical trend of <b>{selectedTech} Core KPI Non-Compliance (Breach) Rates</b> across all observed cells.
+                    Click the filter pills above to isolate individual KPI curves.
+                  </p>
+                </>
+              )}
             </>
           )}
         </OverviewSection>

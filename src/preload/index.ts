@@ -111,9 +111,13 @@ const api: Api = {
       ipcRenderer.invoke('derived:detect', headers, technology)
   },
   investigation: {
-    search: (scope: InvestigationScope, q?: string) => ipcRenderer.invoke('investigation:search', scope, q),
-    get: (scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }) =>
-      ipcRenderer.invoke('investigation:get', scope, entityId, opts),
+    search: (scope: InvestigationScope, q?: string, technology?: Technology) =>
+      ipcRenderer.invoke('investigation:search', scope, q, technology),
+    get: (
+      scope: InvestigationScope,
+      entityId: number,
+      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology }
+    ) => ipcRenderer.invoke('investigation:get', scope, entityId, opts),
     setStatus: (
       scope: InvestigationScope,
       entityId: number,

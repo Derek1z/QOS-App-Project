@@ -105,7 +105,12 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
   if (!rules) return
 
   const chronicWeeks = rules.chronicWeeks ?? 7
-  const persistentWeeks = rules.persistentWeeks ?? 4
+  const persistentWeeks = rules.persistentWeeks ?? 3
+  const chronicDays = rules.chronicDays ?? Math.max(14, chronicWeeks * 7)
+  const persistentDays = rules.persistentDays ?? Math.max(7, persistentWeeks * 7)
+  const chronicMonths = rules.chronicMonths ?? Math.max(2, Math.round(chronicWeeks / 4))
+  const persistentMonths = rules.persistentMonths ?? Math.max(2, Math.round(persistentWeeks / 4))
+  const dailyMinKpiBreaches = rules.dailyMinKpiBreaches ?? 1
   const prbThresh = rules.prbThresholdPct ?? 80
 
   const BATCH_SIZE = 2500
@@ -158,8 +163,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
         `,
         obsDaysSql: '1.0',
         breachDaysSql: 'w.breach_days',
-        chronicThresh: Math.max(14, chronicWeeks * 7),
-        persistentThresh: Math.max(7, persistentWeeks * 7)
+        chronicThresh: chronicDays,
+        persistentThresh: persistentDays
       },
       {
         grain: 'monthly',
@@ -174,8 +179,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
         `,
         obsDaysSql: 'CAST(coalesce(w.observed_days, 30) AS DOUBLE)',
         breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
-        chronicThresh: Math.max(2, Math.round(chronicWeeks / 4)),
-        persistentThresh: Math.max(2, Math.round(persistentWeeks / 4))
+        chronicThresh: chronicMonths,
+        persistentThresh: persistentMonths
       }
     ]
 

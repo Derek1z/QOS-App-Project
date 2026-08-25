@@ -123,7 +123,11 @@ async function recomputeCellWeekly(conn: DuckDBConnection, idList: string): Prom
 
 async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Promise<void> {
   await conn.run(`DELETE FROM agg_cell_monthly WHERE month_start IN ${MONTHS(idList)}`)
-  await conn.run(`
+  const tech = await activeTech(conn)
+  const breachJoin = kpiBreachJoin(tech)
+  const breachDay = `count(*) FILTER (WHERE (f.prb_utilization IS NOT NULL AND f.prb_utilization >= r.prb_threshold_pct) OR kb.cell_id IS NOT NULL)`
+  await conn.run(
+    `
     INSERT INTO agg_cell_monthly
       (month_start, month_end, month, year, cell_id, observed_days, breach_days,
        prb_avg, prb_peak, data_volume_mb_sum, connected_users_sum,
@@ -132,11 +136,12 @@ async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Pro
       m.month_start, CAST(m.month_start + INTERVAL 1 MONTH - INTERVAL 1 DAY AS DATE),
       month(m.month_start), year(m.month_start), f.cell_id,
       count(DISTINCT f.date_id) AS observed_days,
-      count(*) FILTER (WHERE f.prb_utilization >= r.prb_threshold_pct) AS breach_days,
+      ${breachDay} AS breach_days,
       avg(f.prb_utilization), max(f.prb_utilization),
       sum(f.data_volume_mb), sum(f.connected_users),
       avg(f.dl_throughput_kbps), avg(f.availability_pct),
-      EXISTS (
+      (${breachDay} >= max(COALESCE(r.monthly_breach_days, 3)))
+      OR EXISTS (
         SELECT 1 FROM agg_cell_weekly w
         WHERE w.cell_id = f.cell_id AND w.week_start >= m.month_start
           AND w.week_start < m.month_start + INTERVAL 1 MONTH AND w.is_nc
@@ -145,9 +150,12 @@ async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Pro
     JOIN (SELECT date_id, CAST(date_trunc('month', date) AS DATE) AS month_start FROM dim_date) m
       ON m.date_id = f.date_id
     ${RULESET}
+    ${breachJoin.sql}
     WHERE m.month_start IN ${MONTHS(idList)}
     GROUP BY m.month_start, f.cell_id
-  `)
+  `,
+    breachJoin.params
+  )
 }
 
 function entityJoins(entity: string): { idJoin: string; colId: string; selId: string; groupExtra: string } {

@@ -1212,7 +1212,10 @@ async function renderPdf(html: string, outPath: string): Promise<void> {
       width: 1200,
       height: 900,
       webPreferences: {
-        offscreen: true
+        offscreen: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
       }
     })
     try {

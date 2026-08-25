@@ -1,7 +1,7 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, existsSync } from 'node:fs'
 import * as ws from './workspace/manager'
 import * as appState from './services/appState'
 import { ensureDirs } from './paths'
@@ -10,6 +10,29 @@ import { startScheduler, stopScheduler, maybeRunScheduled } from './services/mai
 import { runSmokeTest } from './smoke'
 
 let mainWindow: BrowserWindow | null = null
+
+function getAppIcon(): Electron.NativeImage | string | undefined {
+  const isWin = process.platform === 'win32'
+  const candidatePaths = [
+    isWin ? join(__dirname, '../../build/icon.ico') : join(__dirname, '../../build/icon.png'),
+    isWin ? join(__dirname, '../../build/icon.png') : join(__dirname, '../../build/icon.ico'),
+    join(process.resourcesPath, 'build/icon.png'),
+    join(process.resourcesPath, 'build/icon.ico'),
+    join(process.resourcesPath, 'icon.png'),
+    join(process.resourcesPath, 'icon.ico')
+  ]
+  for (const p of candidatePaths) {
+    if (existsSync(p)) {
+      try {
+        const img = nativeImage.createFromPath(p)
+        if (!img.isEmpty()) return img
+      } catch {
+        return p
+      }
+    }
+  }
+  return undefined
+}
 
 // M0 uses an app-level single instance; per-workspace multi-instance arrives later.
 // Skip single-instance lock during smoke runs — the verify-portable script launches
@@ -74,7 +97,7 @@ function bootstrap(): void {
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     title: '2G/3G/4G QoS Network Intelligence',
-    icon: join(__dirname, '../../build/icon.ico'),
+    icon: getAppIcon(),
     width: 1440,
     height: 900,
     minWidth: 1080,

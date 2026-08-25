@@ -193,12 +193,10 @@ export default function CellIntelligence(): React.JSX.Element {
                   <th>Lifecycle</th>
                   <th>Trend</th>
                   <th>Severity</th>
-                  {workspace?.technology === '4G' && (
-                    <>
-                      <th style={{ textAlign: 'right' }}>PRB avg</th>
-                      <th style={{ textAlign: 'right' }}>Breach</th>
-                    </>
-                  )}
+                  <th style={{ textAlign: 'right' }}>
+                    {workspace?.technology === '2G' ? 'TCH Cong avg' : workspace?.technology === '3G' ? '3G Load avg' : 'PRB avg'}
+                  </th>
+                  <th style={{ textAlign: 'right' }}>Breach</th>
                   <th style={{ textAlign: 'right' }}>Priority</th>
                   {data.rows[0]?.kpis.map((k) => (
                     <th key={k.key} style={{ textAlign: 'right' }} title={`${k.label} target ${k.target ?? '—'}`}>
@@ -210,7 +208,20 @@ export default function CellIntelligence(): React.JSX.Element {
               </thead>
               <tbody>
                 {data.rows.map((r) => (
-                  <tr key={r.cellId} className="cell-row" onClick={() => void openDetail(r)}>
+                  <tr
+                    key={r.cellId}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`View details for cell ${r.cellName}`}
+                    className="cell-row"
+                    onClick={() => void openDetail(r)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void openDetail(r)
+                      }
+                    }}
+                  >
                     <td>{r.cellName}</td>
                     <td>{r.site ?? '—'}</td>
                     <td>{r.district ?? '—'}</td>
@@ -226,12 +237,8 @@ export default function CellIntelligence(): React.JSX.Element {
                     <td>
                       <Chip text={r.severity} tone={r.severity === 'Critical' ? 'bad' : r.severity === 'High' ? 'warn' : 'dim'} />
                     </td>
-                    {workspace?.technology === '4G' && (
-                      <>
-                        <td className="num">{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
-                        <td className="num">{r.breachDays}</td>
-                      </>
-                    )}
+                    <td className="num">{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
+                    <td className="num">{r.breachDays}</td>
                     <td className="num">
                       {r.priorityScore != null ? (
                         <span style={{ color: BAND_COLOR[r.priorityBand ?? 'Low'] ?? 'var(--text)', fontWeight: 700 }}>

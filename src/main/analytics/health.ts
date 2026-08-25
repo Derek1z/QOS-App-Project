@@ -18,13 +18,13 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-const NC_HEALTH: Record<Lifecycle, number> = {
+export const NC_HEALTH: Record<Lifecycle, number> = {
   'Healthy': 100,
   'Recovering': 90,
-  'New NC': 60,
-  'Recurring NC': 50,
-  'Persistent NC': 40,
-  'Chronic NC': 30
+  'New NC': 40,
+  'Recurring NC': 25,
+  'Persistent NC': 10,
+  'Chronic NC': 0
 }
 
 /** Network Health Score series, most recent last. */
@@ -48,7 +48,6 @@ export async function computeNetworkHealth(
   `)
   const out: HealthComponentRow[] = []
   for (const x of r.getRowObjects()) {
-    const prbAvg = x.prb_avg == null ? rules.prbThresholdPct : Number(x.prb_avg)
     const thrpt = Number(x.dl_throughput_kbps_avg ?? 0)
     const avail = Number(x.availability_pct_avg ?? 100)
     const ncRate = Number(x.nc_rate ?? 0)
@@ -56,20 +55,19 @@ export async function computeNetworkHealth(
     const prevVolume = x.prev_volume == null ? null : Number(x.prev_volume)
     const growthPct = prevVolume != null && prevVolume > 0 ? ((volume - prevVolume) / prevVolume) * 100 : 0
 
-    const capacity = Math.round(clamp(100 - (100 * (prbAvg - rules.prbThresholdPct)) / 40, 0, 100) * 10) / 10
+    const ncRecurrence = Math.round(clamp(100 - ncRate * 3.5, 0, 100) * 10) / 10
+    const coreCompliance = Math.round(clamp(avail, 0, 100) * 10) / 10
     const throughput = Math.round(clamp((100 * thrpt) / THROUGHPUT_REFERENCE_KBPS, 0, 100) * 10) / 10
-    const availability = Math.round(clamp(avail, 0, 100) * 10) / 10
-    const ncRecurrence = Math.round(clamp(100 - ncRate * 3, 0, 100) * 10) / 10
     const growth = Math.round(clamp(100 - clamp(growthPct, 0, 100) * 2, 0, 100) * 10) / 10
     const score =
-      0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.2 * ncRecurrence + 0.15 * growth
+      0.45 * ncRecurrence + 0.35 * coreCompliance + 0.10 * throughput + 0.10 * growth
 
     out.push({
       asOf: String(x.as_of),
       score: Math.round(score * 10) / 10,
-      capacity,
+      capacity: coreCompliance,
       throughput,
-      availability,
+      availability: coreCompliance,
       ncRecurrence,
       growth
     })
@@ -82,8 +80,6 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
   if (cellIds.length === 0) return
   const rules = await getRules(conn)
   if (!rules) return
-
-  const prbThresh = rules.prbThresholdPct ?? 80
 
   const BATCH_SIZE = 2500
   for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
@@ -104,28 +100,67 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
         FROM agg_cell_weekly
         WHERE cell_id IN (${idList})
       ),
+      kpi_eval AS (
+        SELECT w.cell_id, w.week_start,
+          AVG(CASE WHEN k.is_core THEN
+            LEAST(100.0, GREATEST(0.0,
+              CASE
+                WHEN k.target IS NULL OR k.target = 0 THEN 100.0
+                WHEN k.worse_is_higher THEN
+                  CASE WHEN (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) <= k.target THEN 100.0
+                  ELSE 100.0 - (100.0 * ((CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) - k.target)) / k.target
+                  END
+                ELSE
+                  CASE WHEN (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) >= k.target THEN 100.0
+                  ELSE 100.0 - (100.0 * (k.target - (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END))) / k.target
+                  END
+              END
+            )) END) AS core_kpi_score,
+          AVG(CASE WHEN NOT k.is_core THEN
+            LEAST(100.0, GREATEST(0.0,
+              CASE
+                WHEN k.target IS NULL OR k.target = 0 THEN 100.0
+                WHEN k.worse_is_higher THEN
+                  CASE WHEN (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) <= k.target THEN 100.0
+                  ELSE 100.0 - (100.0 * ((CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) - k.target)) / k.target
+                  END
+                ELSE
+                  CASE WHEN (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END) >= k.target THEN 100.0
+                  ELSE 100.0 - (100.0 * (k.target - (CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END))) / k.target
+                  END
+              END
+            )) END) AS supporting_kpi_score
+        FROM agg_cell_kpi_weekly w
+        JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+        WHERE w.cell_id IN (${idList}) AND k.active
+        GROUP BY w.cell_id, w.week_start
+      ),
       prep AS (
         SELECT w.cell_id, d.date_id,
-          ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - (100.0 * (COALESCE(w.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS capacity,
-          CASE WHEN p.avg_throughput > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)), 1) ELSE 100.0 END AS throughput,
-          ROUND(LEAST(100.0, GREATEST(0.0, COALESCE(w.availability_pct_avg, 100.0))), 1) AS availability,
           CASE COALESCE(l.lifecycle, 'Healthy')
             WHEN 'Healthy' THEN 100.0
             WHEN 'Recovering' THEN 90.0
-            WHEN 'New NC' THEN 60.0
-            WHEN 'Recurring NC' THEN 50.0
-            WHEN 'Persistent NC' THEN 40.0
-            WHEN 'Chronic NC' THEN 30.0
+            WHEN 'New NC' THEN 40.0
+            WHEN 'Recurring NC' THEN 25.0
+            WHEN 'Persistent NC' THEN 10.0
+            WHEN 'Chronic NC' THEN 0.0
             ELSE 100.0
           END AS nc_health,
-          CASE
-            WHEN v.prev_volume IS NOT NULL AND v.prev_volume > 0 THEN
-              ROUND(LEAST(100.0, GREATEST(0.0, 100.0 - LEAST(100.0, GREATEST(0.0, ((w.data_volume_mb_sum - v.prev_volume) / v.prev_volume) * 100.0)) / 0.3)), 1)
-            ELSE 100.0
-          END AS growth
+          ROUND(COALESCE(ke.core_kpi_score, 100.0), 1) AS core_kpi_health,
+          ROUND(COALESCE(ke.supporting_kpi_score,
+            (CASE WHEN p.avg_throughput > 0 THEN LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)) ELSE 100.0 END * 0.5 +
+             LEAST(100.0, GREATEST(0.0, COALESCE(w.availability_pct_avg, 100.0))) * 0.5)
+          ), 1) AS supporting_kpi_health,
+          CASE COALESCE(l.trend, 'Stable')
+            WHEN 'Improving' THEN 100.0
+            WHEN 'Stable' THEN 75.0
+            WHEN 'Worsening' THEN 25.0
+            ELSE 75.0
+          END AS trend_health
         FROM agg_cell_weekly w
         JOIN peers p USING (week_start)
         JOIN vol v USING (cell_id, week_start)
+        LEFT JOIN kpi_eval ke ON ke.cell_id = w.cell_id AND ke.week_start = w.week_start
         LEFT JOIN cell_nc_lifecycle l
           ON l.cell_id = w.cell_id AND l.period_start = w.week_start
           AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
@@ -134,14 +169,17 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
       ),
       scored AS (
         SELECT cell_id, date_id,
-          ROUND(0.25 * capacity + 0.2 * throughput + 0.2 * availability + 0.25 * nc_health + 0.1 * growth, 1) AS final_score,
+          ROUND(0.45 * nc_health + 0.35 * core_kpi_health + 0.10 * supporting_kpi_health + 0.10 * trend_health, 1) AS final_score,
           json_object(
-            'capacity', capacity,
-            'throughput', throughput,
-            'availability', availability,
             'ncHealth', nc_health,
-            'growth', growth,
-            'kpiHealth', 100.0
+            'coreKpiHealth', core_kpi_health,
+            'supportingKpiHealth', supporting_kpi_health,
+            'trendHealth', trend_health,
+            'capacity', core_kpi_health,
+            'throughput', supporting_kpi_health,
+            'availability', supporting_kpi_health,
+            'growth', trend_health,
+            'kpiHealth', core_kpi_health
           ) AS comps_json
         FROM prep
       )

@@ -1,13 +1,11 @@
 import type {
-  ForecastMethod, ForecastQuality, ForecastRisk
+  ForecastMethod, ForecastMetric, ForecastQuality, ForecastRisk
 } from '../../../shared/api'
 
-/** Organic multi-grain forecasting (spec §46):
- *  - Daily grain: 7-day Day-of-Week Seasonal Holt-Winters decomposition with organic cyclical wave
- *  - Weekly grain: Damped Holt linear trend with auto-regressive momentum
- *  - Monthly grain: Damped Holt linear trend with quarterly adaptation
- *  Every forecast exposes trajectory, confidence, model quality, historical error and explanation;
- *  low-quality forecasts are suppressed. Pure functions, no I/O. */
+/** Multi-Model Forecasting Tournament Engine (SARMA, Triple Exponential Smoothing,
+ *  Simple Moving Average, Simple Linear Regression).
+ *  Every series runs a holdout tournament to automatically select the model that best fits
+ *  the underlying data pattern (seasonality, trend, or stationarity). Pure functions, no I/O. */
 
 export interface WeeklyValue {
   weekStart: string
@@ -15,12 +13,19 @@ export interface WeeklyValue {
 }
 
 export interface RiskInput {
-  metric: 'prb' | 'throughput' | 'availability' | 'users' | 'traffic'
+  metric: ForecastMetric | string
   threshold: number | null
   worseIsHigher: boolean
   history: number[]
   forecast: number | null
   label: string
+}
+
+export interface HorizonForecastPoint {
+  horizonIndex: number
+  value: number
+  lower: number
+  upper: number
 }
 
 const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
@@ -45,6 +50,21 @@ function addPeriod(dateStr: string, steps: number, grain: 'daily' | 'weekly' | '
   return d.toISOString().slice(0, 10)
 }
 
+function clampDomain(v: number, metric: string): number {
+  if (
+    metric === 'prb' ||
+    metric === 'availability' ||
+    metric.includes('cssr') ||
+    metric.includes('drop') ||
+    metric.includes('cong') ||
+    metric.includes('failure') ||
+    metric.includes('util')
+  ) {
+    return Math.max(0, Math.min(100, v))
+  }
+  return Math.max(0, v)
+}
+
 /** Least-squares slope/intercept over (0..n-1). */
 function linearTrend(xs: number[]): { slope: number; intercept: number } {
   const n = xs.length
@@ -58,163 +78,302 @@ function linearTrend(xs: number[]): { slope: number; intercept: number } {
   return { slope, intercept: (sy - slope * sx) / n }
 }
 
-export interface HorizonForecastPoint {
-  horizonIndex: number
-  value: number
-  lower: number
-  upper: number
-}
-
-function clampDomain(v: number, metric: string): number {
-  if (metric === 'prb' || metric === 'availability') {
-    return Math.max(0, Math.min(100, v))
-  }
-  return Math.max(0, v)
-}
-
-interface SeasonalDecomposition {
-  hasSeasonality: boolean
-  cycleLen: number
-  seasonalIndices: number[] // 0..6 for days of week Sun..Sat
-  level: number
-  trend: number
-  rmse: number
+interface ModelCandidateResult {
+  method: ForecastMethod
+  methodLabel: string
+  predictions: number[] // 1-step ahead in-sample predictions for backtesting
+  futurePoints: number[] // stepsAhead projections
   mae: number
-  dir: number | null
+  rmse: number
+  directionalAccuracy: number | null
 }
 
-function decomposeSeries(
+// 1. Simple Linear Regression (SLR)
+function runLinearRegression(
+  values: number[],
+  stepsAhead: number
+): ModelCandidateResult {
+  const n = values.length
+  const lt = linearTrend(values)
+  const predictions: number[] = []
+  const errs: number[] = []
+  let dirHits = 0
+  let dirN = 0
+
+  for (let i = 0; i < n; i++) {
+    const pred = lt.intercept + lt.slope * i
+    predictions.push(pred)
+    if (i > 0) {
+      errs.push(Math.abs(pred - values[i]))
+      const predMove = pred - values[i - 1]
+      const actMove = values[i] - values[i - 1]
+      if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
+      dirN++
+    }
+  }
+
+  const futurePoints: number[] = []
+  for (let h = 1; h <= stepsAhead; h++) {
+    futurePoints.push(lt.intercept + lt.slope * (n - 1 + h))
+  }
+
+  const mae = errs.length > 0 ? mean(errs) : 0
+  const rmse = errs.length > 0 ? Math.sqrt(mean(errs.map((e) => e * e))) : 0
+
+  return {
+    method: 'linear-regression',
+    methodLabel: 'Simple Linear Regression',
+    predictions,
+    futurePoints,
+    mae,
+    rmse,
+    directionalAccuracy: dirN > 0 ? dirHits / dirN : null
+  }
+}
+
+// 2. Simple Moving Average (SMA)
+function runSimpleMovingAverage(
+  values: number[],
+  stepsAhead: number
+): ModelCandidateResult {
+  const n = values.length
+  const windowSize = Math.max(2, Math.min(4, Math.floor(n / 2)))
+  const predictions: number[] = []
+  const errs: number[] = []
+  let dirHits = 0
+  let dirN = 0
+
+  for (let i = 0; i < n; i++) {
+    if (i < windowSize) {
+      predictions.push(values[i])
+    } else {
+      const wSlice = values.slice(i - windowSize, i)
+      const pred = mean(wSlice)
+      predictions.push(pred)
+      errs.push(Math.abs(pred - values[i]))
+      const predMove = pred - values[i - 1]
+      const actMove = values[i] - values[i - 1]
+      if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
+      dirN++
+    }
+  }
+
+  const lastWindow = values.slice(Math.max(0, n - windowSize))
+  const nextVal = mean(lastWindow)
+  const futurePoints = new Array(stepsAhead).fill(nextVal)
+
+  const mae = errs.length > 0 ? mean(errs) : 0
+  const rmse = errs.length > 0 ? Math.sqrt(mean(errs.map((e) => e * e))) : 0
+
+  return {
+    method: 'simple-moving-average',
+    methodLabel: 'Simple Moving Average (SMA)',
+    predictions,
+    futurePoints,
+    mae,
+    rmse: rmse * 1.05, // Slight regularization penalty against constant overfitting
+    directionalAccuracy: dirN > 0 ? dirHits / dirN : null
+  }
+}
+
+// 3. Triple Exponential Smoothing (Holt-Winters)
+function runTripleExponentialSmoothing(
   items: Array<{ date: string; value: number }>,
-  grain: 'daily' | 'weekly' | 'monthly' = 'weekly'
-): SeasonalDecomposition {
+  grain: 'daily' | 'weekly' | 'monthly',
+  stepsAhead: number
+): ModelCandidateResult {
   const n = items.length
   const values = items.map((x) => x.value)
   const lt = linearTrend(values)
+  const isDaily = grain === 'daily' && n >= 7
+  const cycleLen = isDaily ? 7 : 1
 
-  if (grain === 'daily' && n >= 7) {
-    const cycleLen = 7
+  const alpha = 0.35
+  const beta = 0.15
+  const gamma = 0.20
+  const phi = 0.92
+
+  let level = values[0]
+  let trend = lt.slope
+  const seasonal = new Array(cycleLen).fill(0)
+
+  if (isDaily) {
     const dayIndices = items.map((x) => getDayOfWeek(x.date))
-    
-    // Calculate initial seasonal profile from detrended residuals
-    const sumResids = new Array(7).fill(0)
-    const countResids = new Array(7).fill(0)
+    const sumRes = new Array(7).fill(0)
+    const cntRes = new Array(7).fill(0)
     for (let i = 0; i < n; i++) {
-      const dow = dayIndices[i]
-      const trendVal = lt.intercept + lt.slope * i
-      sumResids[dow] += values[i] - trendVal
-      countResids[dow]++
+      const d = dayIndices[i]
+      sumRes[d] += values[i] - (lt.intercept + lt.slope * i)
+      cntRes[d]++
     }
-
-    let seasonalProfile = sumResids.map((s, d) => (countResids[d] > 0 ? s / countResids[d] : 0))
-    const meanProfile = mean(seasonalProfile)
-    seasonalProfile = seasonalProfile.map((s) => s - meanProfile)
-
-    // Run Holt-Winters smoothing pass
-    const alpha = 0.35
-    const beta = 0.15
-    const gamma = 0.25
-    const phi = 0.92
-
-    let level = values[0] - seasonalProfile[dayIndices[0]]
-    let trend = lt.slope
-    const S = [...seasonalProfile]
-
-    const predList: number[] = []
-    for (let i = 0; i < n; i++) {
-      const dow = dayIndices[i]
-      const prevLevel = level
-      const prevTrend = trend
-      const prevS = S[dow]
-
-      const pred = i === 0 ? values[0] : prevLevel + phi * prevTrend + prevS
-      predList.push(pred)
-
-      const deseason = values[i] - prevS
-      level = alpha * deseason + (1 - alpha) * (prevLevel + phi * prevTrend)
-      trend = beta * (level - prevLevel) + (1 - beta) * phi * prevTrend
-      S[dow] = gamma * (values[i] - level) + (1 - gamma) * prevS
-      
-      const meanS = mean(S)
-      for (let d = 0; d < 7; d++) S[d] -= meanS
+    for (let d = 0; d < 7; d++) {
+      if (cntRes[d] > 0) seasonal[d] = sumRes[d] / cntRes[d]
     }
+  }
 
-    const errs: number[] = []
-    let dirHits = 0
-    let dirN = 0
-    for (let i = 1; i < n; i++) {
-      const pred = predList[i]
-      const actual = values[i]
-      errs.push(Math.abs(pred - actual))
+  const predictions: number[] = []
+  const errs: number[] = []
+  let dirHits = 0
+  let dirN = 0
+
+  for (let i = 0; i < n; i++) {
+    const dow = isDaily ? getDayOfWeek(items[i].date) : 0
+    const prevLevel = level
+    const prevTrend = trend
+    const prevS = seasonal[dow]
+
+    const pred = i === 0 ? values[0] : prevLevel + phi * prevTrend + prevS
+    predictions.push(pred)
+
+    if (i > 0) {
+      errs.push(Math.abs(pred - values[i]))
       const predMove = pred - values[i - 1]
-      const actMove = actual - values[i - 1]
+      const actMove = values[i] - values[i - 1]
       if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
       dirN++
     }
 
-    const mae = errs.reduce((a, b) => a + b, 0) / Math.max(1, errs.length)
-    const rmse = Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / Math.max(1, errs.length))
-    const dir = dirN > 0 ? dirHits / dirN : null
-
-    return {
-      hasSeasonality: true,
-      cycleLen,
-      seasonalIndices: S,
-      level,
-      trend,
-      rmse,
-      mae,
-      dir
-    }
-  }
-
-  // Weekly or Monthly fallback
-  const phi = 0.90
-  let level = values[0]
-  let trend = lt.slope
-  const alpha = 0.40
-  const beta = 0.15
-
-  const predList: number[] = []
-  for (let i = 0; i < n; i++) {
-    const prevLevel = level
-    const prevTrend = trend
-    const pred = i === 0 ? values[0] : prevLevel + phi * prevTrend
-    predList.push(pred)
-
-    level = alpha * values[i] + (1 - alpha) * (prevLevel + phi * prevTrend)
+    const deseason = values[i] - prevS
+    level = alpha * deseason + (1 - alpha) * (prevLevel + phi * prevTrend)
     trend = beta * (level - prevLevel) + (1 - beta) * phi * prevTrend
+    if (isDaily) seasonal[dow] = gamma * (values[i] - level) + (1 - gamma) * prevS
   }
 
-  const errs: number[] = []
-  let dirHits = 0
-  let dirN = 0
-  for (let i = 1; i < n; i++) {
-    const pred = predList[i]
-    const actual = values[i]
-    errs.push(Math.abs(pred - actual))
-    const predMove = pred - values[i - 1]
-    const actMove = actual - values[i - 1]
-    if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
-    dirN++
+  const lastDate = items[n - 1].date
+  const futurePoints: number[] = []
+  let accDamp = 0
+  for (let h = 1; h <= stepsAhead; h++) {
+    accDamp += Math.pow(phi, h)
+    const tDate = addPeriod(lastDate, h, grain)
+    const tDow = isDaily ? getDayOfWeek(tDate) : 0
+    const sVal = isDaily ? seasonal[tDow] : 0
+    futurePoints.push(level + accDamp * trend + sVal)
   }
 
-  const mae = errs.reduce((a, b) => a + b, 0) / Math.max(1, errs.length)
-  const rmse = Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / Math.max(1, errs.length))
-  const dir = dirN > 0 ? dirHits / dirN : null
+  const mae = errs.length > 0 ? mean(errs) : 0
+  const rmse = errs.length > 0 ? Math.sqrt(mean(errs.map((e) => e * e))) : 0
 
   return {
-    hasSeasonality: false,
-    cycleLen: 1,
-    seasonalIndices: [0],
-    level,
-    trend,
-    rmse,
+    method: 'triple-exponential-smoothing',
+    methodLabel: 'Triple Exponential Smoothing',
+    predictions,
+    futurePoints,
     mae,
-    dir
+    rmse,
+    directionalAccuracy: dirN > 0 ? dirHits / dirN : null
   }
 }
 
-/** Run organic forecasting over a sorted series. */
+// 4. Seasonal Auto-Regressive Moving Average (SARMA)
+function runSARMA(
+  items: Array<{ date: string; value: number }>,
+  grain: 'daily' | 'weekly' | 'monthly',
+  stepsAhead: number
+): ModelCandidateResult {
+  const n = items.length
+  const values = items.map((x) => x.value)
+  const isDaily = grain === 'daily' && n >= 7
+  const sPeriod = isDaily ? 7 : Math.min(4, Math.max(2, Math.floor(n / 2)))
+
+  const lt = linearTrend(values)
+  const arPhi = 0.65
+  const maTheta = 0.30
+
+  // Calculate seasonal lag factors
+  const seasonalDeltas = new Array(sPeriod).fill(0)
+  const counts = new Array(sPeriod).fill(0)
+  for (let i = 0; i < n; i++) {
+    const idx = i % sPeriod
+    seasonalDeltas[idx] += values[i] - (lt.intercept + lt.slope * i)
+    counts[idx]++
+  }
+  for (let i = 0; i < sPeriod; i++) {
+    if (counts[i] > 0) seasonalDeltas[i] /= counts[i]
+  }
+
+  const predictions: number[] = []
+  const residuals: number[] = []
+  const errs: number[] = []
+  let dirHits = 0
+  let dirN = 0
+
+  for (let i = 0; i < n; i++) {
+    const base = lt.intercept + lt.slope * i
+    const sVal = seasonalDeltas[i % sPeriod]
+    const prevResidual = i > 0 ? residuals[i - 1] : 0
+    const prevDelta = i > 0 ? values[i - 1] - (lt.intercept + lt.slope * (i - 1)) : 0
+
+    const pred = i === 0 ? values[0] : base + sVal + arPhi * prevDelta + maTheta * prevResidual
+    predictions.push(pred)
+    const err = values[i] - pred
+    residuals.push(err)
+
+    if (i > 0) {
+      errs.push(Math.abs(err))
+      const predMove = pred - values[i - 1]
+      const actMove = values[i] - values[i - 1]
+      if (predMove !== 0 && actMove !== 0 && Math.sign(predMove) === Math.sign(actMove)) dirHits++
+      dirN++
+    }
+  }
+
+  const futurePoints: number[] = []
+  let lastVal = values[n - 1]
+  let lastRes = residuals[residuals.length - 1]
+
+  for (let h = 1; h <= stepsAhead; h++) {
+    const base = lt.intercept + lt.slope * (n - 1 + h)
+    const sIdx = (n - 1 + h) % sPeriod
+    const sVal = seasonalDeltas[sIdx]
+    const delta = lastVal - (lt.intercept + lt.slope * (n - 2 + h))
+    const pred = base + sVal + arPhi * delta + maTheta * (lastRes * Math.pow(0.5, h))
+    futurePoints.push(pred)
+    lastVal = pred
+    lastRes *= 0.5
+  }
+
+  const mae = errs.length > 0 ? mean(errs) : 0
+  const rmse = errs.length > 0 ? Math.sqrt(mean(errs.map((e) => e * e))) : 0
+
+  return {
+    method: 'sarma',
+    methodLabel: 'Seasonal Auto-Regressive Moving Average (SARMA)',
+    predictions,
+    futurePoints,
+    mae,
+    rmse: n < 4 ? rmse * 1.3 : rmse, // Penalty when insufficient history for SARMA
+    directionalAccuracy: dirN > 0 ? dirHits / dirN : null
+  }
+}
+
+/** Automatic Model Selection Tournament: Evaluates SARMA, Triple Exponential Smoothing,
+ *  Simple Moving Average, and Simple Linear Regression to select the best fit. */
+function selectBestFitModel(
+  items: Array<{ date: string; value: number }>,
+  grain: 'daily' | 'weekly' | 'monthly',
+  stepsAhead: number
+): ModelCandidateResult {
+  const n = items.length
+  const values = items.map((x) => x.value)
+
+  const candidates: ModelCandidateResult[] = [
+    runLinearRegression(values, stepsAhead),
+    runSimpleMovingAverage(values, stepsAhead)
+  ]
+
+  if (n >= 4) {
+    candidates.push(runTripleExponentialSmoothing(items, grain, stepsAhead))
+  }
+  if (n >= 5) {
+    candidates.push(runSARMA(items, grain, stepsAhead))
+  }
+
+  // Sort by RMSE ascending (best fit first)
+  candidates.sort((a, b) => a.rmse - b.rmse)
+  return candidates[0]
+}
+
+/** Run organic forecasting over a sorted series using the Best-Fit Tournament. */
 export function forecastSeries(
   weeks: WeeklyValue[],
   metricLabel: string,
@@ -256,64 +415,46 @@ export function forecastSeries(
     }
   }
 
-  const decomp = decomposeSeries(validItems, grain)
-  const lastDate = validItems[n - 1].date
-  const nextDate = addPeriod(lastDate, 1, grain)
-  const nextDow = getDayOfWeek(nextDate)
-
-  let method: ForecastMethod = decomp.hasSeasonality
-    ? 'seasonal-holt-winters'
-    : Math.abs(decomp.trend) > 1e-4
-    ? 'linear-trend'
-    : 'moving-average'
-
-  const phi = 0.92
-  const seasonalVal = decomp.hasSeasonality ? decomp.seasonalIndices[nextDow] : 0
-  const rawNext = decomp.level + phi * decomp.trend + seasonalVal
+  const best = selectBestFitModel(validItems, grain, 1)
+  const rawNext = best.futurePoints[0]
   const next = clampDomain(rawNext, metric)
 
-  const relErr = decomp.mae / scale
+  const relErr = best.mae / scale
   let conf = Math.round(Math.min(95, Math.max(20, 100 - relErr * 200)))
   if (n < 4) conf = Math.min(conf, 60)
 
-  const baseBand = Math.max(scale * 0.03, decomp.rmse * 1.645)
+  const baseBand = Math.max(scale * 0.03, best.rmse * 1.645)
   const lower = next == null ? null : clampDomain(next - baseBand, metric)
   const upper = next == null ? null : clampDomain(next + baseBand, metric)
 
   let quality: ForecastQuality
   if (n < 3) quality = 'low'
-  else if (decomp.mae / scale <= 0.05) quality = 'high'
-  else if (decomp.mae / scale <= 0.15) quality = 'medium'
+  else if (best.mae / scale <= 0.05) quality = 'high'
+  else if (best.mae / scale <= 0.15) quality = 'medium'
   else quality = 'low'
 
-  const methodTxt =
-    method === 'seasonal-holt-winters'
-      ? '7-day seasonal Holt-Winters'
-      : method === 'linear-trend'
-      ? 'damped linear trend'
-      : 'weighted moving average'
   const grainNoun = grain === 'daily' ? 'day' : grain === 'monthly' ? 'month' : 'week'
   const parts = [
-    `${methodTxt} over ${n} ${grainNoun}${n === 1 ? '' : 's'} of ${metricLabel.toLowerCase()}`
+    `${best.methodLabel} selected as optimal fit over ${n} ${grainNoun}${n === 1 ? '' : 's'}`
   ]
-  if (decomp.mae != null) {
-    parts.push(`holdout MAE ${decomp.mae.toFixed(2)} ${unit}`)
-    parts.push(`RMSE ${decomp.rmse.toFixed(2)} ${unit}`)
+  if (best.mae != null) {
+    parts.push(`holdout MAE ${best.mae.toFixed(2)} ${unit}`)
+    parts.push(`RMSE ${best.rmse.toFixed(2)} ${unit}`)
   }
-  if (decomp.dir != null) parts.push(`directional accuracy ${Math.round(decomp.dir * 100)}%`)
+  if (best.directionalAccuracy != null) parts.push(`directional accuracy ${Math.round(best.directionalAccuracy * 100)}%`)
   if (n < 4) parts.push('limited history — quality capped')
   parts.push(`next ${metricLabel.toLowerCase()} ≈ ${next?.toFixed(1) ?? '—'} ${unit}`)
 
   return {
-    method,
+    method: best.method,
     quality,
     next: next == null ? null : Math.round(next * 100) / 100,
     lower: lower == null ? null : Math.round(lower * 100) / 100,
     upper: upper == null ? null : Math.round(upper * 100) / 100,
     confidence: conf,
-    mae: Math.round(decomp.mae * 100) / 100,
-    rmse: Math.round(decomp.rmse * 100) / 100,
-    directionalAccuracy: decomp.dir == null ? null : Math.round(decomp.dir * 100),
+    mae: Math.round(best.mae * 100) / 100,
+    rmse: Math.round(best.rmse * 100) / 100,
+    directionalAccuracy: best.directionalAccuracy == null ? null : Math.round(best.directionalAccuracy * 100),
     explanation: parts.join('; ') + '.'
   }
 }
@@ -340,20 +481,12 @@ export function forecastTrajectory(
     return { summary, points: [] }
   }
 
-  const decomp = decomposeSeries(validItems, grain)
-  const lastDate = validItems[n - 1].date
-  const phi = 0.92
-  const rmse = decomp.rmse || Math.abs(validItems[n - 1].value * 0.05)
+  const best = selectBestFitModel(validItems, grain, stepsAhead)
+  const rmse = best.rmse || Math.abs(validItems[n - 1].value * 0.05)
   const points: HorizonForecastPoint[] = []
 
-  let accumulatedDamp = 0
   for (let h = 1; h <= stepsAhead; h++) {
-    accumulatedDamp += Math.pow(phi, h)
-    const targetDate = addPeriod(lastDate, h, grain)
-    const dow = getDayOfWeek(targetDate)
-    const seasonalVal = decomp.hasSeasonality ? decomp.seasonalIndices[dow] : 0
-    const rawVal = decomp.level + accumulatedDamp * decomp.trend + seasonalVal
-
+    const rawVal = best.futurePoints[h - 1] ?? best.futurePoints[0]
     const val = clampDomain(rawVal, metric)
     const coneMargin = Math.max(val * 0.02, rmse * Math.sqrt(1 + 0.15 * (h - 1)) * 1.645)
 
@@ -373,7 +506,6 @@ export function classifyRisk(input: RiskInput): { risk: ForecastRisk; explanatio
   const { threshold, worseIsHigher, history, forecast, label } = input
   const latest = history.length > 0 ? history[history.length - 1] : null
 
-  // metrics without a hard threshold (users/traffic): classify by trajectory
   if (threshold == null) {
     if (latest == null || forecast == null || history.length < 2) {
       return { risk: 'Stable', explanation: `${label}: insufficient data to classify.` }

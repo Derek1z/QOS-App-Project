@@ -181,10 +181,12 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     getRegionDistricts(regionId, technology, grain, period)
   )
 
-  ipcMain.handle('investigation:search', (_e, scope: InvestigationScope, q?: string) => searchEntities(scope, q))
+  ipcMain.handle('investigation:search', (_e, scope: InvestigationScope, q?: string, technology?: Technology) =>
+    searchEntities(scope, q, technology)
+  )
   ipcMain.handle(
     'investigation:get',
-    (_e, scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }) =>
+    (_e, scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology }) =>
       getInvestigation(scope, entityId, opts)
   )
   ipcMain.handle(

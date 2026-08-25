@@ -3,7 +3,7 @@ import type { EChartsOption } from 'echarts'
 import { useAppStore, on } from '../store'
 import type {
   ActionStatus, EntityOption, InvestigationReport, InvestigationResult,
-  InvestigationScope, Severity, Lifecycle
+  InvestigationScope, Severity, Lifecycle, Technology
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { investigationChartOption } from '../lib/investigationCharts'
@@ -25,15 +25,35 @@ const STATUSES: ActionStatus[] = [
   'Deferred'
 ]
 
-const CHECKLIST = [
-  'Confirm PRB / congestion threshold breach days per week',
-  'Review trend across the last 4 weeks',
-  'Compare against site siblings (peer check)',
-  'Verify availability against the 99.5% expectation',
-  'Check backhaul / hardware errors when throughput is low',
-  'Confirm data coverage — any gaps in imported weeks?',
-  'Mark the intervention week once an action is taken'
-]
+const TECH_CHECKLISTS: Record<Technology, string[]> = {
+  '4G': [
+    'Confirm 4G DL PRB utilization breach days & peak hour load',
+    'Review 4G DL user throughput against the 10.0 Mbps benchmark',
+    'Audit Random Access / PRACH root sequence indices for preamble collisions',
+    'Inspect MIMO antenna electrical/mechanical down-tilts and VSWR feeder alarms',
+    'Compare against co-located site sibling sectors (peer check)',
+    'Verify S1-U / X2 backhaul latency, packet loss, and buffer utilization',
+    'Mark the intervention week once physical or parameter changes are applied'
+  ],
+  '3G': [
+    'Confirm 3G DL Power Congestion and UL CE Congestion event counts',
+    'Audit Physical Channel (PhyCh) setup failures and Radio Link Sync Loss abnormal drops',
+    'Inspect 3G Call Setup Success (CSSR) and Data Access Success (DASR)',
+    'Check Scrambling Code (PSC) reuse distance and neighbor clashes',
+    'Verify Iub transmission link capacity and NodeB credit congestion',
+    'Compare against co-located 3G carrier siblings on the same NodeB',
+    'Mark the intervention week once RF optimization is committed'
+  ],
+  '2G': [
+    'Confirm 2G TCH Congestion (%) and SDCCH signalling congestion rates',
+    'Audit Frequency Plan & BCCH/TCH co-channel / adjacent channel interference',
+    'Inspect 2G TCH Call Drop Rate (%) and Handover Success Rate (HOSR)',
+    'Check TRX hardware faults, combiner loss, and VSWR return-loss alarms',
+    'Review Handover Hysteresis, Power Control, and PBGT threshold parameters',
+    'Compare against co-located 2G sectors on the same BTS site',
+    'Mark the intervention week once frequency or antenna retuning is completed'
+  ]
+}
 
 function Chip({ text, tone }: { text: string; tone?: 'ok' | 'warn' | 'bad' | 'dim' }): React.JSX.Element {
   return <span className={`chip chip-${tone ?? 'dim'}`}>{text}</span>
@@ -63,8 +83,10 @@ const EVENT_LABEL: Record<string, string> = {
 function fmtV(v: number | null, unit: string): string {
   if (v == null) return '—'
   if (unit === 'kbps') return `${(v / 1024).toFixed(1)} Mbps`
+  if (unit === 'Mbps') return `${v.toFixed(1)} Mbps`
+  if (unit === 'Erl') return `${v.toFixed(1)} Erl`
   if (unit === 'MB') return `${(v / 1024).toFixed(1)} GB`
-  if (unit === '%') return `${v.toFixed(1)}%`
+  if (unit === '%' || unit === 'pp') return `${v.toFixed(1)}%`
   return Math.round(v).toLocaleString()
 }
 
@@ -74,6 +96,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const period = useAppStore((s) => s.period)
   const target = useAppStore((s) => s.investigationTarget)
   const setTarget = useAppStore((s) => s.setInvestigationTarget)
+  const [tech, setTech] = useState<Technology>(workspace?.technology ?? '4G')
   const [scope, setScope] = useState<InvestigationScope>('cell')
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<EntityOption[]>([])
@@ -89,6 +112,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const [report, setReport] = useState<InvestigationReport | null>(null)
   const [copied, setCopied] = useState(false)
   const [checklist, setChecklist] = useState<Record<string, boolean>>({})
+  const [activeTab, setActiveTab] = useState<'evidence' | 'rca' | 'peers' | 'workflow'>('evidence')
 
   // Dropdown overlay state: closed by default
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -96,17 +120,29 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  useEffect(() => {
+    if (workspace?.technology) {
+      setTech(workspace.technology)
+    }
+  }, [workspace?.technology])
+
   const load = useCallback(
-    async (ent: EntityOption | null, iv: string, scopeOverride?: InvestigationScope): Promise<void> => {
+    async (ent: EntityOption | null, iv: string, scopeOverride?: InvestigationScope, techOverride?: Technology): Promise<void> => {
       if (!ent) {
         setResult(null)
         return
       }
       const s = scopeOverride ?? scope
+      const activeTech = techOverride ?? tech
       setLoading(true)
       setError(null)
       try {
-        const r = await window.api.investigation.get(s, ent.id, { interventionWeek: iv || undefined, grain, period })
+        const r = await window.api.investigation.get(s, ent.id, {
+          interventionWeek: iv || undefined,
+          grain,
+          period,
+          technology: activeTech
+        })
         setResult(r)
         if (r) {
           setIntervention(r.interventionWeek ?? '')
@@ -123,7 +159,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
         setLoading(false)
       }
     },
-    [scope, grain, period]
+    [scope, grain, period, tech]
   )
 
   // Listen to outside clicks and Escape key to close the dropdown popover
@@ -156,7 +192,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   // Close dropdown on technology or ruleset change
   useEffect(() => {
     setDropdownOpen(false)
-  }, [workspace?.technology, workspace?.path])
+  }, [tech, workspace?.path])
 
   useEffect(() => {
     const off = on('WORKSPACE_CHANGED', () => setDropdownOpen(false))
@@ -169,14 +205,14 @@ export default function InvestigationWorkspace(): React.JSX.Element {
     debounce.current = setTimeout(() => {
       void (async () => {
         try {
-          const opts = await window.api.investigation.search(scope, query.trim() || undefined)
+          const opts = await window.api.investigation.search(scope, query.trim() || undefined, tech)
           setOptions(opts)
 
           // Default auto-selection: if no entity is currently selected, immediately pick the top/highest priority entity
           if (!selected && opts.length > 0 && !target) {
             const top = opts[0]
             setSelected(top)
-            void load(top, '')
+            void load(top, '', undefined, tech)
           }
         } catch {
           setOptions([])
@@ -186,7 +222,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [scope, query, selected, target, load])
+  }, [scope, query, selected, target, load, tech])
 
   // Load rules threshold
   useEffect(() => {
@@ -208,14 +244,16 @@ export default function InvestigationWorkspace(): React.JSX.Element {
     setQuery('')
     setDropdownOpen(false)
     setSelected(ent)
-    void load(ent, '', target.scope)
+    void load(ent, '', target.scope, tech)
     setTarget(null)
-  }, [target, load, setTarget])
+  }, [target, load, setTarget, tech])
 
   const chartOption: EChartsOption | null = useMemo(
-    () => (result && result.weeks.length > 0 ? investigationChartOption(result, prbThreshold, grain) : null),
-    [result, prbThreshold, grain]
+    () => (result && result.weeks.length > 0 ? investigationChartOption(result, prbThreshold, grain, tech) : null),
+    [result, prbThreshold, grain, tech]
   )
+
+  const activeChecklist = TECH_CHECKLISTS[tech] ?? TECH_CHECKLISTS['4G']
 
   async function pick(ent: EntityOption): Promise<void> {
     setQuery('')
@@ -268,7 +306,20 @@ export default function InvestigationWorkspace(): React.JSX.Element {
       <div className="module-head">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2>Investigation Workspace</h2>
-          <span className="badge ov-tech-badge">{workspace?.technology ?? '4G'}</span>
+          <div className="seg">
+            {(['4G', '3G', '2G'] as Technology[]).map((t) => (
+              <button
+                key={t}
+                className={`seg-btn${tech === t ? ' active' : ''}`}
+                onClick={() => {
+                  setTech(t)
+                  if (selected) void load(selected, intervention, undefined, t)
+                }}
+              >
+                {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
+              </button>
+            ))}
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="module-workspace">{workspace?.name}</span>
@@ -453,377 +504,505 @@ export default function InvestigationWorkspace(): React.JSX.Element {
 
       {selected && loading && !result && <div className="notice">Loading investigation…</div>}
 
-      {/* Main Investigation Content */}
+      {/* Executive Hero Banner */}
       {result && (
         <>
-          {/* Status & Classification Card */}
-          <div className="card">
-            <div className="card-head-row">
-              <div>
-                <h3 style={{ margin: 0 }}>Action Status &amp; Assessment</h3>
-                <span className="card-note">Last updated: {result.status.updatedAt ?? 'never'}</span>
-              </div>
-              {topIssueName && (
-                <span className="badge" style={{ fontSize: '12px', background: 'rgba(56, 189, 248, 0.12)', color: '#38bdf8', fontWeight: 700 }}>
-                  Diagnosis: {topIssueName}
+          <div className="inv-hero-card">
+            <div className="inv-hero-main">
+              <div className="inv-hero-title-row">
+                <span style={{ color: 'var(--accent)', fontSize: '13px', fontWeight: 700 }}>
+                  [{scope.toUpperCase()}]
                 </span>
-              )}
-            </div>
-            <div className="inv-status-row">
-              <select
-                className="sel"
-                value={statusDraft.status}
-                onChange={(e) => setStatusDraft({ ...statusDraft, status: e.target.value })}
-              >
-                <option value="">— Status —</option>
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <input
-                className="input"
-                placeholder="Owner"
-                value={statusDraft.owner}
-                onChange={(e) => setStatusDraft({ ...statusDraft, owner: e.target.value })}
-              />
-              <input
-                className="input"
-                placeholder="External ticket"
-                value={statusDraft.externalTicket}
-                onChange={(e) => setStatusDraft({ ...statusDraft, externalTicket: e.target.value })}
-              />
-              <input
-                className="input"
-                type="date"
-                value={statusDraft.targetReviewDate}
-                onChange={(e) => setStatusDraft({ ...statusDraft, targetReviewDate: e.target.value })}
-              />
-              <button className="btn btn-primary" disabled={saving} onClick={() => void saveStatus()}>
-                {saving ? 'Saving…' : 'Save Status'}
-              </button>
-            </div>
-            <div className="inv-current">
-              {result.current && (
-                <>
-                  <span className="inv-week">{result.current.weekStart} ({formatTimeLabel(result.current.weekStart, grain)})</span>
-                  <Chip
-                    text={result.current.lifecycle ?? '—'}
-                    tone={result.current.lifecycle === 'Persistent NC' ? 'bad' : result.current.lifecycle === 'Recurring NC' ? 'warn' : result.current.lifecycle === 'New NC' ? 'ok' : 'dim'}
-                  />
-                  <Chip text={result.current.trend ?? '—'} tone={result.current.trend === 'Worsening' ? 'bad' : result.current.trend === 'Improving' ? 'ok' : 'dim'} />
-                  <Chip text={result.current.severity ?? '—'} tone={result.current.severity === 'Critical' ? 'bad' : result.current.severity === 'High' ? 'warn' : 'dim'} />
-                  {result.current.priorityScore != null && (
-                    <span className="inv-priority" style={{ color: result.current.priorityScore >= 75 ? 'var(--danger)' : result.current.priorityScore >= 50 ? 'var(--warn)' : 'var(--text)' }}>
-                      Priority {result.current.priorityScore} · {result.current.priorityBand}
-                    </span>
-                  )}
-                  {result.current.isNc && <Chip text="NC" tone="bad" />}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* KPI Evidence Strip */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>KPI Evidence — Latest Week vs Previous</h3>
-              <span className="card-note">{result.scope} scope · rollup of {result.path.length} levels</span>
-            </div>
-            <div className="kpi-strip">
-              {result.evidence.map((e) => {
-                const better = e.delta == null ? null : e.worseIsHigher ? e.delta < 0 : e.delta > 0
-                const tone = better === null ? '' : better ? 'kpi-delta-good' : 'kpi-delta-bad'
-                const arrow = e.delta == null ? '' : e.delta >= 0 ? '▲' : '▼'
-                return (
-                  <div key={e.metric} className="kpi cmp-kpi" title={e.label}>
-                    <div className="kpi-value">{fmtV(e.current, e.unit)}</div>
-                    <div className="kpi-label">{e.label}</div>
-                    <div className="cmp-kpi-sub">
-                      <span className="cmp-kpi-prev">was {fmtV(e.previous, e.unit)}</span>
-                      {e.delta != null && (
-                        <span className={`cmp-kpi-delta ${tone}`}>
-                          {arrow} {fmtV(e.delta, e.unit)}
-                          {e.deltaPct != null ? ` (${e.deltaPct >= 0 ? '+' : ''}${e.deltaPct}%)` : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Actual Metrics Chart */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>Actual Metrics — Weekly History</h3>
-              <span className="card-note">5 aligned grids · PRB threshold {prbThreshold}% · intervention marked</span>
-            </div>
-            <Chart option={chartOption} height={560} />
-            {result.weeks.length > 0 && (
-              <div className="week-strip">
-                {result.weeks.map((w) => (
-                  <span
-                    key={w.weekStart}
-                    className={`week-cell${w.isNc ? ' week-nc' : ''}`}
-                    title={`${w.weekStart}: ${w.lifecycle ?? 'OK'}`}
-                  >
-                    {w.isNc ? (w.lifecycle === 'Persistent NC' ? 'P' : w.lifecycle === 'Recurring NC' ? 'R' : 'N') : '·'}
-                  </span>
-                ))}
+                <span className="inv-hero-name">{selected?.name ?? result.scope}</span>
+                {selected?.path && <span className="inv-hero-path">{selected.path.join(' › ')}</span>}
               </div>
-            )}
-          </div>
 
-          {/* Evidence-Based Diagnosis */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>Evidence-Based Diagnosis</h3>
-              <span className="card-note">Calibrated language — never claims root cause beyond data</span>
+              <div className="inv-hero-badges">
+                {result.current && (
+                  <>
+                    <Chip
+                      text={`Lifecycle: ${result.current.lifecycle ?? '—'}`}
+                      tone={result.current.lifecycle === 'Persistent NC' ? 'bad' : result.current.lifecycle === 'Recurring NC' ? 'warn' : result.current.lifecycle === 'New NC' ? 'ok' : 'dim'}
+                    />
+                    <Chip
+                      text={`Trend: ${result.current.trend ?? '—'}`}
+                      tone={result.current.trend === 'Worsening' ? 'bad' : result.current.trend === 'Improving' ? 'ok' : 'dim'}
+                    />
+                    <Chip
+                      text={`Severity: ${result.current.severity ?? '—'}`}
+                      tone={result.current.severity === 'Critical' ? 'bad' : result.current.severity === 'High' ? 'warn' : 'dim'}
+                    />
+                    {result.current.priorityScore != null && (
+                      <span
+                        className="badge"
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          background: result.current.priorityScore >= 75 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(251, 191, 36, 0.15)',
+                          color: result.current.priorityScore >= 75 ? '#f87171' : '#fbbf24',
+                          border: '1px solid currentColor'
+                        }}
+                      >
+                        Priority {result.current.priorityScore} · {result.current.priorityBand}
+                      </span>
+                    )}
+                    {result.current.isNc && <Chip text="NC Active" tone="bad" />}
+                    <span className="inv-week">
+                      As of {result.current.weekStart} ({formatTimeLabel(result.current.weekStart, grain)})
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-            <ul className="finding-list">
-              {result.findings.map((f) => (
-                <li key={f.id} className={`finding finding-${f.level}`}>
-                  <Chip text={f.phrase} tone={PHRASE_TONE[f.phrase] ?? 'dim'} />
-                  <span className="finding-text">{f.text}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
 
-          {/* Alternative Diagnostic Hypotheses */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>Alternative Hypotheses &amp; Likely Causes</h3>
-              <span className="card-note">Support scores are deterministic and descriptive</span>
-            </div>
-            {result.hypotheses.map((h) => (
-              <div key={h.id} className="hypo">
-                <div className="hypo-head">
-                  <span className="hypo-title">{h.title}</span>
-                  <Chip text={h.verdict} tone={VERDICT_TONE[h.verdict] ?? 'dim'} />
-                  <span className="hypo-score">{h.score}/100</span>
+            {/* Top Right Diagnosis Verdict Hero */}
+            <div className="inv-verdict-box">
+              <div>
+                <div className="inv-verdict-head">
+                  <span>Deterministic RCA Verdict</span>
+                  {topHypothesis && (
+                    <span style={{ color: '#38bdf8' }}>Score {topHypothesis.score}/100</span>
+                  )}
                 </div>
-                <div className="hypo-bar">
-                  <div className="hypo-fill" style={{ width: `${h.score}%` }} />
+                <div className="inv-verdict-title">
+                  {topIssueName ?? 'Operational Parameter Normal'}
                 </div>
-                {(h.supporting.length > 0 || h.contradicting.length > 0 || (h.recommendations && h.recommendations.length > 0)) && (
-                  <div className="hypo-evidence">
-                    {h.supporting.length > 0 && (
-                      <div className="hypo-side">
-                        <span className="hypo-side-label hypo-for">For</span>
-                        {h.supporting.map((s, i) => (
-                          <div key={i} className="hypo-item">• {s}</div>
-                        ))}
-                      </div>
-                    )}
-                    {h.contradicting.length > 0 && (
-                      <div className="hypo-side">
-                        <span className="hypo-side-label hypo-against">Against</span>
-                        {h.contradicting.map((c, i) => (
-                          <div key={i} className="hypo-item">• {c}</div>
-                        ))}
-                      </div>
-                    )}
-                    {h.recommendations && h.recommendations.length > 0 && (
-                      <div className="hypo-recs-box" style={{ gridColumn: '1 / -1', marginTop: '6px' }}>
-                        <span style={{ fontWeight: 600, color: 'var(--text)' }}>Recommended Next Steps:</span>
-                        {h.recommendations.map((rec, i) => (
-                          <div key={i} style={{ marginTop: '2px' }}>→ {rec}</div>
-                        ))}
-                      </div>
-                    )}
+                {topHypothesis && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
+                    Verdict: <b style={{ color: topHypothesis.verdict === 'consistent' ? '#f87171' : '#38bdf8' }}>{topHypothesis.verdict}</b>
+                    {' · '}{topHypothesis.supporting.length} supporting indicator(s)
                   </div>
                 )}
               </div>
-            ))}
-          </div>
 
-          {/* Before / After Analysis */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>Before / After Analysis</h3>
-              <label className="inv-iv-label">
-                Intervention week:{' '}
-                <select
-                  className="sel"
-                  value={intervention}
-                  onChange={(e) => {
-                    setIntervention(e.target.value)
-                    void load(selected, e.target.value)
-                  }}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                  Status: <b style={{ color: 'var(--text)' }}>{result.status.status ?? 'Unreviewed'}</b>
+                  {result.status.owner && <span> · Owner: <b>{result.status.owner}</b></span>}
+                </span>
+                <button
+                  className="btn btn-sm btn-primary"
+                  style={{ fontSize: '11px', padding: '3px 10px' }}
+                  onClick={() => void exportReport()}
                 >
-                  {result.weeks.map((w) => (
-                    <option key={w.weekStart} value={w.weekStart}>
-                      {w.weekStart} ({formatTimeLabel(w.weekStart, grain)})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="preview-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Metric</th>
-                    <th>Before</th>
-                    <th>After</th>
-                    <th>Δ%</th>
-                    <th>Improved</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.beforeAfter.map((b) => (
-                    <tr key={b.metric}>
-                      <td>{b.label}</td>
-                      <td>{fmtV(b.before, b.unit)}</td>
-                      <td>{fmtV(b.after, b.unit)}</td>
-                      <td>{b.deltaPct == null ? '—' : `${b.deltaPct >= 0 ? '+' : ''}${b.deltaPct}%`}</td>
-                      <td>
-                        {b.improved == null ? (
-                          '—'
-                        ) : b.improved ? (
-                          <span style={{ color: 'var(--green)' }}>▲ improved</span>
-                        ) : (
-                          <span style={{ color: 'var(--danger)' }}>▼ worsened</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="card-note">
-              Windows: up to 8 weeks before and after the intervention week. Before = weeks before the mark, after = the
-              mark and later weeks.
-            </p>
-          </div>
-
-          {/* Peer Comparison */}
-          <div className="card">
-            <div className="card-head-row">
-              <h3>Peer Comparison</h3>
-              <span className="card-note">Same-scope siblings, worst health first</span>
-            </div>
-            {result.peers.length > 0 ? (
-              <div className="preview-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Peer</th>
-                      <th>Health</th>
-                      <th>PRB</th>
-                      <th>Speed</th>
-                      <th>NC</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.peers.map((p) => (
-                      <tr key={p.name}>
-                        <td>{p.name}</td>
-                        <td>{p.healthScore ?? '—'}</td>
-                        <td>{p.prbAvg == null ? '—' : `${p.prbAvg.toFixed(1)}%`}</td>
-                        <td>{p.throughputKbps == null ? '—' : `${(p.throughputKbps / 1024).toFixed(1)} Mbps`}</td>
-                        <td>{p.ncCells}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="card-note">No peers for this entity yet.</p>
-            )}
-          </div>
-
-          {/* Notes / Events & Checklist */}
-          <div className="cards">
-            <div className="card">
-              <div className="card-head-row">
-                <h3>Notes &amp; Events</h3>
-                <span className="card-note">{result.events.length} events</span>
-              </div>
-              <div className="row-actions">
-                <input
-                  className="input"
-                  placeholder="Add a note…"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void addNote()
-                  }}
-                />
-                <button className="btn btn-primary" disabled={!note.trim()} onClick={() => void addNote()}>
-                  Add Note
+                  📄 Export Report
                 </button>
               </div>
-              <ul className="event-list">
-                {result.events.slice(0, 20).map((ev) => (
-                  <li key={ev.id} className={`event-item${ev.kind === 'status_change' ? ' event-status' : ''}`}>
-                    <span className="event-kind">{EVENT_LABEL[ev.kind] ?? ev.kind}</span>
-                    <span className="event-note">{ev.note ?? ''}</span>
-                    <span className="event-meta">
-                      {ev.occurredAt} · {ev.author ?? '—'}
-                    </span>
-                  </li>
-                ))}
-                {result.events.length === 0 && <li className="card-note">No events yet.</li>}
-              </ul>
             </div>
+          </div>
 
+          {/* Tabbed Investigation Workbench Bar */}
+          <div className="inv-tab-bar">
+            <button
+              className={`inv-tab-btn${activeTab === 'evidence' ? ' active' : ''}`}
+              onClick={() => setActiveTab('evidence')}
+            >
+              📊 Telemetry &amp; Evidence Matrix
+            </button>
+            <button
+              className={`inv-tab-btn${activeTab === 'rca' ? ' active' : ''}`}
+              onClick={() => setActiveTab('rca')}
+            >
+              🧠 Root Cause &amp; Hypotheses ({result.hypotheses.length})
+            </button>
+            <button
+              className={`inv-tab-btn${activeTab === 'peers' ? ' active' : ''}`}
+              onClick={() => setActiveTab('peers')}
+            >
+              👥 Sibling &amp; Peer Comparison ({result.peers.length})
+            </button>
+            <button
+              className={`inv-tab-btn${activeTab === 'workflow' ? ' active' : ''}`}
+              onClick={() => setActiveTab('workflow')}
+            >
+              📋 Workflow &amp; Audit Log ({result.events.length})
+            </button>
+          </div>
+
+          {/* TAB 1: Telemetry & KPI Evidence */}
+          {activeTab === 'evidence' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* KPI Evidence Strip */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>KPI Evidence — Latest Period vs Previous</h3>
+                  <span className="card-note">{result.scope} scope · {result.path.length} level rollup</span>
+                </div>
+                <div className="kpi-strip">
+                  {result.evidence.map((e) => {
+                    const better = e.delta == null ? null : e.worseIsHigher ? e.delta < 0 : e.delta > 0
+                    const tone = better === null ? '' : better ? 'kpi-delta-good' : 'kpi-delta-bad'
+                    const arrow = e.delta == null ? '' : e.delta >= 0 ? '▲' : '▼'
+                    return (
+                      <div key={e.metric} className="kpi cmp-kpi" title={e.label}>
+                        <div className="kpi-value">{fmtV(e.current, e.unit)}</div>
+                        <div className="kpi-label">{e.label}</div>
+                        <div className="cmp-kpi-sub">
+                          <span className="cmp-kpi-prev">was {fmtV(e.previous, e.unit)}</span>
+                          {e.delta != null && (
+                            <span className={`cmp-kpi-delta ${tone}`}>
+                              {arrow} {fmtV(e.delta, e.unit)}
+                              {e.deltaPct != null ? ` (${e.deltaPct >= 0 ? '+' : ''}${e.deltaPct}%)` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Actual Metrics Chart */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Actual Telemetry Metrics — Period History</h3>
+                  <span className="card-note">
+                    {tech === '4G'
+                      ? `PRB threshold ${prbThreshold}%`
+                      : tech === '3G'
+                      ? 'CSSR threshold 95.0% · DASR threshold 98.0%'
+                      : 'TCH Congestion threshold 2.0%'} · Intervention point marked
+                  </span>
+                </div>
+                <Chart option={chartOption} height={500} />
+                {result.weeks.length > 0 && (
+                  <div className="week-strip">
+                    {result.weeks.map((w) => (
+                      <span
+                        key={w.weekStart}
+                        className={`week-cell${w.isNc ? ' week-nc' : ''}`}
+                        title={`${w.weekStart}: ${w.lifecycle ?? 'OK'}`}
+                      >
+                        {w.isNc ? (w.lifecycle === 'Persistent NC' ? 'P' : w.lifecycle === 'Recurring NC' ? 'R' : 'N') : '·'}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Before / After Analysis */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Intervention Impact (Before vs After)</h3>
+                  <label className="inv-iv-label">
+                    Intervention period:{' '}
+                    <select
+                      className="sel"
+                      value={intervention}
+                      onChange={(e) => {
+                        setIntervention(e.target.value)
+                        void load(selected, e.target.value)
+                      }}
+                    >
+                      {result.weeks.map((w) => (
+                        <option key={w.weekStart} value={w.weekStart}>
+                          {w.weekStart} ({formatTimeLabel(w.weekStart, grain)})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="preview-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Before Intervention</th>
+                        <th>After Intervention</th>
+                        <th>Δ Change %</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.beforeAfter.map((b) => (
+                        <tr key={b.metric}>
+                          <td><b>{b.label}</b></td>
+                          <td>{fmtV(b.before, b.unit)}</td>
+                          <td>{fmtV(b.after, b.unit)}</td>
+                          <td>{b.deltaPct == null ? '—' : `${b.deltaPct >= 0 ? '+' : ''}${b.deltaPct}%`}</td>
+                          <td>
+                            {b.improved == null ? (
+                              '—'
+                            ) : b.improved ? (
+                              <span style={{ color: 'var(--green)', fontWeight: 600 }}>▲ Improved</span>
+                            ) : (
+                              <span style={{ color: 'var(--danger)', fontWeight: 600 }}>▼ Worsened</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: Root Cause & Hypotheses Engine */}
+          {activeTab === 'rca' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Evidence-Based Diagnosis */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Calibrated Evidence Findings</h3>
+                  <span className="card-note">Automated diagnostic verification from telemetry evidence</span>
+                </div>
+                <ul className="finding-list">
+                  {result.findings.map((f) => (
+                    <li key={f.id} className={`finding finding-${f.level}`}>
+                      <Chip text={f.phrase} tone={PHRASE_TONE[f.phrase] ?? 'dim'} />
+                      <span className="finding-text">{f.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Alternative Diagnostic Hypotheses */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Diagnostic Hypotheses &amp; Potential Root Causes</h3>
+                  <span className="card-note">Deterministic score ranking based on multi-dimensional telemetry</span>
+                </div>
+                {result.hypotheses.map((h) => (
+                  <div key={h.id} className="hypo">
+                    <div className="hypo-head">
+                      <span className="hypo-title">{h.title}</span>
+                      <Chip text={h.verdict} tone={VERDICT_TONE[h.verdict] ?? 'dim'} />
+                      <span className="hypo-score">Confidence {h.score}%</span>
+                    </div>
+                    <div className="hypo-bar">
+                      <div
+                        className="hypo-fill"
+                        style={{
+                          width: `${h.score}%`,
+                          background: h.score >= 70 ? 'var(--danger)' : h.score >= 40 ? 'var(--warn)' : 'var(--accent)'
+                        }}
+                      />
+                    </div>
+                    {(h.supporting.length > 0 || h.contradicting.length > 0 || (h.recommendations && h.recommendations.length > 0)) && (
+                      <div className="hypo-evidence">
+                        {h.supporting.length > 0 && (
+                          <div className="hypo-side">
+                            <span className="hypo-side-label hypo-for">Supporting Evidence</span>
+                            {h.supporting.map((s, i) => (
+                              <div key={i} className="hypo-item">✓ {s}</div>
+                            ))}
+                          </div>
+                        )}
+                        {h.contradicting.length > 0 && (
+                          <div className="hypo-side">
+                            <span className="hypo-side-label hypo-against">Contradicting Evidence</span>
+                            {h.contradicting.map((c, i) => (
+                              <div key={i} className="hypo-item">✕ {c}</div>
+                            ))}
+                          </div>
+                        )}
+                        {h.recommendations && h.recommendations.length > 0 && (
+                          <div className="hypo-recs-box" style={{ gridColumn: '1 / -1', marginTop: '6px' }}>
+                            <span style={{ fontWeight: 700, color: 'var(--accent)' }}>Recommended Engineering Action:</span>
+                            {h.recommendations.map((rec, i) => (
+                              <div key={i} style={{ marginTop: '2px', color: 'var(--text)' }}>→ {rec}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Sibling & Peer Comparison */}
+          {activeTab === 'peers' && (
             <div className="card">
               <div className="card-head-row">
-                <h3>Investigation Checklist</h3>
-                <span className="card-note">
-                  {Object.values(checklist).filter(Boolean).length}/{CHECKLIST.length} done
-                </span>
+                <h3>Peer Comparison — Co-Located Siblings &amp; Neighbors</h3>
+                <span className="card-note">Same site and district cluster, worst health first</span>
               </div>
-              <ul className="checklist">
-                {CHECKLIST.map((item) => (
-                  <li key={item}>
-                    <label className="check-item">
+              {result.peers.length > 0 ? (
+                <div className="preview-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Peer Sector</th>
+                        <th className="num">Health Score</th>
+                        <th className="num">{tech === '4G' ? 'PRB Util' : tech === '3G' ? '3G Util' : 'TCH Cong'}</th>
+                        <th className="num">{tech === '4G' ? 'DL Speed' : tech === '3G' ? 'HSDPA Speed' : 'Voice Traffic'}</th>
+                        <th className="num">NC Sectors</th>
+                        <th>Cluster Insight</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.peers.map((p) => (
+                        <tr key={p.name}>
+                          <td><b>{p.name}</b></td>
+                          <td className="num">{p.healthScore ?? '—'}</td>
+                          <td className="num">{p.prbAvg == null ? '—' : `${p.prbAvg.toFixed(1)}%`}</td>
+                          <td className="num">
+                            {p.throughputKbps == null
+                              ? '—'
+                              : tech === '2G'
+                              ? `${p.throughputKbps.toFixed(1)} Erl`
+                              : `${(p.throughputKbps / 1024).toFixed(1)} Mbps`}
+                          </td>
+                          <td className="num">{p.ncCells}</td>
+                          <td>
+                            {p.ncCells > 0 ? (
+                              <span style={{ color: '#f87171' }}>
+                                Cluster breach observed in {scope === 'cell' ? 'same site' : scope === 'site' ? 'same district' : 'same region'}
+                              </span>
+                            ) : (
+                              <span style={{ color: 'var(--green)' }}>Sibling is healthy (isolated cell fault)</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="card-note">No co-located peers found for this entity.</p>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: Workflow, Notes & Audit Log */}
+          {activeTab === 'workflow' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Status & Assignment Card */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Workflow Status &amp; Ownership</h3>
+                  <span className="card-note">Last updated: {result.status.updatedAt ?? 'never'}</span>
+                </div>
+                <div className="inv-status-row">
+                  <select
+                    className="sel"
+                    value={statusDraft.status}
+                    onChange={(e) => setStatusDraft({ ...statusDraft, status: e.target.value })}
+                  >
+                    <option value="">— Select Status —</option>
+                    {STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="input"
+                    placeholder="Assigned Owner / Team"
+                    value={statusDraft.owner}
+                    onChange={(e) => setStatusDraft({ ...statusDraft, owner: e.target.value })}
+                  />
+                  <input
+                    className="input"
+                    placeholder="External Ticket ID (e.g. INC-4921)"
+                    value={statusDraft.externalTicket}
+                    onChange={(e) => setStatusDraft({ ...statusDraft, externalTicket: e.target.value })}
+                  />
+                  <input
+                    className="input"
+                    type="date"
+                    value={statusDraft.targetReviewDate}
+                    onChange={(e) => setStatusDraft({ ...statusDraft, targetReviewDate: e.target.value })}
+                  />
+                  <button className="btn btn-primary" disabled={saving} onClick={() => void saveStatus()}>
+                    {saving ? 'Saving…' : 'Save Status & Ownership'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Engineering Checklist */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>{tech} Engineering Investigation Checklist</h3>
+                  <span className="card-note">Root cause validation &amp; recovery protocol</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {activeChecklist.map((item, idx) => (
+                    <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px' }}>
                       <input
                         type="checkbox"
-                        checked={!!checklist[item]}
+                        checked={Boolean(checklist[item])}
                         onChange={(e) => setChecklist({ ...checklist, [item]: e.target.checked })}
                       />
-                      <span className={checklist[item] ? 'check-done' : ''}>{item}</span>
+                      <span style={{ color: checklist[item] ? 'var(--text-dim)' : 'var(--text)', textDecoration: checklist[item] ? 'line-through' : 'none' }}>
+                        {item}
+                      </span>
                     </label>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Report Modal Drawer */}
-      {report && (
-        <div className="drawer-overlay" onClick={() => setReport(null)}>
-          <div className="drawer report-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="drawer-head">
-              <div>
-                <div className="drawer-title">Investigation report</div>
-                <div className="drawer-sub">{report.path}</div>
+                  ))}
+                </div>
               </div>
-              <button className="btn" onClick={() => setReport(null)}>✕</button>
+
+              {/* Notes & Activity Log */}
+              <div className="card">
+                <div className="card-head-row">
+                  <h3>Activity Audit Timeline &amp; Notes</h3>
+                  <span className="card-note">{result.events.length} chronological events</span>
+                </div>
+                <div className="row-actions" style={{ marginBottom: '12px' }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    placeholder="Add an engineering note or observation…"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void addNote()
+                    }}
+                  />
+                  <button className="btn btn-primary" disabled={!note.trim()} onClick={() => void addNote()}>
+                    Add Note
+                  </button>
+                </div>
+                <ul className="timeline">
+                  {result.events.map((ev, i) => (
+                    <li key={i} className="timeline-item">
+                      <span className="timeline-date">{ev.occurredAt}</span>
+                      <span className="timeline-body">
+                        <b>{EVENT_LABEL[ev.kind] ?? ev.kind}:</b> {ev.note}
+                      </span>
+                    </li>
+                  ))}
+                  {result.events.length === 0 && (
+                    <li className="timeline-item" style={{ color: 'var(--text-dim)', fontSize: '12px' }}>
+                      No notes or activity events recorded yet.
+                    </li>
+                  )}
+                </ul>
+              </div>
             </div>
-            <div className="report-body">
-              <pre className="report-pre">{report.markdown}</pre>
+          )}
+
+          {/* Report Preview Modal */}
+          {report && (
+            <div className="modal-backdrop" onClick={() => setReport(null)}>
+              <div className="modal-card" style={{ maxWidth: '700px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+                <div className="modal-head">
+                  <h3>Investigation Report — {selected?.name ?? 'Export'}</h3>
+                  <button className="btn btn-sm btn-ghost" onClick={() => setReport(null)}>✕</button>
+                </div>
+                <div className="modal-body" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: '11px', color: 'var(--text)' }}>
+                    {report.markdown}
+                  </pre>
+                </div>
+                <div className="modal-foot" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Saved to {report.path}</span>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(report.markdown)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 2000)
+                    }}
+                  >
+                    {copied ? 'Copied to Clipboard!' : 'Copy Markdown'}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="row-actions">
-              <button
-                className="btn"
-                onClick={() => {
-                  void navigator.clipboard.writeText(report.markdown)
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 1500)
-                }}
-              >
-                {copied ? 'Copied ✓' : 'Copy markdown'}
-              </button>
-            </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
     </div>
   )

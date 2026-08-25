@@ -74,16 +74,15 @@ const DEMO_KPI_SEEDS: Array<{
   { technology: '2G', key: 'tch_congestion', label: 'TCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['tch congestion', 'tch congestion (%)', 'tch congestion rate', 'congestion'] },
   { technology: '2G', key: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', worseIsHigher: true, target: 2, agg: 'avg', aliases: ['sdcch congestion', 'sdcch congestion (%)', 'sdcch congestion rate'] },
   { technology: '2G', key: 'tch_availability', label: 'TCH Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['tch availability', 'tch availability (%)', 'availability'] },
-  { technology: '2G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)', 'drops (%)'] },
-  { technology: '2G', key: 'call_setup_success', label: 'Call Setup Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['call setup success', 'cssr', 'call setup success rate (%)'] },
+  { technology: '2G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)', 'drops (%)'] },
+  { technology: '2G', key: 'call_setup_success', label: 'Call Setup Success', unit: '%', worseIsHigher: false, target: 95.0, agg: 'avg', aliases: ['call setup success', 'cssr', 'call setup success rate (%)'] },
   { technology: '2G', key: 'gprs_traffic', label: 'GPRS Traffic', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['gprs traffic', 'gprs traffic (mb)', 'gprs data volume'] },
   { technology: '2G', key: 'gprs_throughput', label: 'GPRS/EDGE Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['gprs throughput', 'gprs/edge throughput', 'throughput', 'dl throughput (kbps)', 'edge throughput'] },
   { technology: '2G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'active users', 'rrc connected ues'] },
-  { technology: '3G', key: 'ce_utilization', label: 'CE Utilization', unit: '%', worseIsHigher: true, target: 70, agg: 'avg', aliases: ['ce utilization', 'ce utilization (%)', 'channel element utilization'] },
   { technology: '3G', key: 'hsdpa_throughput', label: 'HSDPA Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['hsdpa throughput', 'hsdpa throughput (kbps)', 'dl throughput (kbps)', 'throughput'] },
   { technology: '3G', key: 'hsupa_throughput', label: 'HSUPA Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['hsupa throughput', 'hsupa throughput (kbps)', 'ul throughput'] },
-  { technology: '3G', key: 'rrc_connection_success', label: 'RRC Connection Success', unit: '%', worseIsHigher: false, target: 98.5, agg: 'avg', aliases: ['rrc connection success', 'rrc setup success rate', 'cssr'] },
-  { technology: '3G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)'] },
+  { technology: '3G', key: 'rrc_connection_success', label: 'RRC Connection Success', unit: '%', worseIsHigher: false, target: 95.0, agg: 'avg', aliases: ['rrc connection success', 'rrc setup success rate', 'cssr'] },
+  { technology: '3G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)'] },
   { technology: '3G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', 'volume'] },
   { technology: '3G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'active users', 'rrc connected ues'] },
   { technology: '4G', key: 'prb_utilization', label: 'PRB Utilization', unit: '%', worseIsHigher: true, target: 80, agg: 'avg', aliases: ['prb utilization', 'prb', 'prb util', 'prb utilization (%)', '4g prb', 'peak hour traffic utilization'] },
@@ -91,7 +90,7 @@ const DEMO_KPI_SEEDS: Array<{
   { technology: '4G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'rrc connected ues', 'rrc connected ues (avg)', 'active users'] },
   { technology: '4G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', '4g data volume', 'volume'] },
   { technology: '4G', key: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['availability', 'cell availability', 'availability (%)', '4g cell availability'] },
-  { technology: '4G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.5, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] }
+  { technology: '4G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] }
 ]
 
 let demoKpiDefs: KpiDefinition[] = seedDemoKpiDefs()
@@ -2707,9 +2706,15 @@ let demoRules: Rules = {
   callDropThresholdPct: 1.5,
   dataAccessThresholdPct: 98.0,
   dataServiceFailureThresholdPct: 1.0,
+  dailyMinKpiBreaches: 1,
   weeklyBreachDays: 1,
+  monthlyBreachDays: 3,
   persistentWeeks: 3,
   chronicWeeks: 7,
+  persistentDays: 7,
+  chronicDays: 21,
+  persistentMonths: 2,
+  chronicMonths: 3,
   districtNcThresholdPct: 10,
   priorityWeights: [25, 20, 15, 15, 15, 10],
   notes: 'Demo ruleset — edits bump the version like the real engine'

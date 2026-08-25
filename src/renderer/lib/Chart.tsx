@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts/core'
-import { LineChart, BarChart, HeatmapChart, ScatterChart } from 'echarts/charts'
+import { LineChart, BarChart, HeatmapChart, ScatterChart, SunburstChart, PieChart } from 'echarts/charts'
 import {
   GridComponent,
   TooltipComponent,
@@ -18,6 +18,8 @@ echarts.use([
   BarChart,
   HeatmapChart,
   ScatterChart,
+  SunburstChart,
+  PieChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -58,10 +60,12 @@ export function axisLabelStyle(): { color: string; fontSize: number } {
 /** Thin ECharts wrapper: init once, follow container size, dispose on unmount. */
 export default function Chart({
   option,
-  height = 260
+  height = 260,
+  onEvents
 }: {
   option: EChartsOption | null
   height?: number
+  onEvents?: Record<string, (params: any) => void>
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
@@ -88,6 +92,19 @@ export default function Chart({
       chartRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    if (!chartRef.current || !onEvents) return
+    const chart = chartRef.current
+    for (const [evtName, handler] of Object.entries(onEvents)) {
+      chart.on(evtName, handler)
+    }
+    return () => {
+      for (const [evtName, handler] of Object.entries(onEvents)) {
+        chart.off(evtName, handler)
+      }
+    }
+  }, [onEvents])
 
   useEffect(() => {
     if (option) chartRef.current?.setOption(option, { notMerge: true, lazyUpdate: true })

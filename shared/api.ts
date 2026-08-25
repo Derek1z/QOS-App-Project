@@ -154,6 +154,72 @@ export const BUILTIN_DERIVED_KPIS: DerivedKPI[] = [
     description: '3G Uplink Channel Element (CE) Congestion from RRC Rejections and RAB Establishment Failures'
   },
   {
+    id: '3g_dl_ce_congestion',
+    name: 'DL CE Congestion',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RRC.Rej.DLCE.Cong',
+      'VS.RAB.FailEstabPS.DLCE.Cong',
+      'VS.RAB.FailEstabCS.DLCE.Cong'
+    ],
+    direction: 'lower_is_better',
+    category: 'Congestion',
+    unit: 'events',
+    target: 50,
+    warningThreshold: 40,
+    criticalThreshold: 100,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Downlink Channel Element (CE) Congestion from RRC Rejections and RAB Establishment Failures'
+  },
+  {
+    id: '3g_dl_code_congestion',
+    name: 'Downlink Code Congestion',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RRC.Rej.Code.Cong',
+      'VS.RAB.FailEstabCS.Code.Cong'
+    ],
+    direction: 'lower_is_better',
+    category: 'Congestion',
+    unit: 'events',
+    target: 50,
+    warningThreshold: 40,
+    criticalThreshold: 100,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G OVSF Downlink Channelisation Code Congestion rejections'
+  },
+  {
+    id: '3g_iub_tn_congestion',
+    name: 'Iub Transport Congestion',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RRC.Rej.TNL.Fail',
+      'VS.RAB.FailEstabCS.TNL',
+      'VS.RAB.FailEstabCS.IubFail',
+      'VS.RAB.FailEstabPS.IubFail'
+    ],
+    direction: 'lower_is_better',
+    category: 'Congestion',
+    unit: 'events',
+    target: 50,
+    warningThreshold: 40,
+    criticalThreshold: 100,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Transport Network (Iub Transmission) Congestion and Link Failures'
+  },
+  {
     id: '3g_phych_failures',
     name: 'PhyCh Failures',
     technology: '3G',
@@ -174,6 +240,47 @@ export const BUILTIN_DERIVED_KPIS: DerivedKPI[] = [
     enabled: true,
     treatMissingAsZero: false,
     description: '3G Physical Channel Failures across RAB establishment, RB reconfiguration and RB setup'
+  },
+  {
+    id: '3g_irat_ho_failures',
+    name: '3G PS IRAT HO Failures',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.IRATHO.FailOutPS'
+    ],
+    direction: 'lower_is_better',
+    category: 'Mobility',
+    unit: 'events',
+    target: 30,
+    warningThreshold: 20,
+    criticalThreshold: 80,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Outgoing Packet-Switched Inter-RAT Handover Failures'
+  },
+  {
+    id: '3g_sync_loss_drops',
+    name: 'Radio Link Sync Loss Drops',
+    technology: '3G',
+    operation: 'SUM',
+    sourceKPIs: [
+      'VS.RAB.AbnormRel.Radio.SyncLoss',
+      'VS.RAB.AbnormRelPS.Radio.SyncLoss'
+    ],
+    direction: 'lower_is_better',
+    category: 'Retainability',
+    unit: 'events',
+    target: 20,
+    warningThreshold: 15,
+    criticalThreshold: 50,
+    isCore: false,
+    isDerived: true,
+    enabled: true,
+    treatMissingAsZero: false,
+    description: '3G Radio Link Out-of-Sync Abnormal Releases for CS and PS'
   }
 ]
 
@@ -975,6 +1082,15 @@ export interface InvestigationWeek {
   availability: number | null
   isNc: boolean
   lifecycle: Lifecycle | null
+  tchCong?: number | null
+  sdcchCong?: number | null
+  cssr?: number | null
+  callDrop?: number | null
+  voiceTraffic?: number | null
+  trafficUtil?: number | null
+  dataAccess?: number | null
+  dataFailure?: number | null
+  speedMbps?: number | null
 }
 
 export interface InvestigationPeer {
@@ -983,6 +1099,7 @@ export interface InvestigationPeer {
   throughputKbps: number | null
   healthScore: number | null
   ncCells: number
+  primaryKpi?: string | null
 }
 
 export interface InvestigationResult {
@@ -990,6 +1107,7 @@ export interface InvestigationResult {
   entityId: number
   entityName: string
   path: string[]
+  technology?: Technology
   current: {
     weekStart: string
     lifecycle: Lifecycle | null
@@ -1028,12 +1146,47 @@ export interface EntityOption {
 
 // --- forecasting & early warning (§45–46) ----------------------------------
 
-export type ForecastMetric = 'prb' | 'traffic' | 'users' | 'throughput' | 'availability'
+export type ForecastMetric =
+  | 'prb'
+  | 'traffic'
+  | 'users'
+  | 'throughput'
+  | 'availability'
+  | 'cssr_4g'
+  | 'call_drop_4g'
+  | 'data_failure_4g'
+  | 'cssr_3g'
+  | 'call_drop_3g'
+  | 'data_access_3g'
+  | 'traffic_util_3g'
+  | 'throughput_3g'
+  | 'tch_cong'
+  | 'sdcch_cong'
+  | 'cssr_2g'
+  | 'call_drop_2g'
+
 export type ForecastRisk = 'Stable' | 'Watch' | 'At Risk' | 'Likely Breach' | 'Already Breached'
+export type ForecastMethod =
+  | 'sarma'
+  | 'triple-exponential-smoothing'
+  | 'simple-moving-average'
+  | 'linear-regression'
+  | 'moving-average'
+  | 'linear-trend'
+  | 'seasonal-holt-winters'
+  | 'suppressed'
+
 export type ForecastHorizon = '1w' | '2w' | '4w' | '6w'
-export type ForecastMethod = 'moving-average' | 'linear-trend' | 'seasonal-holt-winters' | 'suppressed'
 export type ForecastQuality = 'high' | 'medium' | 'low' | 'suppressed'
 export type ForecastScope = 'network' | 'region' | 'district' | 'site' | 'cell'
+
+export type ForecastRcaCategory =
+  | 'Capacity Exhaustion'
+  | 'RF Overshoot & Interference'
+  | 'Hardware & VSWR'
+  | 'Parameter & Handover'
+  | 'Traffic Surge'
+  | 'Normal / Stable'
 
 export interface ForecastPoint {
   weekStart: string
@@ -1078,17 +1231,21 @@ export interface ForecastRiskRow {
   explanation: string
   cells: number
   ncCells: number
+  rcaCategory?: ForecastRcaCategory
+  recommendedAction?: string
 }
 
 export interface ForecastResult {
   asOf: string
   horizon: ForecastHorizon
   metric: ForecastMetric
+  technology?: Technology
   entity: { scope: ForecastScope; id: number | null; name: string; path: string[] }
   series: ForecastSeries[]
   risk: ForecastRisk
   riskExplanation: string
   riskCounts: Record<ForecastRisk, number>
+  rcaCounts?: Record<string, number>
   riskRows: ForecastRiskRow[]
   totalEntities: number
 }
@@ -1100,6 +1257,7 @@ export interface ForecastOpts {
   horizon?: ForecastHorizon
   grain?: Grain
   period?: PeriodId
+  technology?: Technology
 }
 
 // --- reporting center (§51–56) ---------------------------------------------
@@ -1279,9 +1437,15 @@ export interface Rules {
   callDropThresholdPct: number
   dataAccessThresholdPct: number
   dataServiceFailureThresholdPct: number
+  dailyMinKpiBreaches?: number
   weeklyBreachDays: number
+  monthlyBreachDays?: number
   persistentWeeks: number
   chronicWeeks: number
+  persistentDays?: number
+  chronicDays?: number
+  persistentMonths?: number
+  chronicMonths?: number
   districtNcThresholdPct: number
   priorityWeights: number[]
   kpiThresholds?: Record<string, number>
@@ -1535,11 +1699,11 @@ export interface Api {
     detect(headers: string[], technology?: Technology): Promise<DerivedKpiSuggestion[]>
   }
   investigation: {
-    search(scope: InvestigationScope, q?: string): Promise<EntityOption[]>
+    search(scope: InvestigationScope, q?: string, technology?: Technology): Promise<EntityOption[]>
     get(
       scope: InvestigationScope,
       entityId: number,
-      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId }
+      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology }
     ): Promise<InvestigationResult | null>
     setStatus(
       scope: InvestigationScope,

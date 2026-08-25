@@ -95,13 +95,19 @@ export const SCHEMA_SQL: string[] = [
      prb_threshold_pct DOUBLE NOT NULL DEFAULT 80,
      tch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 2,
      sdcch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 2,
-     cssr_threshold_pct DOUBLE NOT NULL DEFAULT 98.5,
-     call_drop_threshold_pct DOUBLE NOT NULL DEFAULT 1.5,
+     cssr_threshold_pct DOUBLE NOT NULL DEFAULT 95.0,
+     call_drop_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
      data_access_threshold_pct DOUBLE NOT NULL DEFAULT 98.0,
      data_service_failure_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
+     daily_min_kpi_breaches INTEGER NOT NULL DEFAULT 1,
      weekly_breach_days INTEGER NOT NULL DEFAULT 1,
+     monthly_breach_days INTEGER NOT NULL DEFAULT 3,
      persistent_weeks INTEGER NOT NULL DEFAULT 3,
      chronic_weeks INTEGER NOT NULL DEFAULT 7,
+     persistent_days INTEGER NOT NULL DEFAULT 7,
+     chronic_days INTEGER NOT NULL DEFAULT 21,
+     persistent_months INTEGER NOT NULL DEFAULT 2,
+     chronic_months INTEGER NOT NULL DEFAULT 3,
      district_nc_threshold_pct DOUBLE NOT NULL DEFAULT 10,
      priority_weights JSON,
      kpi_thresholds JSON,
@@ -310,6 +316,27 @@ export const SCHEMA_SQL: string[] = [
      f.dl_throughput_kbps AS dl_throughput_kbps_avg,
      f.availability_pct AS availability_pct_avg,
      (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
-   FROM fact_cell_daily f
+    FROM fact_cell_daily f
+    JOIN dim_date d USING (date_id)`,
+
+  `CREATE VIEW IF NOT EXISTS agg_cell_kpi_daily AS
+   SELECT
+     d.date,
+     d.date AS period_start,
+     d.date AS period_end,
+     d.date AS week_start,
+     d.date AS month_start,
+     d.iso_year,
+     d.iso_week,
+     d.month,
+     d.year,
+     f.cell_id,
+     f.kpi_id,
+     f.value AS avg_value,
+     f.value AS sum_value,
+     f.value AS max_value,
+     f.value AS min_value,
+     1 AS observed_days
+   FROM fact_extra_metrics f
    JOIN dim_date d USING (date_id)`
 ]

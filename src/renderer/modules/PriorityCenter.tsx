@@ -43,6 +43,7 @@ function fmtScore(s: number | null): string {
 
 export default function PriorityCenter(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
+  const selectedTech = useAppStore((s) => s.selectedTech ?? s.workspace?.technology ?? '4G')
   const setModule = useAppStore((s) => s.setModule)
   const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
 
@@ -260,7 +261,7 @@ export default function PriorityCenter(): React.JSX.Element {
                 <th>Review due</th>
                 <th className="num">NC</th>
                 <th className="num">Cells</th>
-                <th className="num">PRB</th>
+                <th className="num">{selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? '3G Util' : 'TCH Cong'}</th>
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>

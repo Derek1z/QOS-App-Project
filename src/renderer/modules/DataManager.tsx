@@ -475,6 +475,58 @@ export default function DataManager(): React.JSX.Element {
     void analyze([window.api.files.path(file)])
   }
 
+  const [techGuideTab, setTechGuideTab] = useState<'2G' | '3G' | '4G'>('3G')
+  const [techGuideExpanded, setTechGuideExpanded] = useState(true)
+
+  function downloadCsvTemplate(tech: '2G' | '3G' | '4G' | 'ALL') {
+    let filename = ''
+    let content = ''
+
+    if (tech === '2G') {
+      filename = '2G_GSM_QoS_Template.csv'
+      content = [
+        'Date/Time,Cell,Site,District,Region,TCH Congestion (%),SDCCH Congestion (%),Call Setup Success Rate (%),Call Drop Rate (%),Voice Traffic (Erl),TCH Availability (%),Connected Users,GPRS Traffic (MB),GPRS Throughput (kbps)',
+        '2026-07-28 00:00,ACC_2G_01A,ACC_2G_01,Accra Metro,Greater Accra,0.85,0.42,98.6,0.45,45.2,99.9,142,12500.5,145.2',
+        '2026-07-28 00:00,ACC_2G_01B,ACC_2G_01,Accra Metro,Greater Accra,1.20,0.80,97.4,0.68,52.1,99.8,168,14200.0,138.6',
+        '2026-07-28 00:00,KUM_2G_02A,KUM_2G_02,Kumasi,Ashanti,2.80,2.15,92.4,1.85,62.8,98.5,210,18900.2,112.4'
+      ].join('\n')
+    } else if (tech === '3G') {
+      filename = '3G_UMTS_QoS_Template.csv'
+      content = [
+        'Date/Time,Cell,Site,District,Region,3G CSSR (%),3G Call Drop Rate (%),3G DASR (%),DL Power Congestion,UL CE Congestion,DL Code Congestion,Iub Transport Congestion,PhyCh Failures,Sync Loss Drops,SHO Failure Rate (%),IRAT HO Failure Rate (%),HSDPA Throughput (kbps),HSUPA Throughput (kbps),3G Cell Availability (%),Connected Users,Data Volume (MB)',
+        '2026-07-28 00:00,ACC_3G_01A,ACC_3G_01,Accra Metro,Greater Accra,97.8,0.62,99.1,12,8,2,4,3,2,0.8,1.2,3450,1120,99.8,285,54200.5',
+        '2026-07-28 00:00,ACC_3G_01B,ACC_3G_01,Accra Metro,Greater Accra,96.5,0.78,98.6,18,14,5,8,6,4,1.1,1.5,3100,980,99.7,310,48900.2',
+        '2026-07-28 00:00,KUM_3G_02A,KUM_3G_02,Kumasi,Ashanti,91.2,2.45,94.8,185,142,65,94,48,56,4.2,5.8,1240,410,97.6,412,38900.2'
+      ].join('\n')
+    } else if (tech === '4G') {
+      filename = '4G_LTE_QoS_Template.csv'
+      content = [
+        'Date/Time,Cell,Site,District,Region,PRB Utilization (%),4G CSSR (%),4G Call Drop Rate (%),DSAF (%),DL Throughput (kbps),UL Throughput (kbps),4G Cell Availability (%),Connected Users,Data Volume (MB)',
+        '2026-07-28 00:00,ACC_4G_01A,ACC_4G_01,Accra Metro,Greater Accra,68.4,98.9,0.32,0.45,28500,8400,99.9,350,124500.8',
+        '2026-07-28 00:00,ACC_4G_01B,ACC_4G_01,Accra Metro,Greater Accra,74.2,97.8,0.48,0.65,24100,7600,99.8,390,118200.0',
+        '2026-07-28 00:00,KUM_4G_02A,KUM_4G_02,Kumasi,Ashanti,89.5,93.1,1.48,2.30,11200,3200,98.2,540,168000.4'
+      ].join('\n')
+    } else {
+      filename = 'Multi_Tech_QoS_Template.csv'
+      content = [
+        'Date/Time,Cell,Site,District,Region,Technology,PRB Utilization (%),CSSR (%),Call Drop Rate (%),Availability (%),DL Throughput (kbps),Connected Users,Data Volume (MB)',
+        '2026-07-28 00:00,ACC_4G_01A,ACC_01,Accra Metro,Greater Accra,4G,68.4,98.9,0.32,99.9,28500,350,124500.8',
+        '2026-07-28 00:00,ACC_3G_01A,ACC_01,Accra Metro,Greater Accra,3G,,97.8,0.62,99.8,3450,285,54200.5',
+        '2026-07-28 00:00,ACC_2G_01A,ACC_01,Accra Metro,Greater Accra,2G,,98.6,0.45,99.9,145,142,12500.5'
+      ].join('\n')
+    }
+
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
   const canRun = analyses.some((a) => {
     if (a.errors.length > 0) return false
     const cols = mappings[a.id]?.columns
@@ -536,6 +588,251 @@ export default function DataManager(): React.JSX.Element {
 
       {tab === 'import' && (
         <div>
+          {/* Starter CSV Template Download Bar */}
+          <div className="template-download-bar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>📥</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '12px', color: '#f8fafc' }}>
+                  Pre-Configured KPI Starter Templates
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                  Download official CSV templates with calibrated headers for 2G, 3G, 4G, or Multi-Tech datasets
+                </div>
+              </div>
+            </div>
+            <div className="template-btn-group">
+              <button className="template-dl-btn" onClick={() => downloadCsvTemplate('2G')} title="Download 2G GSM Starter CSV with TCH/SDCCH and CSSR">
+                📄 2G GSM CSV
+              </button>
+              <button className="template-dl-btn" onClick={() => downloadCsvTemplate('3G')} title="Download 3G UMTS Starter CSV with CSSR, CDR, DASR, Power/CE Congestion, and HSDPA Speed">
+                📄 3G UMTS CSV
+              </button>
+              <button className="template-dl-btn" onClick={() => downloadCsvTemplate('4G')} title="Download 4G LTE Starter CSV with PRB, VoLTE CSSR/CDR, DSAF, and Throughput">
+                📄 4G LTE CSV
+              </button>
+              <button className="template-dl-btn" style={{ borderColor: 'rgba(16, 185, 129, 0.4)', color: '#34d399', background: 'rgba(16, 185, 129, 0.08)' }} onClick={() => downloadCsvTemplate('ALL')} title="Download Combined Multi-Tech CSV">
+                📦 All-in-One Multi-Tech
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Technology KPI Reference Guide */}
+          <div className="import-tech-guide">
+            <div className="import-tech-guide-head">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '16px' }}>📚</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '13px', color: '#f8fafc' }}>
+                    Technology KPI Specification &amp; Readiness Guide
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                    KPIs recognized across the application for regulatory compliance, diagnostics, and root-cause analysis
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="import-tech-tabs">
+                  {(['2G', '3G', '4G'] as const).map((t) => (
+                    <button
+                      key={t}
+                      className={`import-tech-tab-btn${techGuideTab === t ? ' active' : ''}`}
+                      onClick={() => setTechGuideTab(t)}
+                    >
+                      {t} {t === '2G' ? 'GSM' : t === '3G' ? 'UMTS' : 'LTE'}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => setTechGuideExpanded((v) => !v)}
+                  title={techGuideExpanded ? 'Collapse Guide' : 'Expand Guide'}
+                >
+                  {techGuideExpanded ? '▲' : '▼'}
+                </button>
+              </div>
+            </div>
+
+            {techGuideExpanded && (
+              <div className="tech-kpi-grid">
+                {techGuideTab === '2G' && (
+                  <>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--danger)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">TCH Congestion</span>
+                        <span className="tech-kpi-item-target">Target ≤ 2.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Core traffic channel blocking. Triggers 2G Capacity &amp; Congestion alerts.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: tch congestion, 2g congestion, tch blocking, tch cong</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--danger)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">SDCCH Congestion</span>
+                        <span className="tech-kpi-item-target">Target ≤ 2.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Core signalling channel blocking. Triggers 2G accessibility alarms.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: sdcch congestion, signalling congestion, sdcch cong</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">2G Call Connection Success (CSSR)</span>
+                        <span className="tech-kpi-item-target">Target &gt; 95.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Primary 2G voice accessibility regulatory KPI.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 2g cssr, call setup success rate, cssr</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">2G Call Drop Rate (CDR)</span>
+                        <span className="tech-kpi-item-target">Target &lt; 1.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Primary 2G retainability regulatory KPI.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 2g call drop rate, drop call rate, 2g cdr, cdr</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--text-dim)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">2G Voice Traffic &amp; Users</span>
+                        <span className="tech-kpi-item-target">Traffic (Erl) / Users (#)</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Carried Erlang load and concurrent subscribers.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: voice traffic, traffic (erl), connected users, 2g users</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--text-dim)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">TCH Availability</span>
+                        <span className="tech-kpi-item-target">Target ≥ 99.5%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Hardware/cell uptime percentage.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: tch availability, cell availability, availability</span>
+                    </div>
+                  </>
+                )}
+
+                {techGuideTab === '3G' && (
+                  <>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">3G Call Connection Success (CSSR)</span>
+                        <span className="tech-kpi-item-target">Target &gt; 95.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Primary 3G CS voice setup success rate (RRC + NAS).</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g cssr, rrc connection success rate, 3g call setup success</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">3G Call Drop Rate (CDR)</span>
+                        <span className="tech-kpi-item-target">Target &lt; 1.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Primary 3G retainability regulatory KPI.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g call drop rate, 3g cdr, cs drop call rate, rrc drop rate</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">3G Data Access Success (DASR)</span>
+                        <span className="tech-kpi-item-target">Target ≥ 98.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Packet-switched (HSDPA/PS) connection setup success rate.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g dasr, data access success rate, ps setup success rate, ps cssr</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--danger)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">DL Power &amp; UL CE Congestion</span>
+                        <span className="tech-kpi-item-target">Target &lt; 100 events</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Downlink power saturation and Uplink Channel Element baseband exhaustion.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g_dl_power_congestion, 3g_ul_ce_congestion, power congestion, ce congestion</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--danger)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">DL Code &amp; Iub Transport Congestion</span>
+                        <span className="tech-kpi-item-target">Target &lt; 100 events</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">OVSF channelization code blocking and NodeB-RNC backhaul link saturation.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g_dl_code_congestion, 3g_iub_tn_congestion, code congestion, iub congestion</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--warn)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">PhyCh Failures &amp; Sync Loss Drops</span>
+                        <span className="tech-kpi-item-target">Target &lt; 50 events</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Physical channel setup failures and out-of-sync radio link drops.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g_phych_failures, 3g_sync_loss_drops, sync loss, phych failures</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--warn)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">Soft HO &amp; IRAT HO Failures</span>
+                        <span className="tech-kpi-item-target">Target &lt; 2.0% / &lt; 3.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Active set update failures and 3G-to-2G/4G inter-RAT handover drops.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 3g_sho_failure_rate, 3g_irat_ho_failure_rate, sho failure, irat failure</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--text-dim)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">HSDPA / HSUPA Throughput</span>
+                        <span className="tech-kpi-item-target">Speed (kbps) / Volume (MB)</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">User payload data speeds and 3G traffic volume.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: hsdpa throughput, hsupa throughput, 3g throughput, data volume</span>
+                    </div>
+                  </>
+                )}
+
+                {techGuideTab === '4G' && (
+                  <>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--danger)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">PRB Utilization</span>
+                        <span className="tech-kpi-item-target">Target ≤ 80.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">Core Physical Resource Block capacity utilization.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: prb utilization, prb avg, prb util (%), 4g prb</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">4G Call Connection Success (CSSR)</span>
+                        <span className="tech-kpi-item-target">Target &gt; 95.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">VoLTE and EPS Bearer setup success rate.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 4g cssr, volte setup success, e-rab setup success rate</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--accent)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">4G Call Drop Rate (CDR)</span>
+                        <span className="tech-kpi-item-target">Target &lt; 1.0%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">VoLTE QCI-1 and E-RAB service drop rate.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: 4g call drop rate, volte drop rate, 4g cdr, erab drop rate</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--warn)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">Data Setup Access Failure (DSAF)</span>
+                        <span className="tech-kpi-item-target">Target ≤ 1.5%</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">LTE Data connection access failure percentage.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: dsaf, dsaf (%), data setup access failure, lte access failure</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--text-dim)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">DL / UL Throughput</span>
+                        <span className="tech-kpi-item-target">Target ≥ 5000 / 1000 kbps</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">User experienced 4G payload speeds.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: dl throughput (kbps), ul throughput (kbps), 4g speed</span>
+                    </div>
+                    <div className="tech-kpi-item" style={{ borderLeftColor: 'var(--text-dim)' }}>
+                      <div className="tech-kpi-item-head">
+                        <span className="tech-kpi-item-name">Cell Availability &amp; Users</span>
+                        <span className="tech-kpi-item-target">Target ≥ 99.5% / Users (#)</span>
+                      </div>
+                      <span className="tech-kpi-item-desc">eNodeB cell uptime and concurrent RRC connected users.</span>
+                      <span className="tech-kpi-item-aliases">Aliases: availability, connected users, active users, rrc connected ues</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
           {readOnly ? (
             <div className="notice">This workspace is read-only — imports are disabled.</div>
           ) : (
@@ -729,6 +1026,58 @@ export default function DataManager(): React.JSX.Element {
                         </span>
                       </div>
                     )}
+
+                    {/* Technology Feature Readiness Audit */}
+                    {(() => {
+                      const mappedCols = mapping.columns ?? {}
+                      const mappedKpiCols = mapping.kpiColumns ?? {}
+                      const allMappedKeys = new Set([
+                        ...Object.values(mappedCols),
+                        ...Object.values(mappedKpiCols)
+                      ])
+
+                      const hasDate = allMappedKeys.has('date')
+                      const hasCell = allMappedKeys.has('cell')
+                      const hasGeo = allMappedKeys.has('district') || allMappedKeys.has('region')
+                      
+                      const has2gCore = allMappedKeys.has('tch_congestion') || allMappedKeys.has('sdcch_congestion') || allMappedKeys.has('call_setup_success_2g') || allMappedKeys.has('call_drop_rate_2g')
+                      const has3gCore = allMappedKeys.has('call_setup_success_3g') || allMappedKeys.has('call_drop_rate_3g') || allMappedKeys.has('data_access_success_3g')
+                      const has3gDiag = allMappedKeys.has('3g_dl_power_congestion') || allMappedKeys.has('3g_ul_ce_congestion') || allMappedKeys.has('3g_dl_code_congestion') || allMappedKeys.has('3g_iub_tn_congestion') || allMappedKeys.has('3g_phych_failures') || allMappedKeys.has('3g_sync_loss_drops')
+                      const has4gCore = allMappedKeys.has('prb_utilization') || allMappedKeys.has('call_setup_success_4g') || allMappedKeys.has('call_drop_rate_4g') || allMappedKeys.has('data_setup_success_4g')
+
+                      const totalMapped = Object.keys(mappedCols).length + Object.keys(mappedKpiCols).length
+
+                      return (
+                        <div className="file-readiness-panel">
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#f8fafc' }}>
+                              ⚡ Technology Readiness Audit ({totalMapped} fields mapped)
+                            </span>
+                            <span style={{ fontSize: '11px', color: hasDate && hasCell ? '#34d399' : '#f87171', fontWeight: 600 }}>
+                              {hasDate && hasCell ? '✓ Ingestion Ready' : '⚠️ Requires Date & Cell'}
+                            </span>
+                          </div>
+                          <div className="readiness-pills-row">
+                            <span className={`readiness-pill${hasDate && hasCell ? ' unlocked' : ''}`}>
+                              {hasDate && hasCell ? '✓' : '○'} Cell Baseline
+                            </span>
+                            <span className={`readiness-pill${hasGeo ? ' unlocked' : ''}`}>
+                              {hasGeo ? '✓' : '○'} GIS Region / District Matrix
+                            </span>
+                            <span className={`readiness-pill${has2gCore || has3gCore || has4gCore ? ' unlocked' : ''}`}>
+                              {has2gCore || has3gCore || has4gCore ? '✓' : '○'} NC Regulatory Engine
+                            </span>
+                            <span className={`readiness-pill${has3gDiag || allMappedKeys.has('tch_congestion') || allMappedKeys.has('prb_utilization') ? ' unlocked' : ''}`}>
+                              {has3gDiag || allMappedKeys.has('tch_congestion') || allMappedKeys.has('prb_utilization') ? '✓' : '○'} Root-Cause Diagnostics
+                            </span>
+                            <span className={`readiness-pill${totalMapped >= 4 ? ' unlocked' : ''}`}>
+                              {totalMapped >= 4 ? '✓' : '○'} 4-Model Tournament Forecast
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })()}
+
                     {a.errors.length === 0 && (
                       <>
                         <table className="map-table">
@@ -766,11 +1115,42 @@ export default function DataManager(): React.JSX.Element {
                                       onChange={(e) => changeKpiMapping(a.id, h, e.target.value)}
                                     >
                                       <option value="">— as extra KPI —</option>
-                                      {kpiDefs.map((k) => (
-                                        <option key={k.kpiId} value={k.key}>
-                                          {k.label}{k.unit ? ` (${k.unit})` : ''}
-                                        </option>
-                                      ))}
+                                      {kpiDefs.filter(k => k.technology === '2G').length > 0 && (
+                                        <optgroup label="🏷️ 2G GSM Core & Supporting">
+                                          {kpiDefs.filter(k => k.technology === '2G').map((k) => (
+                                            <option key={k.kpiId} value={k.key}>
+                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      {kpiDefs.filter(k => k.technology === '3G').length > 0 && (
+                                        <optgroup label="🏷️ 3G UMTS Core, Supporting & Diagnostics">
+                                          {kpiDefs.filter(k => k.technology === '3G').map((k) => (
+                                            <option key={k.kpiId} value={k.key}>
+                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      {kpiDefs.filter(k => k.technology === '4G').length > 0 && (
+                                        <optgroup label="🏷️ 4G LTE Core & Supporting">
+                                          {kpiDefs.filter(k => k.technology === '4G').map((k) => (
+                                            <option key={k.kpiId} value={k.key}>
+                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      {kpiDefs.filter(k => !k.technology || (k.technology as string) === 'ALL').length > 0 && (
+                                        <optgroup label="🏷️ General / Other KPIs">
+                                          {kpiDefs.filter(k => !k.technology || (k.technology as string) === 'ALL').map((k) => (
+                                            <option key={k.kpiId} value={k.key}>
+                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
                                     </select>
                                   </div>
                                 </td>

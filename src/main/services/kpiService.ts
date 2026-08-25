@@ -71,9 +71,9 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: false,
       betterDirection: 'higher_is_better',
       category: 'Accessibility',
-      target: 98.5,
-      warningThreshold: 99.0,
-      criticalThreshold: 95.0,
+      target: 95.0,
+      warningThreshold: 96.0,
+      criticalThreshold: 90.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,
@@ -89,9 +89,9 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: true,
       betterDirection: 'lower_is_better',
       category: 'Retainability',
-      target: 1.5,
-      warningThreshold: 1.0,
-      criticalThreshold: 2.5,
+      target: 1.0,
+      warningThreshold: 0.8,
+      criticalThreshold: 2.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,
@@ -181,16 +181,21 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: false,
       betterDirection: 'higher_is_better',
       category: 'Accessibility',
-      target: 98.5,
-      warningThreshold: 99.0,
-      criticalThreshold: 95.0,
+      target: 95.0,
+      warningThreshold: 96.0,
+      criticalThreshold: 90.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,
       decimalPrecision: 2,
-      aliases: ['3g call connection success rate', '3g call connection success', '3g cssr', 'rrc connection success', 'rrc setup success rate', '3g call setup success rate', 'rrc connection setup success rate', '3g call setup success', 'rrc success rate', 'rrc_success_rate', 'rrc_connection_success', 'cssr']
+      aliases: [
+        '3g call connection success rate', '3g call connection success rate_nca', '3g call connection success rate nca',
+        '3g call connection success', '3g cssr', 'rrc connection success', 'rrc setup success rate',
+        '3g call setup success rate', 'rrc connection setup success rate', '3g call setup success',
+        'rrc success rate', 'rrc_success_rate', 'rrc_connection_success', 'cssr'
+      ]
     },
     {
       key: 'call_drop_rate_3g',
@@ -199,16 +204,20 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: true,
       betterDirection: 'lower_is_better',
       category: 'Retainability',
-      target: 1.5,
-      warningThreshold: 1.0,
-      criticalThreshold: 2.5,
+      target: 1.0,
+      warningThreshold: 0.8,
+      criticalThreshold: 2.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,
       decimalPrecision: 2,
-      aliases: ['3g call drop rate', '3g drop call rate', '3g cdr', 'cs drop call rate', '3g voice drop rate', 'dropped call rate (%)', '3g call drop rate (%)', 'cs call drop rate', 'rrc drop rate', 'drop_call_rate']
+      aliases: [
+        '3g call drop rate', '3g call drop rate_nca', '3g call drop rate nca',
+        '3g drop call rate', '3g cdr', 'cs drop call rate', '3g voice drop rate',
+        'dropped call rate (%)', '3g call drop rate (%)', 'cs call drop rate', 'rrc drop rate', 'drop_call_rate'
+      ]
     },
     {
       key: 'data_access_success_3g',
@@ -226,25 +235,12 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       supportsPersistentNc: true,
       showInExecutiveView: true,
       decimalPrecision: 2,
-      aliases: ['3g data access success rate', '3g data access success', '3g dasr', 'data access success rate', 'hsdpa access success rate', 'ps setup success rate', 'packet service access success rate', '3g ps setup success rate', 'hsdpa setup success rate', 'ps cssr', '3g ps cssr', 'data_access_success']
-    },
-    {
-      key: 'ce_utilization',
-      label: 'CE Utilization',
-      unit: '%',
-      worseIsHigher: true,
-      betterDirection: 'lower_is_better',
-      category: 'Congestion',
-      target: 70.0,
-      warningThreshold: 65.0,
-      criticalThreshold: 85.0,
-      agg: 'avg',
-      isCore: false,
-      supportsCongestionAnalysis: true,
-      supportsPersistentNc: true,
-      showInExecutiveView: false,
-      decimalPrecision: 2,
-      aliases: ['ce utilization', 'ce utilization (%)', 'channel element utilization', 'ce utilisation', '3g ce utilization', 'ce_utilization']
+      aliases: [
+        '3g data access success rate', '3g data access success rate_nca', '3g data access success rate nca',
+        '3g data access success', '3g dasr', 'data access success rate', 'hsdpa access success rate',
+        'ps setup success rate', 'packet service access success rate', '3g ps setup success rate',
+        'hsdpa setup success rate', 'ps cssr', '3g ps cssr', 'data_access_success'
+      ]
     },
     {
       key: 'hsdpa_throughput',
@@ -262,7 +258,11 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       supportsPersistentNc: false,
       showInExecutiveView: false,
       decimalPrecision: 1,
-      aliases: ['hsdpa throughput', 'hsdpa throughput (kbps)', 'dl throughput (kbps)', 'throughput', '3g dl throughput', '3g throughput']
+      aliases: [
+        'hsdpa throughput', 'hsdpa throughput (kbps)', 'dl throughput (kbps)', 'throughput',
+        'throughput user (ps hsdpa mac-hs fullbuffer)_dq_temp', 'throughput user (ps hsdpa mac-hs fullbuffer)',
+        'ps hsdpa mac-hs fullbuffer', '3g dl throughput', '3g throughput'
+      ]
     },
     {
       key: 'hsupa_throughput',
@@ -298,31 +298,10 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       supportsPersistentNc: false,
       showInExecutiveView: false,
       decimalPrecision: 1,
-      aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', 'volume', '3g data volume', '3g traffic']
-    },
-    {
-      key: 'peak_hour_traffic_utilization_3g',
-      label: '3G Peak Hour Traffic Utilization',
-      unit: '%',
-      worseIsHigher: true,
-      betterDirection: 'lower_is_better',
-      category: 'Congestion',
-      target: 80.0,
-      warningThreshold: 75.0,
-      criticalThreshold: 90.0,
-      agg: 'avg',
-      isCore: false,
-      supportsCongestionAnalysis: true,
-      supportsPersistentNc: true,
-      showInExecutiveView: false,
-      decimalPrecision: 2,
       aliases: [
-        '3g peak hour traffic utilization', '3g peak hour traffic utilization_nca',
-        '3g peak hour traffic utilization std', '3g peak hour traffic utilization_std(%)',
-        '3g utilization', '3g traffic utilization', 'peak hour traffic utilization',
-        'peak hour traffic utilization_nca', 'peak hour traffic utilization std',
-        'peak hour traffic utilization (%)', '3g peak hour traffic utilization (%)',
-        '3g traffic utilization (%)', 'utilization (%)', 'utilization'
+        'data volume', 'data volume (mb)', 'traffic (mb)', 'volume',
+        '3g data volume (ps)_std(mb)', '3g data volume (ps)_std', '3g data volume ps',
+        '3g data volume', '3g traffic'
       ]
     },
     {
@@ -343,6 +322,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       decimalPrecision: 2,
       aliases: [
         '3g cell availability', '3g cell availability_std(%)', '3g cell availability (%)',
+        '3g availability rate (cell)_std(%)', '3g availability rate (cell)', '3g availability rate',
         '3g availability', '3g cell availability std', 'utran cell availability',
         'cell availability', 'cell availability (%)', 'availability'
       ]
@@ -374,9 +354,9 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: false,
       betterDirection: 'higher_is_better',
       category: 'Accessibility',
-      target: 98.5,
-      warningThreshold: 99.0,
-      criticalThreshold: 95.0,
+      target: 95.0,
+      warningThreshold: 96.0,
+      criticalThreshold: 90.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,
@@ -392,9 +372,9 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       worseIsHigher: true,
       betterDirection: 'lower_is_better',
       category: 'Retainability',
-      target: 1.5,
-      warningThreshold: 1.0,
-      criticalThreshold: 2.5,
+      target: 1.0,
+      warningThreshold: 0.8,
+      criticalThreshold: 2.0,
       agg: 'avg',
       isCore: true,
       supportsCongestionAnalysis: false,

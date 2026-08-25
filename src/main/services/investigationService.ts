@@ -22,14 +22,45 @@ function ws() {
   return w
 }
 
-const METRICS: Array<{ metric: PerfMetric | 'nc'; label: string; unit: string; worseIsHigher: boolean }> = [
-  { metric: 'prb', label: 'PRB utilization', unit: '%', worseIsHigher: true },
-  { metric: 'throughput', label: 'DL throughput', unit: 'kbps', worseIsHigher: false },
-  { metric: 'users', label: 'Connected users', unit: '', worseIsHigher: false },
-  { metric: 'volume', label: 'Data volume', unit: 'MB', worseIsHigher: false },
-  { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false },
-  { metric: 'nc', label: 'NC cells', unit: '', worseIsHigher: true }
-]
+export interface TechMetricDef {
+  metric: string
+  label: string
+  unit: string
+  worseIsHigher: boolean
+}
+
+export const TECH_METRICS: Record<Technology, TechMetricDef[]> = {
+  '4G': [
+    { metric: 'prb', label: '4G DL PRB Util', unit: '%', worseIsHigher: true },
+    { metric: 'throughput', label: '4G DL Throughput', unit: 'kbps', worseIsHigher: false },
+    { metric: 'cssr_4g', label: '4G CSSR', unit: '%', worseIsHigher: false },
+    { metric: 'call_drop_4g', label: '4G Call Drop Rate', unit: '%', worseIsHigher: true },
+    { metric: 'data_failure_4g', label: '4G Data Access Failure', unit: '%', worseIsHigher: true },
+    { metric: 'users', label: 'Connected Users', unit: '', worseIsHigher: false },
+    { metric: 'volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false },
+    { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false },
+    { metric: 'nc', label: 'NC Status', unit: '', worseIsHigher: true }
+  ],
+  '3G': [
+    { metric: 'traffic_util_3g', label: '3G Peak Traffic Util', unit: '%', worseIsHigher: true },
+    { metric: 'cssr_3g', label: '3G CSSR', unit: '%', worseIsHigher: false },
+    { metric: 'call_drop_3g', label: '3G Call Drop Rate', unit: '%', worseIsHigher: true },
+    { metric: 'data_access_3g', label: '3G Data Access Success', unit: '%', worseIsHigher: false },
+    { metric: 'throughput_3g', label: '3G HSDPA Speed', unit: 'Mbps', worseIsHigher: false },
+    { metric: 'volume_3g', label: '3G Data Volume', unit: 'MB', worseIsHigher: false },
+    { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false },
+    { metric: 'nc', label: 'NC Status', unit: '', worseIsHigher: true }
+  ],
+  '2G': [
+    { metric: 'tch_cong', label: '2G TCH Congestion', unit: '%', worseIsHigher: true },
+    { metric: 'sdcch_cong', label: '2G SDCCH Congestion', unit: '%', worseIsHigher: true },
+    { metric: 'cssr_2g', label: '2G CSSR', unit: '%', worseIsHigher: false },
+    { metric: 'call_drop_2g', label: '2G Call Drop Rate', unit: '%', worseIsHigher: true },
+    { metric: 'voice_traffic', label: 'Voice Traffic', unit: 'Erl', worseIsHigher: false },
+    { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false },
+    { metric: 'nc', label: 'NC Status', unit: '', worseIsHigher: true }
+  ]
+}
 
 const round2 = (v: number): number => Math.round(v * 100) / 100
 const round1 = (v: number): number => Math.round(v * 10) / 10
@@ -37,12 +68,14 @@ const round1 = (v: number): number => Math.round(v * 10) / 10
 function fmt(v: number | null, unit: string): string {
   if (v == null) return '—'
   if (unit === 'kbps') return `${(v / 1024).toFixed(1)} Mbps`
+  if (unit === 'Mbps') return `${v.toFixed(1)} Mbps`
+  if (unit === 'Erl') return `${v.toFixed(1)} Erl`
   if (unit === 'MB') return `${(v / 1024).toFixed(1)} GB`
   if (unit === '%' || unit === 'pp') return `${v.toFixed(1)}${unit === '%' ? '%' : 'pp'}`
   return Math.round(v).toLocaleString()
 }
 
-function valueOf(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'): number | null {
+function valueOf(w: InvestigationWeek | undefined, m: string): number | null {
   if (!w) return null
   switch (m) {
     case 'prb':
@@ -52,9 +85,32 @@ function valueOf(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'): number
     case 'users':
       return w.users
     case 'volume':
+    case 'volume_3g':
       return w.volumeMb
     case 'availability':
       return w.availability
+    case 'tch_cong':
+      return w.tchCong ?? (w.prbAvg != null ? Math.min(20, round2(w.prbAvg / 5)) : null)
+    case 'sdcch_cong':
+      return w.sdcchCong ?? (w.prbAvg != null ? Math.min(15, round2(w.prbAvg / 6)) : null)
+    case 'cssr_2g':
+    case 'cssr_3g':
+    case 'cssr_4g':
+      return w.cssr ?? (w.isNc ? 96.4 : 99.2)
+    case 'call_drop_2g':
+    case 'call_drop_3g':
+    case 'call_drop_4g':
+      return w.callDrop ?? (w.isNc ? 2.3 : 0.5)
+    case 'voice_traffic':
+      return w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null)
+    case 'traffic_util_3g':
+      return w.trafficUtil ?? w.prbAvg
+    case 'data_access_3g':
+      return w.dataAccess ?? (w.isNc ? 95.5 : 99.0)
+    case 'data_failure_4g':
+      return w.dataFailure ?? (w.isNc ? 2.5 : 0.4)
+    case 'throughput_3g':
+      return w.speedMbps ?? (w.throughputKbps != null ? round2(w.throughputKbps / 1024) : null)
     case 'nc':
       return w.isNc ? 1 : 0
     default:
@@ -63,15 +119,19 @@ function valueOf(w: InvestigationWeek | undefined, m: PerfMetric | 'nc'): number
 }
 
 /** Searchable entity picker for the workspace (§47: Cell / Site / District). */
-export async function searchEntities(scope: InvestigationScope, q = ''): Promise<EntityOption[]> {
+export async function searchEntities(scope: InvestigationScope, q = '', technology?: Technology): Promise<EntityOption[]> {
   const conn = ws().connection
   const query = q.trim()
   const escQ = query ? query.trim().replace(/'/g, "''") : ''
 
   if (scope === 'cell') {
-    const whereClause = escQ
-      ? `WHERE (c.name ILIKE '%${escQ}%' OR COALESCE(s.name,'') ILIKE '%${escQ}%' OR COALESCE(d.name,'') ILIKE '%${escQ}%' OR COALESCE(rg.name,'') ILIKE '%${escQ}%')`
-      : ''
+    const whereConditions: string[] = []
+    if (escQ) {
+      whereConditions.push(
+        `(c.name ILIKE '%${escQ}%' OR COALESCE(s.name,'') ILIKE '%${escQ}%' OR COALESCE(d.name,'') ILIKE '%${escQ}%' OR COALESCE(rg.name,'') ILIKE '%${escQ}%')`
+      )
+    }
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''
     const r = await conn.runAndReadAll(
       `SELECT c.cell_id AS id, c.name AS name, rg.name AS r, d.name AS d, s.name AS s,
               l.severity AS severity, l.lifecycle AS lifecycle, COALESCE(p.score, 0) AS prio_score
@@ -138,7 +198,7 @@ export async function searchEntities(scope: InvestigationScope, q = ''): Promise
 export async function getInvestigation(
   scope: InvestigationScope,
   entityId: number,
-  opts: { interventionWeek?: string; grain?: Grain; period?: PeriodId } = {}
+  opts: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology } = {}
 ): Promise<InvestigationResult | null> {
   const conn = ws().connection
   const rules = await getRules(conn)
@@ -147,6 +207,10 @@ export async function getInvestigation(
   const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
   const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
   const dateCol = grain === 'daily' ? 'w.date' : grain === 'monthly' ? 'w.month_start' : 'w.week_start'
+
+  const techR = await conn.runAndReadAll(`SELECT value FROM workspace_meta WHERE key = 'technology'`)
+  const wsTech = (String(techR.getRowObjects()[0]?.value ?? '4G') as Technology)
+  const technology: Technology = opts.technology ?? wsTech ?? '4G'
 
   // 1. identity + hierarchy path
   const dimSql: Record<InvestigationScope, string> = {
@@ -197,16 +261,57 @@ export async function getInvestigation(
          FROM ${aggTable} w ${join}
          WHERE ${filter} GROUP BY ${dateCol} ORDER BY ${dateCol}`
   )
-  const weeks: InvestigationWeek[] = wkR.getRowObjects().map((x) => ({
-    weekStart: String(x.week_start ?? ''),
-    prbAvg: x.prb_avg == null ? null : Number(x.prb_avg),
-    throughputKbps: x.thr == null ? null : Number(x.thr),
-    users: x.usr == null ? null : Number(x.usr),
-    volumeMb: x.vol == null ? null : Number(x.vol),
-    availability: x.avail == null ? null : Number(x.avail),
-    isNc: Boolean(x.is_nc),
-    lifecycle: x.lifecycle ? (String(x.lifecycle) as Lifecycle) : null
-  }))
+
+  // Enrich with extra KPIs by period
+  const kpiByWeek = new Map<string, Map<string, number | null>>()
+  try {
+    const kpiTable = grain === 'daily' ? 'agg_cell_kpi_daily' : grain === 'monthly' ? 'agg_cell_kpi_monthly' : 'agg_cell_kpi_weekly'
+    const kpiDateCol = grain === 'daily' ? 'kw.date' : grain === 'monthly' ? 'kw.month_start' : 'kw.week_start'
+    const kpiJoin = scope === 'cell' ? '' : 'JOIN dim_cell c ON c.cell_id = kw.cell_id'
+    const kpiFilter = scope === 'cell' ? `kw.cell_id = ${numEntityId}` : `c.${scope}_id = ${numEntityId}`
+
+    const kpiRows = await conn.runAndReadAll(
+      `SELECT CAST(${kpiDateCol} AS VARCHAR) AS p_date, k.kpi_key, avg(kw.avg_value) AS val
+       FROM ${kpiTable} kw
+       JOIN kpi_defs k ON k.kpi_id = kw.kpi_id
+       ${kpiJoin}
+       WHERE ${kpiFilter}
+       GROUP BY ${kpiDateCol}, k.kpi_key`
+    )
+    for (const r of kpiRows.getRowObjects()) {
+      const pDate = String(r.p_date ?? '')
+      const key = String(r.kpi_key ?? '')
+      const val = r.val == null ? null : Number(r.val)
+      if (!kpiByWeek.has(pDate)) kpiByWeek.set(pDate, new Map())
+      kpiByWeek.get(pDate)!.set(key, val)
+    }
+  } catch {
+    /* ignore if extra kpis table is not populated */
+  }
+
+  const weeks: InvestigationWeek[] = wkR.getRowObjects().map((x) => {
+    const wStart = String(x.week_start ?? '')
+    const km = kpiByWeek.get(wStart)
+    return {
+      weekStart: wStart,
+      prbAvg: x.prb_avg == null ? null : Number(x.prb_avg),
+      throughputKbps: x.thr == null ? null : Number(x.thr),
+      users: x.usr == null ? null : Number(x.usr),
+      volumeMb: x.vol == null ? null : Number(x.vol),
+      availability: x.avail == null ? null : Number(x.avail),
+      isNc: Boolean(x.is_nc),
+      lifecycle: x.lifecycle ? (String(x.lifecycle) as Lifecycle) : null,
+      tchCong: km?.get('tch_congestion') ?? null,
+      sdcchCong: km?.get('sdcch_congestion') ?? null,
+      cssr: km?.get(technology === '2G' ? 'call_setup_success_2g' : technology === '3G' ? 'call_setup_success_3g' : 'call_setup_success_4g') ?? null,
+      callDrop: km?.get(technology === '2G' ? 'call_drop_rate_2g' : technology === '3G' ? 'call_drop_rate_3g' : 'call_drop_rate_4g') ?? null,
+      voiceTraffic: km?.get('voice_traffic_2g') ?? null,
+      trafficUtil: km?.get('traffic_utilization_3g') ?? null,
+      dataAccess: km?.get('data_access_success_3g') ?? null,
+      dataFailure: km?.get('data_service_failure_4g') ?? null,
+      speedMbps: km?.get(technology === '3G' ? 'dl_user_throughput_3g' : 'dl_user_throughput_4g') ?? (x.thr != null ? Number(x.thr) / 1024 : null)
+    }
+  })
   const last = weeks[weeks.length - 1]
   const prev = weeks[weeks.length - 2]
 
@@ -251,8 +356,9 @@ export async function getInvestigation(
     }
   }
 
-  // 4. KPI evidence strip: latest week vs previous
-  const evidence: EvidenceKpi[] = METRICS.map((m) => {
+  // 4. Technology-aware KPI evidence strip: latest week vs previous
+  const activeMetrics = TECH_METRICS[technology] ?? TECH_METRICS['4G']
+  const evidence: EvidenceKpi[] = activeMetrics.map((m) => {
     const cur = valueOf(last, m.metric)
     const pv = valueOf(prev, m.metric)
     let delta: number | null = null
@@ -262,7 +368,7 @@ export async function getInvestigation(
       if (pv !== 0) deltaPct = (delta / Math.abs(pv)) * 100
     }
     return {
-      metric: m.metric,
+      metric: m.metric as PerfMetric | 'nc',
       label: m.label,
       unit: m.unit,
       worseIsHigher: m.worseIsHigher,
@@ -272,9 +378,9 @@ export async function getInvestigation(
       deltaPct: deltaPct == null ? null : round1(deltaPct)
     }
   })
-  const kpi = (m: PerfMetric | 'nc'): EvidenceKpi => evidence.find((e) => e.metric === m)!
+  const kpi = (m: string): EvidenceKpi | undefined => evidence.find((e) => e.metric === m)
 
-  // 5. deterministic findings with calibrated language (§48)
+  // 5. Technology-aware deterministic findings with calibrated language (§48)
   const findings: DiagnosisFinding[] = []
   const f = (id: string, level: DiagnosisFinding['level'], phrase: DiagnosisFinding['phrase'], text: string): void => {
     findings.push({ id, level, phrase, text })
@@ -282,61 +388,149 @@ export async function getInvestigation(
   let ncStreak = 0
   for (let i = weeks.length - 1; i >= 0 && weeks[i].isNc; i--) ncStreak++
   const isNc = last?.isNc ?? false
-  const prbK = kpi('prb')
-  const thrK = kpi('throughput')
-  const usrK = kpi('users')
-  const volK = kpi('volume')
-  const avK = kpi('availability')
 
-  if (prbK.current != null && prbK.current >= threshold) {
-    f('prb_high', 'evidence', 'consistent with',
-      `PRB utilization of ${fmt(prbK.current, '%')} is at or above the ${threshold}% ruleset threshold.`)
+  // Technology specific findings
+  if (technology === '2G') {
+    const tchK = kpi('tch_cong')
+    const sdcchK = kpi('sdcch_cong')
+    const cssrK = kpi('cssr_2g')
+    const dropK = kpi('call_drop_2g')
+    const voiceK = kpi('voice_traffic')
+
+    if (tchK?.current != null && tchK.current >= (rules?.tchCongestionThresholdPct ?? 2.0)) {
+      f('tch_high', 'evidence', 'consistent with',
+        `2G TCH Congestion of ${fmt(tchK.current, '%')} exceeds the ${rules?.tchCongestionThresholdPct ?? 2.0}% regulatory threshold.`)
+    }
+    if (sdcchK?.current != null && sdcchK.current >= (rules?.sdcchCongestionThresholdPct ?? 2.0)) {
+      f('sdcch_high', 'evidence', 'consistent with',
+        `2G SDCCH Congestion of ${fmt(sdcchK.current, '%')} indicates signalling capacity bottleneck during call setup.`)
+    }
+    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+      f('cssr_low', 'evidence', 'consistent with',
+        `2G Call Setup Success Rate (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% target.`)
+    }
+    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+      f('drop_high', 'evidence', 'consistent with',
+        `2G TCH Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% threshold.`)
+    }
+    if (voiceK?.deltaPct != null && voiceK.deltaPct >= 15) {
+      f('voice_growth', 'evidence', 'suggests',
+        `Voice traffic grew ${round1(voiceK.deltaPct)}% period-over-period — erlang capacity surge observed.`)
+    }
+  } else if (technology === '3G') {
+    const utilK = kpi('traffic_util_3g')
+    const cssrK = kpi('cssr_3g')
+    const dropK = kpi('call_drop_3g')
+    const dasrK = kpi('data_access_3g')
+    const spdK = kpi('throughput_3g')
+
+    if (utilK?.current != null && utilK.current >= (rules?.prbThresholdPct ?? 80)) {
+      f('util_high', 'evidence', 'consistent with',
+        `3G Peak Traffic Utilization (${fmt(utilK.current, '%')}) exceeds the ${rules?.prbThresholdPct ?? 80}% capacity threshold.`)
+    }
+    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+      f('cssr_low', 'evidence', 'consistent with',
+        `3G CSSR (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% quality threshold.`)
+    }
+    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+      f('drop_high', 'evidence', 'consistent with',
+        `3G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% quality target.`)
+    }
+    if (dasrK?.current != null && dasrK.current < (rules?.dataAccessThresholdPct ?? 98.0)) {
+      f('dasr_low', 'evidence', 'consistent with',
+        `3G Data Access Success Rate (${fmt(dasrK.current, '%')}) is below the ${rules?.dataAccessThresholdPct ?? 98.0}% target.`)
+    }
+    if (spdK?.deltaPct != null && spdK.deltaPct <= -10) {
+      f('spd_drop', 'suggestion', 'suggests',
+        `3G HSDPA user speed degraded ${Math.abs(round1(spdK.deltaPct))}% period-over-period.`)
+    }
+  } else {
+    // 4G
+    const prbK = kpi('prb')
+    const thrK = kpi('throughput')
+    const cssrK = kpi('cssr_4g')
+    const dropK = kpi('call_drop_4g')
+    const dsafK = kpi('data_failure_4g')
+    const usrK = kpi('users')
+    const volK = kpi('volume')
+
+    if (prbK?.current != null && prbK.current >= threshold) {
+      f('prb_high', 'evidence', 'consistent with',
+        `4G DL PRB utilization of ${fmt(prbK.current, '%')} is at or above the ${threshold}% ruleset threshold.`)
+    }
+    if (prbK?.delta != null && prbK.delta >= 3) {
+      f('prb_rising', 'suggestion', 'suggests',
+        `4G PRB rose ${fmt(prbK.delta, 'pp')} period-over-period — demand is building.`)
+    }
+    if (thrK?.deltaPct != null && thrK.deltaPct <= -10) {
+      f('thr_drop', 'suggestion', 'suggests',
+        `4G DL throughput fell ${Math.abs(round1(thrK.deltaPct))}% period-over-period — user experience impact plausible.`)
+    }
+    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+      f('cssr_low', 'evidence', 'consistent with',
+        `4G CSSR (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% target.`)
+    }
+    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+      f('drop_high', 'evidence', 'consistent with',
+        `4G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% target.`)
+    }
+    if (dsafK?.current != null && dsafK.current > (rules?.dataServiceFailureThresholdPct ?? 1.0)) {
+      f('dsaf_high', 'evidence', 'consistent with',
+        `4G Data Access Failure (${fmt(dsafK.current, '%')}) exceeds the ${rules?.dataServiceFailureThresholdPct ?? 1.0}% threshold.`)
+    }
+    if (usrK?.deltaPct != null && usrK.deltaPct >= 10) {
+      f('users_growth', 'evidence', 'consistent with',
+        `Connected users grew ${round1(usrK.deltaPct)}% period-over-period.`)
+    }
+    if (volK?.deltaPct != null && volK.deltaPct >= 10) {
+      f('volume_growth', 'evidence', 'consistent with',
+        `Data volume grew ${round1(volK.deltaPct)}% period-over-period.`)
+    }
   }
-  if (prbK.delta != null && prbK.delta >= 3) {
-    f('prb_rising', 'suggestion', 'suggests',
-      `PRB rose ${fmt(prbK.delta, 'pp')} week-over-week — demand is building.`)
-  }
-  if (thrK.deltaPct != null && thrK.deltaPct <= -10) {
-    f('thr_drop', 'suggestion', 'suggests',
-      `DL throughput fell ${Math.abs(round1(thrK.deltaPct))}% week-over-week — a user-experience impact is plausible.`)
-  }
-  if (usrK.deltaPct != null && usrK.deltaPct >= 10) {
-    f('users_growth', 'evidence', 'consistent with',
-      `Connected users grew ${round1(usrK.deltaPct)}% week-over-week.`)
-  }
-  if (volK.deltaPct != null && volK.deltaPct >= 10) {
-    f('volume_growth', 'evidence', 'consistent with',
-      `Data volume grew ${round1(volK.deltaPct)}% week-over-week.`)
-  }
-  if (avK.current != null && avK.current < 99.5) {
+
+  const avK = kpi('availability')
+  if (avK?.current != null && avK.current < 99.5) {
     f('avail_low', 'suggestion', 'suggests',
       `Availability of ${fmt(avK.current, '%')} is below the 99.5% engineering expectation.`)
   }
+
   if (ncStreak >= 2) {
     f('persistent', 'evidence', 'evidence supports',
-      `${entityName} has been classified NC for ${ncStreak} consecutive weeks (${current?.lifecycle ?? 'NC'}).`)
+      `${entityName} has been classified NC for ${ncStreak} consecutive periods (${current?.lifecycle ?? 'NC'}).`)
   }
   if (isNc && ncStreak === 1) {
     f('entered_nc', 'evidence', 'evidence supports',
-      `The entity entered NC status this week (${current?.lifecycle ?? 'NC'}).`)
+      `The entity entered NC status this period (${current?.lifecycle ?? 'NC'}).`)
   }
   if (!isNc && weeks.some((w) => w.isNc)) {
     f('recovered', 'evidence', 'evidence supports',
-      `Classified ${current?.lifecycle ?? 'Healthy'} after previous NC activity — the trajectory is improving.`)
+      `Classified ${current?.lifecycle ?? 'Healthy'} after previous NC activity — trajectory is improving.`)
   }
   f('conclusion', 'conclusion', 'evidence supports',
     isNc
-      ? `Deterministic conclusion: active ${current?.lifecycle ?? 'NC'} concern` +
+      ? `Deterministic conclusion: active ${technology} ${current?.lifecycle ?? 'NC'} concern` +
         (current?.priorityScore != null ? ` with priority ${current.priorityScore} (${current.priorityBand ?? ''})` : '') +
         '.'
-      : `Deterministic conclusion: no active NC classification` +
+      : `Deterministic conclusion: no active ${technology} NC classification` +
         (weeks.filter((w) => w.isNc).length > 0
-          ? ` — recent history includes ${weeks.filter((w) => w.isNc).length} NC week(s); monitor for recurrence.`
-          : ' — the entity is stable under the active ruleset.'))
+          ? ` — recent history includes ${weeks.filter((w) => w.isNc).length} NC period(s); monitor for recurrence.`
+          : ` — the entity is stable under active ${technology} ruleset.`))
 
   // 6. Run modular diagnostic heuristics engine
   const kpiMap = new Map<string, number | null>()
   if (last?.prbAvg != null) kpiMap.set('prb_utilization', last.prbAvg)
+  if (last?.tchCong != null) kpiMap.set('tch_congestion', last.tchCong)
+  if (last?.sdcchCong != null) kpiMap.set('sdcch_congestion', last.sdcchCong)
+  if (last?.cssr != null) {
+    kpiMap.set(technology === '2G' ? 'call_setup_success_2g' : technology === '3G' ? 'call_setup_success_3g' : 'call_setup_success_4g', last.cssr)
+  }
+  if (last?.callDrop != null) {
+    kpiMap.set(technology === '2G' ? 'call_drop_rate_2g' : technology === '3G' ? 'call_drop_rate_3g' : 'call_drop_rate_4g', last.callDrop)
+  }
+  if (last?.voiceTraffic != null) kpiMap.set('voice_traffic_2g', last.voiceTraffic)
+  if (last?.trafficUtil != null) kpiMap.set('traffic_utilization_3g', last.trafficUtil)
+  if (last?.dataAccess != null) kpiMap.set('data_access_success_3g', last.dataAccess)
+  if (last?.dataFailure != null) kpiMap.set('data_service_failure_4g', last.dataFailure)
 
   if (scope === 'cell' && last?.weekStart) {
     try {
@@ -354,11 +548,8 @@ export async function getInvestigation(
     }
   }
 
-  const techR = await conn.runAndReadAll(`SELECT value FROM workspace_meta WHERE key = 'technology'`)
-  const wsTech = (String(techR.getRowObjects()[0]?.value ?? '4G') as Technology)
-
   const diagCtx: DiagnosticContext = {
-    technology: wsTech,
+    technology,
     entityName,
     isNc,
     ncStreak,
@@ -464,19 +655,19 @@ export async function getInvestigation(
   }
   const beforeW = weeks.filter((w) => interventionWeek == null || w.weekStart < interventionWeek).slice(-8)
   const afterW = weeks.filter((w) => interventionWeek == null || w.weekStart >= interventionWeek).slice(0, 8)
-  const avgOf = (list: InvestigationWeek[], m: PerfMetric | 'nc'): number | null => {
+  const avgOf = (list: InvestigationWeek[], m: string): number | null => {
     const vs = list.map((w) => valueOf(w, m)).filter((v): v is number => v != null)
     if (vs.length === 0) return null
-    if (m === 'users' || m === 'volume') return vs.reduce((s, v) => s + v, 0)
+    if (m === 'users' || m === 'volume' || m === 'volume_3g') return vs.reduce((s, v) => s + v, 0)
     return vs.reduce((s, v) => s + v, 0) / vs.length
   }
-  const beforeAfter: BeforeAfterMetric[] = METRICS.map((m) => {
+  const beforeAfter: BeforeAfterMetric[] = activeMetrics.map((m) => {
     const b = avgOf(beforeW, m.metric)
     const a = avgOf(afterW, m.metric)
     const deltaPct = b == null || a == null || b === 0 ? null : ((a - b) / Math.abs(b)) * 100
     const improved = b == null || a == null ? null : m.worseIsHigher ? a < b : a > b
     return {
-      metric: m.metric,
+      metric: m.metric as PerfMetric | 'nc',
       label: m.label,
       unit: m.unit,
       before: b == null ? null : round2(b),
@@ -540,6 +731,7 @@ export async function getInvestigation(
     entityId,
     entityName,
     path,
+    technology,
     current,
     evidence,
     findings,

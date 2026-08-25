@@ -67,6 +67,15 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
     }
   }, [isOpen, workspace?.technology, load])
 
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   const handleTechChange = (tech: Technology) => {
@@ -116,10 +125,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
         const worseIsHigher = edits.betterDirection === 'lower_is_better'
 
         await window.api.kpis.save({
-          kpiId: d.kpiId,
-          technology: d.technology,
-          key: d.key,
-          label: d.label,
+          ...d,
           target,
           warningThreshold,
           criticalThreshold,
@@ -128,14 +134,10 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
         })
       }
 
-      setSuccess('Target thresholds saved and active across all views.')
+      setSuccess(`All ${activeTech} targets and thresholds updated successfully.`)
       emit('RULESET_CHANGED')
       emit('KPIDEFS_CHANGED')
-      emit('WORKSPACE_CHANGED')
-      setTimeout(() => {
-        setSuccess(null)
-        onClose()
-      }, 1200)
+      setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
       setError(errMsg(e))
     } finally {
@@ -159,6 +161,9 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
   return (
     <div className="palette-overlay" onMouseDown={onClose} style={{ zIndex: 1100 }}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="targets-modal-title"
         className="palette"
         style={{
           width: '900px',
@@ -176,7 +181,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Technology Targets & Thresholds</h2>
+            <h2 id="targets-modal-title" style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Technology Targets & Thresholds</h2>
             <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: 2 }}>
               Configure QoS compliance thresholds, warnings, and derived metrics for each technology.
             </div>
@@ -256,6 +261,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             <select
+                              aria-label={`${d.label} direction`}
                               className="input"
                               style={{ padding: '2px 6px', fontSize: '11px', height: '28px' }}
                               value={cur.betterDirection}
@@ -267,6 +273,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <input
+                              aria-label={`${d.label} target`}
                               className="input"
                               type="number"
                               step="any"
@@ -278,6 +285,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <input
+                              aria-label={`${d.label} warning threshold`}
                               className="input"
                               type="number"
                               step="any"
@@ -289,6 +297,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <input
+                              aria-label={`${d.label} critical threshold`}
                               className="input"
                               type="number"
                               step="any"

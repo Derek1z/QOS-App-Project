@@ -186,7 +186,18 @@ export function detectDerivedKpiSuggestions(
 
     for (const src of def.sourceKPIs) {
       const normSrc = normalizeHeader(src)
-      const found = headers.find((h, idx) => normHeaders[idx] === normSrc || h.toLowerCase() === src.toLowerCase())
+      const found = headers.find((h, idx) => {
+        const nh = normHeaders[idx]
+        const lh = h.toLowerCase()
+        const lsrc = src.toLowerCase()
+        return (
+          nh === normSrc ||
+          lh === lsrc ||
+          nh.endsWith(normSrc) ||
+          lh.endsWith(lsrc) ||
+          lh.includes(lsrc)
+        )
+      })
       if (found) {
         matchedSources.push(found)
       } else {
@@ -217,8 +228,21 @@ export function evaluateDerivedRow(
   const nums: number[] = []
 
   for (const src of def.sourceKPIs) {
-    // try exact key, normalized key, and lowercase key
-    const v = valuesByCounter[src] ?? valuesByCounter[normalizeHeader(src)] ?? valuesByCounter[src.toLowerCase()]
+    const normSrc = normalizeHeader(src)
+    const lsrc = src.toLowerCase()
+
+    // try exact key, normalized key, lowercase key, and suffix/vendor-prefixed key
+    let v = valuesByCounter[src] ?? valuesByCounter[normSrc] ?? valuesByCounter[lsrc]
+    if (v == null) {
+      for (const [k, val] of Object.entries(valuesByCounter)) {
+        const lk = k.toLowerCase()
+        if (lk.endsWith(lsrc) || lk.includes(lsrc) || normalizeHeader(k).endsWith(normSrc)) {
+          v = val
+          break
+        }
+      }
+    }
+
     if (v == null || !Number.isFinite(v)) {
       if (def.treatMissingAsZero) {
         nums.push(0)

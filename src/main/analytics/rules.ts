@@ -20,9 +20,15 @@ export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
             COALESCE(call_drop_threshold_pct, 1.5) AS call_drop_threshold_pct,
             COALESCE(data_access_threshold_pct, 98.0) AS data_access_threshold_pct,
             COALESCE(data_service_failure_threshold_pct, 1.0) AS data_service_failure_threshold_pct,
-            CAST(weekly_breach_days AS DOUBLE) AS weekly_breach_days,
-            CAST(persistent_weeks AS DOUBLE) AS persistent_weeks,
+            CAST(COALESCE(daily_min_kpi_breaches, 1) AS DOUBLE) AS daily_min_kpi_breaches,
+            CAST(COALESCE(weekly_breach_days, 1) AS DOUBLE) AS weekly_breach_days,
+            CAST(COALESCE(monthly_breach_days, 3) AS DOUBLE) AS monthly_breach_days,
+            CAST(COALESCE(persistent_weeks, 3) AS DOUBLE) AS persistent_weeks,
             CAST(COALESCE(chronic_weeks, 7) AS DOUBLE) AS chronic_weeks,
+            CAST(COALESCE(persistent_days, 7) AS DOUBLE) AS persistent_days,
+            CAST(COALESCE(chronic_days, 21) AS DOUBLE) AS chronic_days,
+            CAST(COALESCE(persistent_months, 2) AS DOUBLE) AS persistent_months,
+            CAST(COALESCE(chronic_months, 3) AS DOUBLE) AS chronic_months,
             district_nc_threshold_pct, priority_weights, kpi_thresholds, notes
      FROM ruleset ORDER BY version DESC LIMIT 1`
   )
@@ -59,9 +65,15 @@ export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
     callDropThresholdPct: Number(row.call_drop_threshold_pct),
     dataAccessThresholdPct: Number(row.data_access_threshold_pct),
     dataServiceFailureThresholdPct: Number(row.data_service_failure_threshold_pct),
+    dailyMinKpiBreaches: Number(row.daily_min_kpi_breaches ?? 1),
     weeklyBreachDays: Number(row.weekly_breach_days ?? 1),
+    monthlyBreachDays: Number(row.monthly_breach_days ?? 3),
     persistentWeeks: Number(row.persistent_weeks ?? 3),
     chronicWeeks: Number(row.chronic_weeks ?? 7),
+    persistentDays: Number(row.persistent_days ?? 7),
+    chronicDays: Number(row.chronic_days ?? 21),
+    persistentMonths: Number(row.persistent_months ?? 2),
+    chronicMonths: Number(row.chronic_months ?? 3),
     districtNcThresholdPct: Number(row.district_nc_threshold_pct),
     priorityWeights: weights,
     kpiThresholds,
@@ -104,10 +116,22 @@ export function validateRules(patch: RulesPatch): void {
     const p = Number(patch.dataServiceFailureThresholdPct)
     if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('Data Service Failure threshold must be between 0 and 100')
   }
+  if (patch.dailyMinKpiBreaches != null) {
+    const d = clampInt(patch.dailyMinKpiBreaches, 1, 5, 1)
+    if (d !== Math.round(Number(patch.dailyMinKpiBreaches))) {
+      throw new Error('Daily min KPI breaches must be an integer between 1 and 5')
+    }
+  }
   if (patch.weeklyBreachDays != null) {
     const d = clampInt(patch.weeklyBreachDays, 1, 7, 1)
     if (d !== Math.round(Number(patch.weeklyBreachDays))) {
       throw new Error('Weekly breach days must be an integer between 1 and 7')
+    }
+  }
+  if (patch.monthlyBreachDays != null) {
+    const d = clampInt(patch.monthlyBreachDays, 1, 31, 3)
+    if (d !== Math.round(Number(patch.monthlyBreachDays))) {
+      throw new Error('Monthly breach days must be an integer between 1 and 31')
     }
   }
   if (patch.persistentWeeks != null) {
@@ -120,6 +144,30 @@ export function validateRules(patch: RulesPatch): void {
     const w = clampInt(patch.chronicWeeks, 2, 52, 7)
     if (w !== Math.round(Number(patch.chronicWeeks))) {
       throw new Error('Chronic streak must be an integer between 2 and 52')
+    }
+  }
+  if (patch.persistentDays != null) {
+    const d = clampInt(patch.persistentDays, 1, 90, 7)
+    if (d !== Math.round(Number(patch.persistentDays))) {
+      throw new Error('Persistent days must be an integer between 1 and 90')
+    }
+  }
+  if (patch.chronicDays != null) {
+    const d = clampInt(patch.chronicDays, 2, 180, 21)
+    if (d !== Math.round(Number(patch.chronicDays))) {
+      throw new Error('Chronic days must be an integer between 2 and 180')
+    }
+  }
+  if (patch.persistentMonths != null) {
+    const m = clampInt(patch.persistentMonths, 1, 12, 2)
+    if (m !== Math.round(Number(patch.persistentMonths))) {
+      throw new Error('Persistent months must be an integer between 1 and 12')
+    }
+  }
+  if (patch.chronicMonths != null) {
+    const m = clampInt(patch.chronicMonths, 2, 24, 3)
+    if (m !== Math.round(Number(patch.chronicMonths))) {
+      throw new Error('Chronic months must be an integer between 2 and 24')
     }
   }
   if (patch.districtNcThresholdPct != null) {
@@ -150,9 +198,15 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
   const callDrop = patch.callDropThresholdPct ?? current.callDropThresholdPct
   const dataAccess = patch.dataAccessThresholdPct ?? current.dataAccessThresholdPct
   const dataFailure = patch.dataServiceFailureThresholdPct ?? current.dataServiceFailureThresholdPct
+  const dailyBreach = patch.dailyMinKpiBreaches ?? current.dailyMinKpiBreaches ?? 1
   const breach = patch.weeklyBreachDays ?? current.weeklyBreachDays
+  const monthlyBreach = patch.monthlyBreachDays ?? current.monthlyBreachDays ?? 3
   const persist = patch.persistentWeeks ?? current.persistentWeeks
   const chronic = patch.chronicWeeks ?? current.chronicWeeks
+  const persistDays = patch.persistentDays ?? current.persistentDays ?? Math.max(7, persist * 7)
+  const chronicDays = patch.chronicDays ?? current.chronicDays ?? Math.max(14, chronic * 7)
+  const persistMonths = patch.persistentMonths ?? current.persistentMonths ?? Math.max(2, Math.round(persist / 4))
+  const chronicMonths = patch.chronicMonths ?? current.chronicMonths ?? Math.max(2, Math.round(chronic / 4))
   const district = patch.districtNcThresholdPct ?? current.districtNcThresholdPct
   const kpiThresholds = patch.kpiThresholds ?? current.kpiThresholds ?? {}
 
@@ -172,13 +226,14 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
       `INSERT INTO ruleset
          (version, prb_threshold_pct, tch_congestion_threshold_pct, sdcch_congestion_threshold_pct,
           cssr_threshold_pct, call_drop_threshold_pct, data_access_threshold_pct,
-          data_service_failure_threshold_pct, weekly_breach_days, persistent_weeks,
-          chronic_weeks, district_nc_threshold_pct, priority_weights, kpi_thresholds, notes)
-       VALUES ((SELECT COALESCE(max(version), 0) FROM ruleset) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          data_service_failure_threshold_pct, daily_min_kpi_breaches, weekly_breach_days, monthly_breach_days, persistent_weeks,
+          chronic_weeks, persistent_days, chronic_days, persistent_months, chronic_months,
+          district_nc_threshold_pct, priority_weights, kpi_thresholds, notes)
+       VALUES ((SELECT COALESCE(max(version), 0) FROM ruleset) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         prb, tchCong, sdcchCong, cssr, callDrop, dataAccess, dataFailure,
-        breach, persist, chronic, district, JSON.stringify(weights),
-        JSON.stringify(kpiThresholds), notes
+        dailyBreach, breach, monthlyBreach, persist, chronic, persistDays, chronicDays, persistMonths, chronicMonths,
+        district, JSON.stringify(weights), JSON.stringify(kpiThresholds), notes
       ]
     )
     const version = current.version + 1
@@ -209,8 +264,8 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
         `Ruleset v${current.version} → v${version}: PRB ${current.prbThresholdPct}→${prb}%, ` +
           `TCH ${current.tchCongestionThresholdPct}→${tchCong}%, SDCCH ${current.sdcchCongestionThresholdPct}→${sdcchCong}%, ` +
           `CSSR ${current.cssrThresholdPct}→${cssr}%, CDR ${current.callDropThresholdPct}→${callDrop}%, ` +
-          `breach ${current.weeklyBreachDays}→${breach}d, persistent ${current.persistentWeeks}→${persist}w, ` +
-          `district NC ${current.districtNcThresholdPct}→${district}%`
+          `weekly breach ${current.weeklyBreachDays}→${breach}d, monthly breach ${monthlyBreach}d, ` +
+          `persistent ${persist}w/${persistDays}d/${persistMonths}m, district NC ${current.districtNcThresholdPct}→${district}%`
       ]
     )
     await conn.run('COMMIT')

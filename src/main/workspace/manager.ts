@@ -137,6 +137,12 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
   )
   await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_raw_archive START 1`)
   await connection.run(`ALTER TABLE workspace_snapshots ADD COLUMN IF NOT EXISTS path VARCHAR`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS daily_min_kpi_breaches INTEGER DEFAULT 1`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS monthly_breach_days INTEGER DEFAULT 3`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS persistent_days INTEGER DEFAULT 7`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS chronic_days INTEGER DEFAULT 21`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS persistent_months INTEGER DEFAULT 2`)
+  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS chronic_months INTEGER DEFAULT 3`)
   await connection.run(`CREATE TABLE IF NOT EXISTS maintenance_settings (
      id INTEGER PRIMARY KEY CHECK (id = 1),
      enabled BOOLEAN DEFAULT false,
@@ -178,6 +184,28 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
       f.availability_pct AS availability_pct_avg,
       (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
     FROM fact_cell_daily f
+    JOIN dim_date d USING (date_id)
+  `)
+  await connection.run(`
+    CREATE OR REPLACE VIEW agg_cell_kpi_daily AS
+    SELECT
+      d.date,
+      d.date AS period_start,
+      d.date AS period_end,
+      d.date AS week_start,
+      d.date AS month_start,
+      d.iso_year,
+      d.iso_week,
+      d.month,
+      d.year,
+      f.cell_id,
+      f.kpi_id,
+      f.value AS avg_value,
+      f.value AS sum_value,
+      f.value AS max_value,
+      f.value AS min_value,
+      1 AS observed_days
+    FROM fact_extra_metrics f
     JOIN dim_date d USING (date_id)
   `)
 

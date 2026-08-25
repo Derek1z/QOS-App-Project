@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { openWorkspaceFlow, createWorkspaceFlow } from '../lib/flows'
+import AppLogo from '../components/AppLogo'
 import type { AppStateData, RecentWorkspace, Technology } from '../../../shared/api'
 
 export default function Welcome(): React.JSX.Element {
@@ -85,7 +86,9 @@ export default function Welcome(): React.JSX.Element {
   return (
     <div className="welcome">
       <div className="welcome-hero">
-        <div className="welcome-logo">📡</div>
+        <div className="welcome-logo" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+          <AppLogo size={72} />
+        </div>
         <h1>2G/3G/4G QoS Network Intelligence</h1>
         <p>
           Portable telecom QoS analytics workstation. Open a <code>.qosdb</code> workspace or create

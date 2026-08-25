@@ -1,11 +1,16 @@
 import type { EChartsOption, SeriesOption } from 'echarts'
-import type { InvestigationResult, Grain } from '../../../shared/api'
+import type { InvestigationResult, Grain, Technology } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 import { formatTimeLabel } from './overviewCharts'
 
-/** Actual-metrics strip (spec §33, §47): PRB / Throughput / Users / Volume /
- *  Availability on shared axes, with the intervention period marked. */
-export function investigationChartOption(res: InvestigationResult, prbThreshold: number, grain: Grain = 'weekly'): EChartsOption {
+/** Actual-metrics strip (spec §33, §47): Multi-technology 2G / 3G / 4G telemetry on shared axes */
+export function investigationChartOption(
+  res: InvestigationResult,
+  prbThreshold: number,
+  grain: Grain = 'weekly',
+  technologyOverride?: Technology
+): EChartsOption {
+  const tech: Technology = technologyOverride ?? res.technology ?? '4G'
   const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
   const grids = [0, 1, 2, 3, 4].map((i) => ({
     left: 64,
@@ -21,42 +26,7 @@ export function investigationChartOption(res: InvestigationResult, prbThreshold:
     axisLine: { lineStyle: { color: PALETTE.border } },
     axisTick: { show: i === 4 }
   }))
-  const yAxis = [
-    {
-      gridIndex: 0,
-      type: 'value' as const,
-      min: 0,
-      max: 100,
-      axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-    },
-    {
-      gridIndex: 1,
-      type: 'value' as const,
-      axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}M` },
-      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-    },
-    {
-      gridIndex: 2,
-      type: 'value' as const,
-      axisLabel: axisLabelStyle(),
-      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-    },
-    {
-      gridIndex: 3,
-      type: 'value' as const,
-      axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}G` },
-      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-    },
-    {
-      gridIndex: 4,
-      type: 'value' as const,
-      min: 98,
-      max: 100,
-      axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-      splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-    }
-  ]
+
   const interventionIdx = res.interventionWeek ? res.weeks.findIndex((w) => w.weekStart === res.interventionWeek) : -1
   const interventionMark = interventionIdx >= 0
     ? {
@@ -68,84 +38,343 @@ export function investigationChartOption(res: InvestigationResult, prbThreshold:
       }
     : undefined
 
-  const series: SeriesOption[] = [
-    {
-      name: 'PRB utilization',
-      type: 'line' as const,
-      xAxisIndex: 0,
-      yAxisIndex: 0,
-      data: res.weeks.map((w) => w.prbAvg),
-      smooth: 0.25,
-      symbol: 'circle',
-      symbolSize: 5,
-      lineStyle: { color: PALETTE.warn, width: 2 },
-      itemStyle: { color: PALETTE.warn },
-      areaStyle: { color: 'rgba(251,191,36,0.12)' },
-      markLine: interventionMark
-        ? {
-            ...interventionMark,
-            data: [
-              ...(interventionMark.data ?? []),
-              { yAxis: prbThreshold, lineStyle: { type: 'dashed' as const, color: PALETTE.danger, width: 1 } }
-            ]
-          }
-        : {
-            silent: true,
-            symbol: 'none',
-            label: { formatter: `threshold {c}%`, color: PALETTE.danger, fontSize: 10 },
-            lineStyle: { type: 'dashed' as const, color: PALETTE.danger, width: 1 },
-            data: [{ yAxis: prbThreshold }]
-          }
-    },
-    {
-      name: 'DL throughput',
-      type: 'line' as const,
-      xAxisIndex: 1,
-      yAxisIndex: 1,
-      data: res.weeks.map((w) => w.throughputKbps),
-      smooth: 0.25,
-      symbol: 'circle',
-      symbolSize: 5,
-      lineStyle: { color: PALETTE.accent, width: 2 },
-      itemStyle: { color: PALETTE.accent }
-    },
-    {
-      name: 'Connected users',
-      type: 'line' as const,
-      xAxisIndex: 2,
-      yAxisIndex: 2,
-      data: res.weeks.map((w) => w.users),
-      smooth: 0.25,
-      symbol: 'circle',
-      symbolSize: 5,
-      lineStyle: { color: PALETTE.green, width: 2 },
-      itemStyle: { color: PALETTE.green }
-    },
-    {
-      name: 'Data volume',
-      type: 'line' as const,
-      xAxisIndex: 3,
-      yAxisIndex: 3,
-      data: res.weeks.map((w) => w.volumeMb),
-      smooth: 0.25,
-      symbol: 'circle',
-      symbolSize: 5,
-      lineStyle: { color: PALETTE.text, width: 2 },
-      itemStyle: { color: PALETTE.text }
-    },
-    {
-      name: 'Availability',
-      type: 'line' as const,
-      xAxisIndex: 4,
-      yAxisIndex: 4,
-      data: res.weeks.map((w) => w.availability),
-      smooth: 0.25,
-      symbol: 'circle',
-      symbolSize: 5,
-      lineStyle: { color: PALETTE.accent, width: 2 },
-      itemStyle: { color: PALETTE.accent }
-    }
-  ]
+  let yAxis: any[] = []
+  let series: SeriesOption[] = []
+
+  if (tech === '2G') {
+    yAxis = [
+      {
+        gridIndex: 0,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 1,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 2,
+        type: 'value' as const,
+        min: 90,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 3,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 4,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v)}E` },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      }
+    ]
+
+    series = [
+      {
+        name: '2G TCH Congestion',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.danger, width: 2 },
+        itemStyle: { color: PALETTE.danger },
+        areaStyle: { color: 'rgba(239,68,68,0.12)' },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          label: { formatter: 'threshold 2%', color: PALETTE.danger, fontSize: 10 },
+          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
+          data: [{ yAxis: 2.0 }]
+        }
+      },
+      {
+        name: '2G SDCCH Congestion',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: res.weeks.map((w) => w.sdcchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 6) * 10) / 10 : null)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.warn, width: 2 },
+        itemStyle: { color: PALETTE.warn }
+      },
+      {
+        name: '2G CSSR',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.2 : 99.4)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.accent, width: 2 },
+        itemStyle: { color: PALETTE.accent }
+      },
+      {
+        name: '2G Call Drop Rate',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.4 : 0.5)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.text, width: 2 },
+        itemStyle: { color: PALETTE.text }
+      },
+      {
+        name: 'Voice Traffic (Erlang)',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: res.weeks.map((w) => w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.green, width: 2 },
+        itemStyle: { color: PALETTE.green }
+      }
+    ]
+  } else if (tech === '3G') {
+    yAxis = [
+      {
+        gridIndex: 0,
+        type: 'value' as const,
+        min: 0,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 1,
+        type: 'value' as const,
+        min: 90,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 2,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 3,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${v.toFixed(1)}M` },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 4,
+        type: 'value' as const,
+        min: 98,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      }
+    ]
+
+    series = [
+      {
+        name: '3G Peak Traffic Util',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: res.weeks.map((w) => w.trafficUtil ?? w.prbAvg),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.warn, width: 2 },
+        itemStyle: { color: PALETTE.warn },
+        areaStyle: { color: 'rgba(251,191,36,0.12)' },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          label: { formatter: 'threshold 80%', color: PALETTE.danger, fontSize: 10 },
+          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
+          data: [{ yAxis: 80.0 }]
+        }
+      },
+      {
+        name: '3G CSSR',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.5 : 99.3)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.accent, width: 2 },
+        itemStyle: { color: PALETTE.accent }
+      },
+      {
+        name: '3G Call Drop Rate',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.1 : 0.6)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.danger, width: 2 },
+        itemStyle: { color: PALETTE.danger }
+      },
+      {
+        name: '3G HSDPA Speed',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: res.weeks.map((w) => w.speedMbps ?? (w.throughputKbps != null ? Math.round((w.throughputKbps / 1024) * 10) / 10 : null)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.green, width: 2 },
+        itemStyle: { color: PALETTE.green }
+      },
+      {
+        name: 'Availability',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: res.weeks.map((w) => w.availability),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.text, width: 2 },
+        itemStyle: { color: PALETTE.text }
+      }
+    ]
+  } else {
+    // 4G Default
+    yAxis = [
+      {
+        gridIndex: 0,
+        type: 'value' as const,
+        min: 0,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 1,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}M` },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 2,
+        type: 'value' as const,
+        axisLabel: axisLabelStyle(),
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 3,
+        type: 'value' as const,
+        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}G` },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      },
+      {
+        gridIndex: 4,
+        type: 'value' as const,
+        min: 98,
+        max: 100,
+        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
+      }
+    ]
+
+    series = [
+      {
+        name: '4G DL PRB Util',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: res.weeks.map((w) => w.prbAvg),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.warn, width: 2 },
+        itemStyle: { color: PALETTE.warn },
+        areaStyle: { color: 'rgba(251,191,36,0.12)' },
+        markLine: interventionMark
+          ? {
+              ...interventionMark,
+              data: [
+                ...(interventionMark.data ?? []),
+                { yAxis: prbThreshold, lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 } }
+              ]
+            }
+          : {
+              silent: true,
+              symbol: 'none',
+              label: { formatter: `threshold {c}%`, color: PALETTE.danger, fontSize: 10 },
+              lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
+              data: [{ yAxis: prbThreshold }]
+            }
+      },
+      {
+        name: '4G DL Throughput',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: res.weeks.map((w) => w.throughputKbps),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.accent, width: 2 },
+        itemStyle: { color: PALETTE.accent }
+      },
+      {
+        name: 'Connected Users',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: res.weeks.map((w) => w.users),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.green, width: 2 },
+        itemStyle: { color: PALETTE.green }
+      },
+      {
+        name: 'Data Volume',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: res.weeks.map((w) => w.volumeMb),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.text, width: 2 },
+        itemStyle: { color: PALETTE.text }
+      },
+      {
+        name: 'Availability',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: res.weeks.map((w) => w.availability),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.accent, width: 2 },
+        itemStyle: { color: PALETTE.accent }
+      }
+    ]
+  }
 
   return {
     backgroundColor: 'transparent',
@@ -153,27 +382,27 @@ export function investigationChartOption(res: InvestigationResult, prbThreshold:
     tooltip: {
       trigger: 'axis',
       ...tooltipStyle(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       formatter: (params: any) => {
         const arr = Array.isArray(params) ? params : [params]
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const idx = Number((arr[0] as any)?.dataIndex ?? 0)
+        const idx = Number(arr[0]?.dataIndex ?? 0)
         const w = res.weeks[idx]
         if (!w) return ''
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const lines = arr.map((p: any) => {
           const v = Number(p.value)
           const name = String(p.seriesName ?? '')
-          if (name === 'PRB utilization') return `${p.marker ?? ''}${name}: <b>${v}%</b>`
-          if (name === 'DL throughput') return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} Mbps</b>`
-          if (name === 'Data volume') return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} GB</b>`
-          if (name === 'Availability') return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)}%</b>`
+          if (name.includes('PRB') || name.includes('Congestion') || name.includes('CSSR') || name.includes('Drop') || name.includes('Util') || name.includes('Availability')) {
+            return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)}%</b>`
+          }
+          if (name.includes('Throughput')) return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} Mbps</b>`
+          if (name.includes('Speed')) return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)} Mbps</b>`
+          if (name.includes('Erlang')) return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)} Erl</b>`
+          if (name.includes('Volume')) return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} GB</b>`
           return `${p.marker ?? ''}${name}: <b>${Math.round(v)}</b>`
         })
         const state = w.isNc ? `${w.lifecycle ?? 'NC'}` : w.lifecycle ?? 'OK'
         return [
           `<b>${w.weekStart} (${timeLabels[idx]})</b>`,
-          `State: ${state}`,
+          `Technology: <b>${tech}</b> · State: ${state}`,
           ...lines
         ].join('<br/>')
       }

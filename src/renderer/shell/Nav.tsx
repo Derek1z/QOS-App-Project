@@ -1,5 +1,6 @@
 import { useAppStore, emit } from '../store'
 import { MODULE_GROUPS } from '../modules'
+import AppLogo from '../components/AppLogo'
 
 export default function Nav(): React.JSX.Element {
   const module = useAppStore((s) => s.module)
@@ -8,7 +9,7 @@ export default function Nav(): React.JSX.Element {
   return (
     <nav className="nav">
       <div className="nav-brand">
-        <span className="nav-logo">📡</span>
+        <AppLogo size={28} style={{ marginRight: '4px' }} />
         <div>
           <div className="nav-title">2G/3G/4G QoS</div>
           <div className="nav-subtitle">Network Intelligence</div>

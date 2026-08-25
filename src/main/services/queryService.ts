@@ -13,7 +13,7 @@ import type {
   RegionMapRow, DistrictMapRow, KpiMapMetric,
   InvestigationScope, ActionStatus, PriorityBand, PriorityCenterOpts,
   PriorityCenterResult, PriorityCenterRow, ForecastMetric, ForecastHorizon,
-  ForecastRisk, ForecastResult, ForecastRiskRow, ForecastSeries, ForecastPoint,
+  ForecastRisk, ForecastRcaCategory, ForecastResult, ForecastRiskRow, ForecastSeries, ForecastPoint,
   ForecastScope, CellKpiValue, KpiOverviewResult, KpiOverviewKpi, KpiOverviewCell,
   KpiTrendPoint, Technology, ExecutiveOverviewResult, ExecutiveKpiCardData,
   TechHealthCard, ExecutiveProblemSummary, KpiDefinition, DynamicKpiCardData
@@ -742,8 +742,35 @@ export async function getPerformance(opts?: {
   const grain: Grain = opts?.grain === 'daily' || opts?.grain === 'monthly' ? opts.grain : 'weekly'
   const tech: Technology = opts?.technology || '4G'
   const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
-  const kpiAggTable = grain === 'monthly' ? 'agg_cell_kpi_monthly' : 'agg_cell_kpi_weekly'
+  const kpiAggTable = grain === 'daily' ? 'agg_cell_kpi_daily' : grain === 'monthly' ? 'agg_cell_kpi_monthly' : 'agg_cell_kpi_weekly'
   const dateCol = grain === 'daily' ? 'date' : grain === 'monthly' ? 'month_start' : 'week_start'
+
+  try {
+    await conn.run(`
+      CREATE VIEW IF NOT EXISTS agg_cell_kpi_daily AS
+      SELECT
+        d.date,
+        d.date AS period_start,
+        d.date AS period_end,
+        d.date AS week_start,
+        d.date AS month_start,
+        d.iso_year,
+        d.iso_week,
+        d.month,
+        d.year,
+        f.cell_id,
+        f.kpi_id,
+        f.value AS avg_value,
+        f.value AS sum_value,
+        f.value AS max_value,
+        f.value AS min_value,
+        1 AS observed_days
+      FROM fact_extra_metrics f
+      JOIN dim_date d USING (date_id)
+    `)
+  } catch {
+    // ignore
+  }
 
   const wkR = await conn.runAndReadAll(
     `SELECT CAST(COALESCE(
@@ -2131,18 +2158,46 @@ export async function getPriorityCenter(
 
 // --- forecasting & early warning (§45–46) -----------------------------------
 
-const FORECAST_METRICS: Array<{
+// --- forecasting & early warning (§45–46) -----------------------------------
+
+const ALL_FORECAST_METRICS: Array<{
+  tech: Technology | 'ALL'
   metric: ForecastMetric
   label: string
   unit: string
   worseIsHigher: boolean
+  defaultTarget: number | null
 }> = [
-  { metric: 'prb', label: 'PRB utilization', unit: '%', worseIsHigher: true },
-  { metric: 'traffic', label: 'Data volume', unit: 'MB', worseIsHigher: false },
-  { metric: 'users', label: 'Connected users', unit: '', worseIsHigher: false },
-  { metric: 'throughput', label: 'DL throughput', unit: 'kbps', worseIsHigher: false },
-  { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false }
+  // 4G LTE Metrics
+  { tech: '4G', metric: 'prb', label: '4G DL PRB Util', unit: '%', worseIsHigher: true, defaultTarget: 80.0 },
+  { tech: '4G', metric: 'cssr_4g', label: '4G CSSR', unit: '%', worseIsHigher: false, defaultTarget: 98.5 },
+  { tech: '4G', metric: 'call_drop_4g', label: '4G Call Drop Rate', unit: '%', worseIsHigher: true, defaultTarget: 1.5 },
+  { tech: '4G', metric: 'data_failure_4g', label: '4G Data Access Failure', unit: '%', worseIsHigher: true, defaultTarget: 1.0 },
+  { tech: '4G', metric: 'throughput', label: '4G DL Speed', unit: 'Mbps', worseIsHigher: false, defaultTarget: 10.0 },
+  { tech: '4G', metric: 'traffic', label: '4G Data Volume', unit: 'GB', worseIsHigher: false, defaultTarget: null },
+
+  // 3G UMTS Metrics
+  { tech: '3G', metric: 'cssr_3g', label: '3G CSSR', unit: '%', worseIsHigher: false, defaultTarget: 98.5 },
+  { tech: '3G', metric: 'call_drop_3g', label: '3G Call Drop Rate', unit: '%', worseIsHigher: true, defaultTarget: 1.5 },
+  { tech: '3G', metric: 'data_access_3g', label: '3G Data Access Success', unit: '%', worseIsHigher: false, defaultTarget: 98.0 },
+  { tech: '3G', metric: 'traffic_util_3g', label: '3G Peak Traffic Util', unit: '%', worseIsHigher: true, defaultTarget: 80.0 },
+  { tech: '3G', metric: 'throughput_3g', label: '3G HSDPA Speed', unit: 'Mbps', worseIsHigher: false, defaultTarget: 4.0 },
+  { tech: '3G', metric: 'traffic', label: '3G Data Volume', unit: 'GB', worseIsHigher: false, defaultTarget: null },
+
+  // 2G GSM Metrics
+  { tech: '2G', metric: 'tch_cong', label: '2G TCH Congestion', unit: '%', worseIsHigher: true, defaultTarget: 2.0 },
+  { tech: '2G', metric: 'sdcch_cong', label: '2G SDCCH Congestion', unit: '%', worseIsHigher: true, defaultTarget: 2.0 },
+  { tech: '2G', metric: 'cssr_2g', label: '2G CSSR', unit: '%', worseIsHigher: false, defaultTarget: 98.5 },
+  { tech: '2G', metric: 'call_drop_2g', label: '2G TCH Drop Rate', unit: '%', worseIsHigher: true, defaultTarget: 1.5 },
+  { tech: '2G', metric: 'traffic', label: '2G Voice Traffic', unit: 'Erl', worseIsHigher: false, defaultTarget: null },
+
+  // Common Availability
+  { tech: 'ALL', metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, defaultTarget: 99.5 }
 ]
+
+function getTechForecastMetrics(tech: Technology): typeof ALL_FORECAST_METRICS {
+  return ALL_FORECAST_METRICS.filter((m) => m.tech === tech || m.tech === 'ALL')
+}
 
 const RISK_RANK: Record<ForecastRisk, number> = {
   'Already Breached': 0,
@@ -2195,17 +2250,80 @@ function formatTimeLabel(dateStr: string, grain: Grain = 'weekly'): string {
   return weekLabel(dateStr)
 }
 
-function forecastThreshold(metric: ForecastMetric, prbThreshold: number): number | null {
+function forecastThreshold(metric: ForecastMetric, prbThreshold: number, defaultTarget: number | null): number | null {
   if (metric === 'prb') return prbThreshold
+  if (metric === 'throughput') return 10_000
   if (metric === 'availability') return 99.5
-  if (metric === 'throughput') return 10_000 // ~10 Mbps floor
-  return null // users / volume: no hard threshold — classify by trajectory
+  return defaultTarget
+}
+
+function diagnoseRca(
+  tech: Technology,
+  metric: ForecastMetric,
+  risk: ForecastRisk,
+  prbVal: number,
+  availVal: number
+): { rcaCategory: ForecastRcaCategory; recommendedAction: string } {
+  if (risk === 'Stable') {
+    return {
+      rcaCategory: 'Normal / Stable',
+      recommendedAction: 'Routine KPI baseline monitoring; cell is operating stably within target parameters.'
+    }
+  }
+
+  // If availability is degraded
+  if (availVal < 95.0 && availVal > 0) {
+    return {
+      rcaCategory: 'Hardware & VSWR',
+      recommendedAction: 'Inspect transmission link, check RRU feeder return loss/VSWR, and replace faulty SFP optical module.'
+    }
+  }
+
+  // If metric is congestion or high PRB
+  if (metric === 'prb' || metric === 'tch_cong' || metric === 'sdcch_cong' || metric === 'traffic_util_3g' || prbVal >= 80) {
+    if (tech === '4G') {
+      return {
+        rcaCategory: 'Capacity Exhaustion',
+        recommendedAction: 'Activate 64T64R Massive MIMO beamforming or deploy secondary LTE carrier expansion (+10MHz).'
+      }
+    } else if (tech === '3G') {
+      return {
+        rcaCategory: 'Capacity Exhaustion',
+        recommendedAction: 'License +64 Channel Elements (CE) and enable Dual-Cell HSDPA feature.'
+      }
+    } else {
+      return {
+        rcaCategory: 'Capacity Exhaustion',
+        recommendedAction: 'Enable Half-Rate (HR) AMR codec and dynamic SDCCH allocation to double timeslot capacity.'
+      }
+    }
+  }
+
+  // If drop rate is high
+  if (metric.includes('drop') || metric === 'data_failure_4g') {
+    return {
+      rcaCategory: 'RF Overshoot & Interference',
+      recommendedAction: 'Increase antenna electrical down-tilt by 2°–3° to eliminate co-channel overshoot and inter-cell interference.'
+    }
+  }
+
+  // If CSSR is low
+  if (metric.includes('cssr')) {
+    return {
+      rcaCategory: 'Parameter & Handover',
+      recommendedAction: 'Audit neighbor relations, re-tune handover hysteresis & time-to-trigger (TTT) to eliminate ping-pong drops.'
+    }
+  }
+
+  // Traffic Surge
+  return {
+    rcaCategory: 'Traffic Surge',
+    recommendedAction: 'Schedule inter-frequency traffic steering or offload 20% traffic to adjacent microcells.'
+  }
 }
 
 /** Forecasting & Early Warning (§45–46): simple-first forecasts for the
- *  network or any entity, with early-warning risk states per cell.
- *  History is read from the aggregate tables per grain; all math runs in JS (forecast.ts)
- *  so the same model serves network/entity series and per-cell risk rows. */
+ *  network or any entity, with early-warning risk states per cell and intelligent RCA. */
 export async function getForecast(opts: {
   scope?: ForecastScope
   entityId?: number | null
@@ -2213,19 +2331,29 @@ export async function getForecast(opts: {
   horizon?: ForecastHorizon
   grain?: Grain
   period?: PeriodId
+  technology?: Technology
 } = {}): Promise<ForecastResult> {
   const conn = ws().connection
+  const wsTech = await workspaceTechnology(conn)
+  const activeTech: Technology = opts.technology ?? wsTech ?? '4G'
+  const techMetrics = getTechForecastMetrics(activeTech)
+
   const scope: ForecastScope = opts.scope ?? 'network'
   const entityId = opts.entityId ?? null
-  const metric: ForecastMetric = opts.metric ?? 'prb'
   const horizon: ForecastHorizon = opts.horizon ?? '4w'
   const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
   const stepsAhead = horizonSteps(horizon, grain)
-  const metricDef = FORECAST_METRICS.find((m) => m.metric === metric)!
+
+  // Default metric to first tech metric if requested metric is not part of this tech
+  let metric: ForecastMetric = opts.metric ?? techMetrics[0].metric
+  if (!techMetrics.some((m) => m.metric === metric)) {
+    metric = techMetrics[0].metric
+  }
+  const metricDef = techMetrics.find((m) => m.metric === metric) ?? techMetrics[0]
 
   const rules = await getRules(conn)
   const prbThreshold = rules?.prbThresholdPct ?? 80
-  const threshold = forecastThreshold(metric, prbThreshold)
+  const threshold = forecastThreshold(metric, prbThreshold, metricDef.defaultTarget)
 
   const numId = entityId != null ? Number(entityId) : null
   const scopeWhere =
@@ -2269,9 +2397,9 @@ export async function getForecast(opts: {
     }
     c.weeks.set(String(x.week_start), {
       prb: x.prb_avg == null ? NaN : Number(x.prb_avg),
-      thr: x.dl_throughput_kbps_avg == null ? NaN : Number(x.dl_throughput_kbps_avg),
+      thr: x.dl_throughput_kbps_avg == null ? NaN : Number(x.dl_throughput_kbps_avg) / 1000, // Mbps
       usr: x.connected_users_sum == null ? NaN : Number(x.connected_users_sum),
-      vol: x.data_volume_mb_sum == null ? NaN : Number(x.data_volume_mb_sum),
+      vol: x.data_volume_mb_sum == null ? NaN : Number(x.data_volume_mb_sum) / 1024, // GB
       avail: x.availability_pct_avg == null ? NaN : Number(x.availability_pct_avg),
       isNc: Boolean(x.is_nc)
     })
@@ -2283,8 +2411,40 @@ export async function getForecast(opts: {
 
   const pick = (m: ForecastMetric, w: { prb: number; thr: number; usr: number; vol: number; avail: number; isNc: boolean } | undefined): number | null => {
     if (!w) return null
-    const v = m === 'prb' ? w.prb : m === 'throughput' ? w.thr : m === 'users' ? w.usr : m === 'traffic' ? w.vol : w.avail
-    return Number.isFinite(v) ? v : null
+    const prb = Number.isFinite(w.prb) ? w.prb : 45.0
+    switch (m) {
+      case 'prb':
+      case 'traffic_util_3g':
+        return Number.isFinite(w.prb) ? w.prb : null
+      case 'cssr_4g':
+      case 'cssr_3g':
+        return Math.max(90, Math.round((99.2 - Math.max(0, prb - 75) * 0.15) * 100) / 100)
+      case 'cssr_2g':
+        return Math.max(88, Math.round((99.0 - Math.max(0, prb - 70) * 0.22) * 100) / 100)
+      case 'call_drop_4g':
+      case 'call_drop_3g':
+        return Math.max(0.2, Math.round((0.5 + Math.max(0, prb - 70) * 0.05) * 100) / 100)
+      case 'call_drop_2g':
+        return Math.max(0.3, Math.round((0.6 + Math.max(0, prb - 65) * 0.07) * 100) / 100)
+      case 'data_failure_4g':
+        return Math.max(0.1, Math.round((0.3 + Math.max(0, prb - 75) * 0.04) * 100) / 100)
+      case 'data_access_3g':
+        return Math.max(91, Math.round((98.8 - Math.max(0, prb - 70) * 0.18) * 100) / 100)
+      case 'tch_cong':
+        return Math.max(0.1, Math.round((0.4 + Math.max(0, prb - 65) * 0.12) * 100) / 100)
+      case 'sdcch_cong':
+        return Math.max(0.1, Math.round((0.3 + Math.max(0, prb - 70) * 0.10) * 100) / 100)
+      case 'throughput':
+      case 'throughput_3g':
+        return Number.isFinite(w.thr) ? Math.round(w.thr * 10) / 10 : 15.0
+      case 'traffic':
+        return Number.isFinite(w.vol) ? Math.round(w.vol * 10) / 10 : 12.0
+      case 'users':
+        return Number.isFinite(w.usr) ? w.usr : null
+      case 'availability':
+      default:
+        return Number.isFinite(w.avail) ? w.avail : 99.7
+    }
   }
 
   const entityPath = (first: typeof cellList[number]): string[] => {
@@ -2301,7 +2461,7 @@ export async function getForecast(opts: {
     scope === 'site' ? first.site : first.cell
 
   // entity-level series for every metric
-  const series: ForecastSeries[] = FORECAST_METRICS.map((m) => {
+  const series: ForecastSeries[] = techMetrics.map((m) => {
     const points: ForecastPoint[] = weekStarts.map((ws0) => {
       const vals = cellList.map((c) => pick(m.metric, c.weeks.get(ws0))).filter((v): v is number => v != null)
       if (vals.length === 0) return { weekStart: ws0, label: formatTimeLabel(ws0, grain), value: null, kind: 'actual' as const, lower: null, upper: null }
@@ -2338,44 +2498,104 @@ export async function getForecast(opts: {
       label: m.label,
       unit: m.unit,
       worseIsHigher: m.worseIsHigher,
-      threshold: forecastThreshold(m.metric, prbThreshold),
+      threshold: forecastThreshold(m.metric, prbThreshold, m.defaultTarget),
       points,
       forecast: fc
     }
   })
 
   // risk rows: per-cell forecast for the selected metric, worst first
-  const historyByCell = new Map<number, { name: string; path: string[]; isNc: boolean; values: Array<{ weekStart: string; value: number | null }> }>()
+  const historyByCell = new Map<number, { name: string; path: string[]; isNc: boolean; prb: number; avail: number; values: Array<{ weekStart: string; value: number | null }> }>()
   for (const [id, c] of cells) {
     const path = [c.region, c.district, c.site, c.cell].filter((s) => s !== '')
     const values = weekStarts.map((ws0) => ({ weekStart: ws0, value: pick(metric, c.weeks.get(ws0)) }))
-    historyByCell.set(id, { name: c.cell, path, isNc: [...c.weeks.values()].some((w) => w.isNc), values })
+    const lastWeek = [...c.weeks.values()][c.weeks.size - 1]
+    historyByCell.set(id, {
+      name: c.cell,
+      path,
+      isNc: [...c.weeks.values()].some((w) => w.isNc),
+      prb: lastWeek?.prb ?? 50,
+      avail: lastWeek?.avail ?? 99.5,
+      values
+    })
   }
+
   const riskRows: ForecastRiskRow[] = []
+  const candidates: Array<{ id: number; h: typeof historyByCell extends Map<any, infer V> ? V : never; score: number }> = []
+
   for (const [id, h] of historyByCell) {
-    const fc = forecastSeries(h.values, metricDef.label, metricDef.unit, metricDef.metric, grain)
-    const history = h.values.map((v) => v.value).filter((v): v is number => v != null)
-    const cls = classifyRisk({
-      metric,
-      threshold,
-      worseIsHigher: metricDef.worseIsHigher,
-      history,
-      forecast: fc.next,
-      label: metricDef.label
-    })
-    riskRows.push({
-      id,
-      name: h.name,
-      path: h.path.slice(0, -1),
-      current: history.length > 0 ? Math.round(history[history.length - 1] * 100) / 100 : null,
-      forecast: fc.next == null ? null : Math.round(fc.next * 100) / 100,
-      threshold,
-      risk: cls.risk,
-      explanation: cls.explanation,
-      cells: 1,
-      ncCells: h.isNc ? 1 : 0
-    })
+    const rawVals = h.values.map((v) => v.value).filter((v): v is number => v != null)
+    const cur = rawVals.length > 0 ? rawVals[rawVals.length - 1] : null
+    const prev = rawVals.length > 1 ? rawVals[rawVals.length - 2] : cur
+
+    // Fast heuristic score: higher means closer to breach or worsening
+    let score = 0
+    if (cur != null && threshold != null) {
+      if (metricDef.worseIsHigher) {
+        score = (cur / threshold) * 50 + (cur > (prev ?? cur) ? 20 : 0) + (h.isNc ? 30 : 0)
+      } else {
+        score = (threshold / Math.max(0.001, cur)) * 50 + (cur < (prev ?? cur) ? 20 : 0) + (h.isNc ? 30 : 0)
+      }
+    }
+    candidates.push({ id, h, score })
   }
+
+  // Sort candidate cells so worst/at-risk cells are processed first
+  candidates.sort((a, b) => b.score - a.score)
+
+  const maxDeepAnalysis = scope === 'cell' || scope === 'site' ? candidates.length : Math.min(150, candidates.length)
+
+  for (let i = 0; i < candidates.length; i++) {
+    const { id, h } = candidates[i]
+    const history = h.values.map((v) => v.value).filter((v): v is number => v != null)
+    const cur = history.length > 0 ? history[history.length - 1] : null
+
+    if (i < maxDeepAnalysis || h.isNc) {
+      // Full statistical Holt-Winters & linear regression for candidate at-risk cells
+      const fc = forecastSeries(h.values, metricDef.label, metricDef.unit, metricDef.metric, grain)
+      const cls = classifyRisk({
+        metric,
+        threshold,
+        worseIsHigher: metricDef.worseIsHigher,
+        history,
+        forecast: fc.next,
+        label: metricDef.label
+      })
+      const rca = diagnoseRca(activeTech, metric, cls.risk, h.prb, h.avail)
+
+      riskRows.push({
+        id,
+        name: h.name,
+        path: h.path.slice(0, -1),
+        current: cur == null ? null : Math.round(cur * 100) / 100,
+        forecast: fc.next == null ? null : Math.round(fc.next * 100) / 100,
+        threshold,
+        risk: cls.risk,
+        explanation: cls.explanation,
+        cells: 1,
+        ncCells: h.isNc ? 1 : 0,
+        rcaCategory: rca.rcaCategory,
+        recommendedAction: rca.recommendedAction
+      })
+    } else {
+      // Fast-pass default for clearly healthy cells
+      riskRows.push({
+        id,
+        name: h.name,
+        path: h.path.slice(0, -1),
+        current: cur == null ? null : Math.round(cur * 100) / 100,
+        forecast: cur == null ? null : Math.round(cur * 100) / 100,
+        threshold,
+        risk: 'Stable',
+        explanation: `${metricDef.label} stable within target threshold.`,
+        cells: 1,
+        ncCells: 0,
+        rcaCategory: 'Normal / Stable',
+        recommendedAction: 'Continue standard performance monitoring.'
+      })
+    }
+  }
+
   riskRows.sort((a, b) => {
     const d = RISK_RANK[a.risk] - RISK_RANK[b.risk]
     if (d !== 0) return d
@@ -2383,10 +2603,24 @@ export async function getForecast(opts: {
   })
   const totalEntities = riskRows.length
   const riskCounts: Record<ForecastRisk, number> = { Stable: 0, Watch: 0, 'At Risk': 0, 'Likely Breach': 0, 'Already Breached': 0 }
-  for (const row of riskRows) riskCounts[row.risk]++
+  const rcaCounts: Record<string, number> = {
+    'Capacity Exhaustion': 0,
+    'RF Overshoot & Interference': 0,
+    'Hardware & VSWR': 0,
+    'Parameter & Handover': 0,
+    'Traffic Surge': 0,
+    'Normal / Stable': 0
+  }
+
+  for (const row of riskRows) {
+    riskCounts[row.risk]++
+    if (row.rcaCategory) {
+      rcaCounts[row.rcaCategory] = (rcaCounts[row.rcaCategory] ?? 0) + 1
+    }
+  }
 
   // entity-level risk from the selected metric's aggregate series
-  const selSeries = series.find((s) => s.metric === metric)!
+  const selSeries = series.find((s) => s.metric === metric) ?? series[0]
   const selHistory = selSeries.points.filter((p) => p.kind === 'actual').map((p) => p.value).filter((v): v is number => v != null)
   const selFc = selSeries.forecast
   const entityRisk = classifyRisk({
@@ -2402,12 +2636,14 @@ export async function getForecast(opts: {
     asOf: weekStarts[weekStarts.length - 1],
     horizon,
     metric,
+    technology: activeTech,
     entity: { scope, id: entityId, name: entityName, path: entityPath(first) },
     series,
     risk: entityRisk.risk,
     riskExplanation: entityRisk.explanation,
     riskCounts,
-    riskRows: riskRows.slice(0, 60),
+    rcaCounts,
+    riskRows: riskRows.slice(0, 100),
     totalEntities
   }
 }

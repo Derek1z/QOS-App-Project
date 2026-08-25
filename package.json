@@ -28,7 +28,9 @@
     "files": [
       "out/**/*",
       "package.json",
-      "build/icon.ico"
+      "build/icon.ico",
+      "build/icon.png",
+      "build/favicon.png"
     ],
     "asarUnpack": [
       "**/node_modules/@duckdb/**",
@@ -40,6 +42,12 @@
         "portable"
       ],
       "signAndEditExecutable": false
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ]
     },
     "portable": {
       "artifactName": "2G_3G_4G_QoS.exe",

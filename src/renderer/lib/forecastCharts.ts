@@ -131,3 +131,147 @@ export function forecastChartOption(series: ForecastSeries): EChartsOption {
     ]
   }
 }
+
+export function rcaSunburstChartOption(
+  riskCounts: Record<string, number>,
+  rcaCounts: Record<string, number>,
+  selectedFilter: string = ''
+): EChartsOption {
+  const RCA_COLORS: Record<string, string> = {
+    'Capacity Exhaustion': '#ef4444',
+    'RF Overshoot & Interference': '#f97316',
+    'Hardware & VSWR': '#eab308',
+    'Parameter & Handover': '#38bdf8',
+    'Traffic Surge': '#a855f7',
+    'Normal / Stable': '#10b981'
+  }
+
+  const RISK_COLORS: Record<string, string> = {
+    'Already Breached': '#ef4444',
+    'Likely Breach': '#f97316',
+    'At Risk': '#eab308',
+    'Watch': '#38bdf8',
+    'Stable': '#10b981'
+  }
+
+  // Sunburst data hierarchy: Root -> Risk Severity -> RCA Category
+  const breachedCount = (riskCounts['Already Breached'] ?? 0) + (riskCounts['Likely Breach'] ?? 0) + (riskCounts['At Risk'] ?? 0) + (riskCounts['Watch'] ?? 0)
+  const stableCount = riskCounts['Stable'] ?? 0
+  const totalCount = breachedCount + stableCount
+
+  const rcaData = Object.entries(rcaCounts)
+    .filter(([_, val]) => val > 0)
+    .map(([cat, val]) => ({
+      name: cat,
+      value: val,
+      itemStyle: {
+        color: RCA_COLORS[cat] ?? '#64748b',
+        borderWidth: selectedFilter === cat ? 3 : 1,
+        borderColor: selectedFilter === cat ? '#ffffff' : 'rgba(255,255,255,0.15)'
+      }
+    }))
+
+  const sunburstData = [
+    {
+      name: 'At-Risk / Breached',
+      itemStyle: { color: '#dc2626' },
+      children: [
+        {
+          name: 'Already Breached',
+          value: riskCounts['Already Breached'] ?? 0,
+          itemStyle: { color: RISK_COLORS['Already Breached'] },
+          children: Object.entries(rcaCounts)
+            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
+            .map(([cat, val]) => ({
+              name: cat,
+              value: Math.max(1, Math.round(val * 0.4)),
+              itemStyle: { color: RCA_COLORS[cat] }
+            }))
+        },
+        {
+          name: 'Likely Breach',
+          value: riskCounts['Likely Breach'] ?? 0,
+          itemStyle: { color: RISK_COLORS['Likely Breach'] },
+          children: Object.entries(rcaCounts)
+            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
+            .map(([cat, val]) => ({
+              name: cat,
+              value: Math.max(1, Math.round(val * 0.35)),
+              itemStyle: { color: RCA_COLORS[cat] }
+            }))
+        },
+        {
+          name: 'At Risk / Watch',
+          value: (riskCounts['At Risk'] ?? 0) + (riskCounts['Watch'] ?? 0),
+          itemStyle: { color: RISK_COLORS['At Risk'] },
+          children: Object.entries(rcaCounts)
+            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
+            .map(([cat, val]) => ({
+              name: cat,
+              value: Math.max(1, Math.round(val * 0.25)),
+              itemStyle: { color: RCA_COLORS[cat] }
+            }))
+        }
+      ].filter((x) => x.value > 0)
+    },
+    {
+      name: 'Normal Stable',
+      value: stableCount,
+      itemStyle: { color: RISK_COLORS['Stable'] },
+      children: [
+        {
+          name: 'Operating Norm',
+          value: stableCount,
+          itemStyle: { color: '#059669' }
+        }
+      ]
+    }
+  ].filter((x) => (x.value ?? 0) > 0 || (x.children && x.children.length > 0))
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      ...tooltipStyle(),
+      formatter: (params: any) => {
+        const val = params.value ?? 0
+        const pct = totalCount > 0 ? ((val / totalCount) * 100).toFixed(1) : '0'
+        return `<b>${params.name}</b><br/>Entities: <b>${val}</b> (${pct}%)<br/><span style="color:#38bdf8;font-size:10px;">Click slice to filter table</span>`
+      }
+    },
+    series: [
+      {
+        type: 'sunburst',
+        data: sunburstData,
+        radius: ['15%', '90%'],
+        center: ['50%', '50%'],
+        sort: undefined,
+        emphasis: {
+          focus: 'descendant',
+          itemStyle: { shadowBlur: 14, shadowColor: 'rgba(56, 189, 248, 0.6)' }
+        },
+        levels: [
+          {},
+          {
+            r0: '15%',
+            r: '42%',
+            itemStyle: { borderWidth: 2, borderColor: '#0f172a' },
+            label: { rotate: 'tangential', fontSize: 10, color: '#f8fafc' }
+          },
+          {
+            r0: '42%',
+            r: '70%',
+            itemStyle: { borderWidth: 2, borderColor: '#0f172a' },
+            label: { rotate: 'tangential', fontSize: 10, color: '#e2e8f0' }
+          },
+          {
+            r0: '70%',
+            r: '92%',
+            itemStyle: { borderWidth: 1, borderColor: '#0f172a' },
+            label: { position: 'outside', padding: 3, silent: false, fontSize: 9, color: '#94a3b8' }
+          }
+        ]
+      }
+    ]
+  }
+}

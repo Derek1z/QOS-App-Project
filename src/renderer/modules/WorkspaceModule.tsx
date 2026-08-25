@@ -57,9 +57,15 @@ export default function WorkspaceModule(): React.JSX.Element {
     callDrop: '',
     dataAccess: '',
     dataFailure: '',
-    breach: '',
-    persistent: '',
-    chronic: '',
+    dailyBreach: '',
+    weeklyBreach: '',
+    monthlyBreach: '',
+    persistentWeeks: '',
+    chronicWeeks: '',
+    persistentDays: '',
+    chronicDays: '',
+    persistentMonths: '',
+    chronicMonths: '',
     district: '',
     notes: ''
   })
@@ -103,9 +109,15 @@ export default function WorkspaceModule(): React.JSX.Element {
           callDrop: String(r.callDropThresholdPct ?? 1.5),
           dataAccess: String(r.dataAccessThresholdPct ?? 98.0),
           dataFailure: String(r.dataServiceFailureThresholdPct ?? 1.0),
-          breach: String(r.weeklyBreachDays ?? 1),
-          persistent: String(r.persistentWeeks ?? 3),
-          chronic: String(r.chronicWeeks ?? 7),
+          dailyBreach: String(r.dailyMinKpiBreaches ?? 1),
+          weeklyBreach: String(r.weeklyBreachDays ?? 1),
+          monthlyBreach: String(r.monthlyBreachDays ?? 3),
+          persistentWeeks: String(r.persistentWeeks ?? 3),
+          chronicWeeks: String(r.chronicWeeks ?? 7),
+          persistentDays: String(r.persistentDays ?? 7),
+          chronicDays: String(r.chronicDays ?? 21),
+          persistentMonths: String(r.persistentMonths ?? 2),
+          chronicMonths: String(r.chronicMonths ?? 3),
           district: String(r.districtNcThresholdPct ?? 10),
           notes: r.notes ?? ''
         })
@@ -216,9 +228,15 @@ export default function WorkspaceModule(): React.JSX.Element {
         callDropThresholdPct: Number(rulesForm.callDrop),
         dataAccessThresholdPct: Number(rulesForm.dataAccess),
         dataServiceFailureThresholdPct: Number(rulesForm.dataFailure),
-        weeklyBreachDays: Number(rulesForm.breach),
-        persistentWeeks: Number(rulesForm.persistent),
-        chronicWeeks: Number(rulesForm.chronic),
+        dailyMinKpiBreaches: Number(rulesForm.dailyBreach || 1),
+        weeklyBreachDays: Number(rulesForm.weeklyBreach),
+        monthlyBreachDays: Number(rulesForm.monthlyBreach),
+        persistentWeeks: Number(rulesForm.persistentWeeks),
+        chronicWeeks: Number(rulesForm.chronicWeeks),
+        persistentDays: Number(rulesForm.persistentDays),
+        chronicDays: Number(rulesForm.chronicDays),
+        persistentMonths: Number(rulesForm.persistentMonths),
+        chronicMonths: Number(rulesForm.chronicMonths),
         districtNcThresholdPct: Number(rulesForm.district),
         notes: rulesForm.notes.trim() || undefined
       })
@@ -231,10 +249,16 @@ export default function WorkspaceModule(): React.JSX.Element {
         callDrop: String(updated.callDropThresholdPct ?? 1.5),
         dataAccess: String(updated.dataAccessThresholdPct ?? 98.0),
         dataFailure: String(updated.dataServiceFailureThresholdPct ?? 1.0),
-        breach: String(updated.weeklyBreachDays),
-        persistent: String(updated.persistentWeeks),
-        chronic: String(updated.chronicWeeks ?? 7),
-        district: String(updated.districtNcThresholdPct),
+        dailyBreach: String(updated.dailyMinKpiBreaches ?? 1),
+        weeklyBreach: String(updated.weeklyBreachDays ?? 1),
+        monthlyBreach: String(updated.monthlyBreachDays ?? 3),
+        persistentWeeks: String(updated.persistentWeeks ?? 3),
+        chronicWeeks: String(updated.chronicWeeks ?? 7),
+        persistentDays: String(updated.persistentDays ?? 7),
+        chronicDays: String(updated.chronicDays ?? 21),
+        persistentMonths: String(updated.persistentMonths ?? 2),
+        chronicMonths: String(updated.chronicMonths ?? 3),
+        district: String(updated.districtNcThresholdPct ?? 10),
         notes: updated.notes ?? ''
       })
       await refreshWorkspaceState()
@@ -316,106 +340,245 @@ export default function WorkspaceModule(): React.JSX.Element {
       )}
 
       {workspace && rules && (
-        <div className="card">
+        <div className="card rules-card">
           <div className="file-head">
-            <h3>Ruleset v{rules.version} — Thresholds & Governance</h3>
-            {rules.createdAt && <span className="card-note">created {new Date(rules.createdAt).toLocaleString()}</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h3>Ruleset v{rules.version} — Thresholds & Governance</h3>
+              <span className="badge">Version {rules.version}</span>
+            </div>
+            {rules.createdAt && <span className="card-note">Created {new Date(rules.createdAt).toLocaleString()}</span>}
           </div>
-          <p className="card-note">
-            Centralized 2G, 3G, and 4G compliance thresholds. Changing rules creates a new version, recomputes
-            derived intelligence, and writes an audit event (spec §63).
+          <p className="card-note" style={{ marginBottom: 16 }}>
+            Centralized multi-technology and multi-grain thresholds. Modifying parameters creates an immutable new ruleset version, automatically recomputes derived intelligence across daily, weekly, and monthly grains, and records an audit log entry.
           </p>
-          <div className="rules-grid">
-            <NumField
-              label="4G PRB Threshold % (Max)"
-              value={rulesForm.prb}
-              onChange={(v) => setRulesForm((f) => ({ ...f, prb: v }))}
-              step={1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="2G TCH Congestion % (Max)"
-              value={rulesForm.tchCongestion}
-              onChange={(v) => setRulesForm((f) => ({ ...f, tchCongestion: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="2G SDCCH Congestion % (Max)"
-              value={rulesForm.sdcchCongestion}
-              onChange={(v) => setRulesForm((f) => ({ ...f, sdcchCongestion: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="Call Setup Success (CSSR) Target % (Min)"
-              value={rulesForm.cssr}
-              onChange={(v) => setRulesForm((f) => ({ ...f, cssr: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="Call Drop Rate (CDR) Threshold % (Max)"
-              value={rulesForm.callDrop}
-              onChange={(v) => setRulesForm((f) => ({ ...f, callDrop: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="3G Data Access Success (DASR) Target %"
-              value={rulesForm.dataAccess}
-              onChange={(v) => setRulesForm((f) => ({ ...f, dataAccess: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="4G Data Service Failure (DSAF) Threshold %"
-              value={rulesForm.dataFailure}
-              onChange={(v) => setRulesForm((f) => ({ ...f, dataFailure: v }))}
-              step={0.1}
-              min={0}
-              max={100}
-            />
-            <NumField
-              label="Weekly Breach Days (1-7)"
-              value={rulesForm.breach}
-              onChange={(v) => setRulesForm((f) => ({ ...f, breach: v }))}
-              min={1}
-              max={7}
-            />
-            <NumField
-              label="Persistent Streak Weeks (≥)"
-              value={rulesForm.persistent}
-              onChange={(v) => setRulesForm((f) => ({ ...f, persistent: v }))}
-              min={1}
-              max={26}
-            />
-            <NumField
-              label="Chronic Streak Weeks (≥)"
-              value={rulesForm.chronic}
-              onChange={(v) => setRulesForm((f) => ({ ...f, chronic: v }))}
-              min={2}
-              max={52}
-            />
-            <NumField
-              label="District NC threshold %"
-              value={rulesForm.district}
-              onChange={(v) => setRulesForm((f) => ({ ...f, district: v }))}
-              step={0.5}
-              min={0}
-              max={100}
-            />
+
+          {/* Section 1: Radio KPI Compliance Targets */}
+          <div className="rules-section">
+            <div className="rules-section-header">
+              <span className="rules-section-title">📶 1. Radio KPI Compliance Targets (2G / 3G / 4G)</span>
+              <span className="rules-section-subtitle">Core performance benchmarks per cellular generation</span>
+            </div>
+            <div className="rules-grid">
+              <NumField
+                label="4G DL PRB Threshold % (Max)"
+                value={rulesForm.prb}
+                onChange={(v) => setRulesForm((f) => ({ ...f, prb: v }))}
+                step={1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="4G Data Service Failure DSAF % (Max)"
+                value={rulesForm.dataFailure}
+                onChange={(v) => setRulesForm((f) => ({ ...f, dataFailure: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="3G Data Access Success DASR % (Min)"
+                value={rulesForm.dataAccess}
+                onChange={(v) => setRulesForm((f) => ({ ...f, dataAccess: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="2G TCH Congestion % (Max)"
+                value={rulesForm.tchCongestion}
+                onChange={(v) => setRulesForm((f) => ({ ...f, tchCongestion: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="2G SDCCH Congestion % (Max)"
+                value={rulesForm.sdcchCongestion}
+                onChange={(v) => setRulesForm((f) => ({ ...f, sdcchCongestion: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="Call Setup Success (CSSR) Target % (Min)"
+                value={rulesForm.cssr}
+                onChange={(v) => setRulesForm((f) => ({ ...f, cssr: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+              <NumField
+                label="Call Drop Rate (CDR) Threshold % (Max)"
+                value={rulesForm.callDrop}
+                onChange={(v) => setRulesForm((f) => ({ ...f, callDrop: v }))}
+                step={0.1}
+                min={0}
+                max={100}
+              />
+            </div>
           </div>
-          <div className="row-actions">
+
+          {/* Section 2: NC Grain Qualification Criteria */}
+          <div className="rules-section">
+            <div className="rules-section-header">
+              <span className="rules-section-title">🎯 2. Non-Compliance (NC) Qualification Criteria</span>
+              <span className="rules-section-subtitle">Defines the minimum breach criteria required for a cell to qualify as NC in each analytical grain</span>
+            </div>
+            <div className="rules-grid-3">
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge">📅 Daily Grain</span>
+                  <span className="card-note">Observation Day</span>
+                </div>
+                <NumField
+                  label="Min Core KPI Breaches (1–5)"
+                  value={rulesForm.dailyBreach}
+                  onChange={(v) => setRulesForm((f) => ({ ...f, dailyBreach: v }))}
+                  min={1}
+                  max={5}
+                />
+                <div className="card-note" style={{ marginTop: 2 }}>
+                  Cell qualifies as Daily NC if ≥ {rulesForm.dailyBreach || 1} core KPI target(s) fail on that date.
+                </div>
+              </div>
+
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge badge-accent">📊 Weekly Grain</span>
+                  <span className="card-note">7-Day Calendar Week</span>
+                </div>
+                <NumField
+                  label="Min Breach Days per Week (1–7)"
+                  value={rulesForm.weeklyBreach}
+                  onChange={(v) => setRulesForm((f) => ({ ...f, weeklyBreach: v }))}
+                  min={1}
+                  max={7}
+                />
+                <div className="card-note" style={{ marginTop: 2 }}>
+                  Cell qualifies as Weekly NC if it breaches on ≥ {rulesForm.weeklyBreach || 1} day(s) in the week.
+                </div>
+              </div>
+
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge">🗓️ Monthly Grain</span>
+                  <span className="card-note">Calendar Month</span>
+                </div>
+                <NumField
+                  label="Min Breach Days per Month (1–31)"
+                  value={rulesForm.monthlyBreach}
+                  onChange={(v) => setRulesForm((f) => ({ ...f, monthlyBreach: v }))}
+                  min={1}
+                  max={31}
+                />
+                <div className="card-note" style={{ marginTop: 2 }}>
+                  Cell qualifies as Monthly NC if it breaches on ≥ {rulesForm.monthlyBreach || 3} day(s) in the month.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Lifecycle Escalation Streaks Matrix */}
+          <div className="rules-section">
+            <div className="rules-section-header">
+              <span className="rules-section-title">⏳ 3. Lifecycle Escalation Streaks Matrix</span>
+              <span className="rules-section-subtitle">Consecutive NC periods required to escalate from New NC → Persistent NC → Chronic NC</span>
+            </div>
+            <div className="rules-grid-3">
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge badge-accent">📊 Weekly Streaks</span>
+                  <span className="card-note">Consecutive Weeks</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <NumField
+                    label="Persistent NC Streak (≥ Weeks)"
+                    value={rulesForm.persistentWeeks}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, persistentWeeks: v }))}
+                    min={1}
+                    max={26}
+                  />
+                  <NumField
+                    label="Chronic NC Streak (≥ Weeks)"
+                    value={rulesForm.chronicWeeks}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, chronicWeeks: v }))}
+                    min={2}
+                    max={52}
+                  />
+                </div>
+              </div>
+
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge">📅 Daily Streaks</span>
+                  <span className="card-note">Consecutive Days</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <NumField
+                    label="Persistent NC Streak (≥ Days)"
+                    value={rulesForm.persistentDays}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, persistentDays: v }))}
+                    min={1}
+                    max={90}
+                  />
+                  <NumField
+                    label="Chronic NC Streak (≥ Days)"
+                    value={rulesForm.chronicDays}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, chronicDays: v }))}
+                    min={2}
+                    max={180}
+                  />
+                </div>
+              </div>
+
+              <div className="rules-grain-box">
+                <div className="rules-grain-box-head">
+                  <span className="badge">🗓️ Monthly Streaks</span>
+                  <span className="card-note">Consecutive Months</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <NumField
+                    label="Persistent NC Streak (≥ Months)"
+                    value={rulesForm.persistentMonths}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, persistentMonths: v }))}
+                    min={1}
+                    max={12}
+                  />
+                  <NumField
+                    label="Chronic NC Streak (≥ Months)"
+                    value={rulesForm.chronicMonths}
+                    onChange={(v) => setRulesForm((f) => ({ ...f, chronicMonths: v }))}
+                    min={2}
+                    max={24}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Governance & Cluster Thresholds */}
+          <div className="rules-section">
+            <div className="rules-section-header">
+              <span className="rules-section-title">🗺️ 4. Governance & Cluster Thresholds</span>
+              <span className="rules-section-subtitle">Cluster escalation triggers and ruleset change audit</span>
+            </div>
+            <div className="rules-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+              <NumField
+                label="District NC Alarm Threshold %"
+                value={rulesForm.district}
+                onChange={(v) => setRulesForm((f) => ({ ...f, district: v }))}
+                step={0.5}
+                min={0}
+                max={100}
+              />
+            </div>
+          </div>
+
+          <div className="row-actions" style={{ marginTop: 12 }}>
             <input
               className="input rules-notes"
-              placeholder="Notes for this ruleset version…"
+              style={{ flex: 1 }}
+              placeholder="Notes for this ruleset version (e.g., 'Aligned 3-grain breach rules and persistent streak criteria')…"
               value={rulesForm.notes}
               onChange={(e) => setRulesForm((f) => ({ ...f, notes: e.target.value }))}
             />
@@ -425,7 +588,7 @@ export default function WorkspaceModule(): React.JSX.Element {
               </button>
             )}
           </div>
-          {rulesError && <div className="notice notice-error">{rulesError}</div>}
+          {rulesError && <div className="notice notice-error" style={{ marginTop: 10 }}>{rulesError}</div>}
         </div>
       )}
 

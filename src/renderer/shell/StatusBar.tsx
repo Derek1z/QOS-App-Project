@@ -29,7 +29,7 @@ export default function StatusBar(): React.JSX.Element {
       {error && <span className="status-error">⚠ {error}</span>}
       <span>DuckDB · offline</span>
       <span className="status-sep">·</span>
-      <span>v0.1.0</span>
+      <span>v1.0.0</span>
       <span className="status-credit">Developed by Derrick Baalaboore ™</span>
     </footer>
   )

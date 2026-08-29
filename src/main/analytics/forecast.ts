@@ -91,7 +91,8 @@ interface ModelCandidateResult {
 // 1. Simple Linear Regression (SLR)
 function runLinearRegression(
   values: number[],
-  stepsAhead: number
+  stepsAhead: number,
+  metric: string = 'prb'
 ): ModelCandidateResult {
   const n = values.length
   const lt = linearTrend(values)
@@ -101,7 +102,7 @@ function runLinearRegression(
   let dirN = 0
 
   for (let i = 0; i < n; i++) {
-    const pred = lt.intercept + lt.slope * i
+    const pred = clampDomain(lt.intercept + lt.slope * i, metric)
     predictions.push(pred)
     if (i > 0) {
       errs.push(Math.abs(pred - values[i]))
@@ -114,7 +115,8 @@ function runLinearRegression(
 
   const futurePoints: number[] = []
   for (let h = 1; h <= stepsAhead; h++) {
-    futurePoints.push(lt.intercept + lt.slope * (n - 1 + h))
+    const rawVal = lt.intercept + lt.slope * (n - 1 + h)
+    futurePoints.push(clampDomain(rawVal, metric))
   }
 
   const mae = errs.length > 0 ? mean(errs) : 0

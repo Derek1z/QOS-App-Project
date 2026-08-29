@@ -1,7 +1,7 @@
 {
   "name": "2g-3g-4g-qos-network-intelligence",
   "productName": "2G/3G/4G QoS",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "2G/3G/4G QoS Network Intelligence - portable telecom QoS analytics workstation (Electron + DuckDB)",
   "author": "2G/3G/4G QoS Network Intelligence",
   "main": "out/main/index.js",
@@ -16,8 +16,10 @@
     "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && mkdir -p /tmp/qos-runtime && XDG_RUNTIME_DIR=/tmp/qos-runtime XDG_CONFIG_HOME=/tmp/qos-runtime XDG_CACHE_HOME=/tmp/qos-runtime WAYLAND_DISPLAY= DISPLAY= electron . --smoke --no-sandbox --ozone-platform=headless --headless",
     "preview:web": "vite --config .preview/vite.config.ts",
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
-    "dist": "node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",
-    "dist:portable": "node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs"
+    "postinstall": "node scripts/ensure-duckdb-bindings.cjs",
+    "dist": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",
+    "dist:portable": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs",
+    "dist:zip": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win dir && node scripts/zip-portable-folder.cjs"
   },
   "build": {
     "appId": "com.qos.networkintelligence",
@@ -34,7 +36,9 @@
     ],
     "asarUnpack": [
       "**/node_modules/@duckdb/**",
-      "**/*.node"
+      "**/*.node",
+      "**/*.dll",
+      "**/*.so"
     ],
     "win": {
       "icon": "build/icon.ico",
@@ -63,6 +67,10 @@
     "react-dom": "^19.2.8",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
+  },
+  "optionalDependencies": {
+    "@duckdb/node-bindings-linux-x64": "1.5.5-r.4",
+    "@duckdb/node-bindings-win32-x64": "^1.5.5-r.4"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

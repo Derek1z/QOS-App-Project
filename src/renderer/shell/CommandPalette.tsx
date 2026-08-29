@@ -11,6 +11,10 @@ interface Cmd {
   run: () => void
 }
 
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export default function CommandPalette(): React.JSX.Element | null {
   const open = useAppStore((s) => s.paletteOpen)
   const setOpen = useAppStore((s) => s.setPaletteOpen)
@@ -132,9 +136,9 @@ export default function CommandPalette(): React.JSX.Element | null {
   }, [workspace])
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = escapeRegExp(query.trim().toLowerCase())
     if (!q) return commands
-    return commands.filter((c) => (c.label + ' ' + c.keywords).toLowerCase().includes(q))
+    return commands.filter((c) => (c.label + ' ' + c.keywords).toLowerCase().includes(query.trim().toLowerCase()))
   }, [commands, query])
 
   useEffect(() => {

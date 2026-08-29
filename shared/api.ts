@@ -298,6 +298,8 @@ export interface CellKpiValue {
   worseIsHigher: boolean
   /** value breaches the target in the worse direction */
   breached: boolean
+  category?: string
+  isCore?: boolean
 }
 
 /** KPI discovery result: source headers -> best-matching KPI keys. */
@@ -827,6 +829,8 @@ export interface CellDetail {
   weeks: CellWeekPoint[]
   /** extra per-technology KPI values for the latest week (spec §54a) */
   kpis: CellKpiValue[]
+  /** time-series trend arrays for extra KPIs keyed by KPI key */
+  extraKpiTrends?: Record<string, (number | null)[]>
 }
 
 export type PerfMetric = 'prb' | 'throughput' | 'users' | 'volume' | 'availability' | string
@@ -892,7 +896,7 @@ export interface PerformanceResult {
 
 export type ComparisonType = 'period' | 'region'
 export type CompareScope = 'cell' | 'site' | 'district' | 'region'
-export type CompareMetric = PerfMetric | 'nc'
+export type CompareMetric = PerfMetric | 'nc' | string
 export type CompareView = 'actual' | 'indexed' | 'delta'
 export type CompareSort = 'worst' | 'best' | 'name'
 export type NcTransition = 'nc' | 'new' | 'recovered' | 'ok'
@@ -1091,6 +1095,8 @@ export interface InvestigationWeek {
   dataAccess?: number | null
   dataFailure?: number | null
   speedMbps?: number | null
+  dasr?: number | null
+  breachDays?: number | null
 }
 
 export interface InvestigationPeer {

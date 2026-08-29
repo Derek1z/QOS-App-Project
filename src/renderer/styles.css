@@ -431,6 +431,18 @@ code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
+  display: block;
+}
+
+.seg-btn:focus-visible,
+.btn:focus-visible,
+.inv-tab-btn:focus-visible,
+.input:focus-visible,
+.sel:focus-visible {
+  outline: 2px solid var(--accent, #38bdf8);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
 }
 
 .notice {

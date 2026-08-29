@@ -47,6 +47,29 @@ const EMPTY_DRAFT: Draft = {
   aliases: ''
 }
 
+export function validateFormulaSyntax(formula: string): { valid: boolean; error?: string } {
+  if (!formula.trim()) return { valid: false, error: 'Formula cannot be empty' }
+  
+  let balance = 0
+  for (const char of formula) {
+    if (char === '(') balance++
+    if (char === ')') balance--
+    if (balance < 0) return { valid: false, error: 'Unmatched closing parenthesis ")"' }
+  }
+  if (balance !== 0) return { valid: false, error: 'Unclosed opening parenthesis "("' }
+
+  if (/[\+\-\*\/]{2,}/.test(formula.replace(/\s+/g, ''))) {
+    return { valid: false, error: 'Formula contains consecutive mathematical operators' }
+  }
+
+  const sanitized = formula.replace(/\[[^\]]+\]/g, '1').replace(/[0-9\.\+\-\*\/\(\)\s]/g, '')
+  if (sanitized.length > 0) {
+    return { valid: false, error: `Invalid characters in formula: "${sanitized}"` }
+  }
+
+  return { valid: true }
+}
+
 export default function KpiDefinitions(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const [tech, setTech] = useState<Technology>(workspace?.technology ?? '4G')

@@ -54,6 +54,8 @@ interface AppStore {
   pinned: PinnedItem[]
   compareCellIds: [number, number] | null
   investigationTarget: { scope: 'cell' | 'site' | 'district' | 'region'; id: number; name: string; path: string[] } | null
+  explorerState: { level: 'region' | 'district' | 'site' | 'cell'; parentId: number | null; search: string }
+  setExplorerState: (state: Partial<{ level: 'region' | 'district' | 'site' | 'cell'; parentId: number | null; search: string }>) => void
   setModule(m: ModuleId): void
   setWorkspace(w: WorkspaceInfo | null): void
   setSelectedTech(t: Technology): void
@@ -87,6 +89,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pinned: loadPinned(),
   compareCellIds: null,
   investigationTarget: null,
+  explorerState: { level: 'region', parentId: null, search: '' },
+  setExplorerState: (state) =>
+    set((s) => ({ explorerState: { ...s.explorerState, ...state } })),
   setModule: (module) => set({ module }),
   setWorkspace: (workspace) => set({ workspace, selectedTech: workspace?.technology ?? '4G' }),
   setSelectedTech: (selectedTech) => set({ selectedTech }),

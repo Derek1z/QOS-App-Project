@@ -295,6 +295,55 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const topHypothesis = result?.hypotheses && result.hypotheses.length > 0 ? result.hypotheses[0] : null
   const topIssueName = topHypothesis ? topHypothesis.title : result?.current?.lifecycle
 
+  const rcaDonutOption: EChartsOption | null = useMemo(() => {
+    if (!result || !result.hypotheses || result.hypotheses.length === 0) return null
+    const data = result.hypotheses.map((h) => ({
+      name: h.title,
+      value: h.score
+    }))
+    return {
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c}% ({d}%)'
+      },
+      legend: {
+        orient: 'vertical',
+        right: 10,
+        top: 'center',
+        textStyle: { color: '#94a3b8', fontSize: 11 }
+      },
+      series: [
+        {
+          name: 'Root Cause Probability',
+          type: 'pie',
+          radius: ['45%', '75%'],
+          center: ['40%', '50%'],
+          avoidLabelOverlap: false,
+          itemStyle: {
+            borderRadius: 6,
+            borderColor: '#0f172a',
+            borderWidth: 2
+          },
+          label: {
+            show: false,
+            position: 'center'
+          },
+          emphasis: {
+            label: {
+              show: true,
+              fontSize: 13,
+              fontWeight: 'bold',
+              color: '#38bdf8',
+              formatter: '{b}\nScore: {c}%'
+            }
+          },
+          labelLine: { show: false },
+          data
+        }
+      ]
+    }
+  }, [result])
+
   // Counts of detected issues for summary banner
   const criticalCount = options.filter((o) => o.severity === 'Critical').length
   const highCount = options.filter((o) => o.severity === 'High').length
@@ -741,6 +790,31 @@ export default function InvestigationWorkspace(): React.JSX.Element {
           {/* TAB 2: Root Cause & Hypotheses Engine */}
           {activeTab === 'rca' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {result.hypotheses.length === 0 ? (
+                <div className="card" style={{ textAlign: 'center', padding: '36px 20px' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '10px' }}>✅</div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
+                    No Root Cause Fault Triggered
+                  </h3>
+                  <p style={{ color: 'var(--text-dim)', fontSize: '12.5px', maxWidth: '420px', margin: '6px auto 0 auto' }}>
+                    Telemetry evidence indicates this node is performing within target compliance thresholds. No diagnostic root cause hypothesis was triggered.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* RCA Distribution Donut Chart */}
+                  {rcaDonutOption && (
+                    <div className="card">
+                      <div className="card-head-row">
+                        <h3>Root Cause Probability &amp; Hypothesis Weight Distribution</h3>
+                        <span className="card-note">Relative diagnostic score contribution</span>
+                      </div>
+                      <Chart option={rcaDonutOption} height={260} />
+                    </div>
+                  )}
+                </>
+              )}
+
               {/* Evidence-Based Diagnosis */}
               <div className="card">
                 <div className="card-head-row">
@@ -827,8 +901,8 @@ export default function InvestigationWorkspace(): React.JSX.Element {
                       <tr>
                         <th>Peer Sector</th>
                         <th className="num">Health Score</th>
-                        <th className="num">{tech === '4G' ? 'PRB Util' : tech === '3G' ? '3G Util' : 'TCH Cong'}</th>
-                        <th className="num">{tech === '4G' ? 'DL Speed' : tech === '3G' ? 'HSDPA Speed' : 'Voice Traffic'}</th>
+                        <th className="num">{tech === '4G' ? 'PRB Util' : tech === '3G' ? '3G CSSR' : '2G CSSR'}</th>
+                        <th className="num">{tech === '4G' ? 'DL Speed' : tech === '3G' ? '3G Call Drop' : '2G Call Drop'}</th>
                         <th className="num">NC Sectors</th>
                         <th>Cluster Insight</th>
                       </tr>

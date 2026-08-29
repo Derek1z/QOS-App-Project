@@ -76,13 +76,13 @@ function healthColor(s: number | null): string {
 }
 
 function metricValue(r: RegionMapRow | DistrictMapRow, m: string): number | null {
-  if (m === 'health') return r.healthScore
-  if (m === 'nc') return r.cells > 0 ? (r.ncCells / r.cells) * 100 : 0
+  if (m === 'health') return r.healthScore != null ? r.healthScore : null
+  if (m === 'nc') return r.cells > 0 ? (r.ncCells / r.cells) * 100 : null
   if (r.kpiMetrics && r.kpiMetrics[m]) {
-    // Return Core KPI NC Rate % (percentage of cells breaching this KPI)
-    return r.kpiMetrics[m].ncRate
+    const val = r.kpiMetrics[m].ncRate
+    return val != null && Number.isFinite(val) ? val : null
   }
-  return 0
+  return null
 }
 
 function isHigherBetter(m: string, _tech: Technology): boolean {

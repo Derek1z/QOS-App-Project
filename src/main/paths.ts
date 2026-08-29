@@ -1,6 +1,15 @@
-import { app } from 'electron'
 import { join, dirname } from 'node:path'
 import { mkdirSync } from 'node:fs'
+
+function getElectronApp(): any {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const electron = require('electron')
+    return electron.app || electron.default?.app
+  } catch {
+    return null
+  }
+}
 
 /** Root of the portable folder.
  *  - Packaged portable build: electron-builder's portable target sets
@@ -10,6 +19,7 @@ import { mkdirSync } from 'node:fs'
  */
 export function portableRoot(): string {
   if (process.env.PORTABLE_EXECUTABLE_DIR) return process.env.PORTABLE_EXECUTABLE_DIR
+  const app = getElectronApp()
   if (app?.isPackaged) return dirname(process.execPath)
   if (app?.getAppPath) return app.getAppPath()
   return process.cwd()

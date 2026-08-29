@@ -310,7 +310,7 @@ export async function createWorkspace(dir: string, name: string, technology?: st
       const esc = safe.replace(/'/g, "''")
       await connection.run(
         `INSERT INTO workspace_meta (key, value) VALUES ` +
-        `('schema_version', '0.1.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}')`
+        `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}')`
       )
       await seedKpiDefs(connection, '2G')
       await seedKpiDefs(connection, '3G')

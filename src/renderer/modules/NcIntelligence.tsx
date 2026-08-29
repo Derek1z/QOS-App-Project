@@ -69,6 +69,7 @@ export default function NcIntelligence(): React.JSX.Element {
   const [fTrend, setFTrend] = useState('')
   const [fSeverity, setFSeverity] = useState('')
   const [fQ, setFQ] = useState('')
+  const [viewMode, setViewMode] = useState<'rate' | 'count'>('rate')
 
   useEffect(() => {
     if (storeGrain && storeGrain !== grain) {
@@ -199,6 +200,20 @@ export default function NcIntelligence(): React.JSX.Element {
               </button>
             ))}
           </div>
+          <div className="seg" style={{ marginLeft: '6px' }}>
+            <button
+              className={`seg-btn${viewMode === 'rate' ? ' active' : ''}`}
+              onClick={() => setViewMode('rate')}
+            >
+              Breach Rate (%)
+            </button>
+            <button
+              className={`seg-btn${viewMode === 'count' ? ' active' : ''}`}
+              onClick={() => setViewMode('count')}
+            >
+              Breach Count (# Cells)
+            </button>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className="module-workspace">{workspace?.name}</span>
@@ -245,12 +260,16 @@ export default function NcIntelligence(): React.JSX.Element {
           </div>
 
           <div className="nc-stat-box" style={{ borderLeft: '3px solid var(--warn)' }}>
-            <span className="nc-stat-label">Non-Compliant</span>
+            <span className="nc-stat-label">{viewMode === 'count' ? 'Breach Cell Count' : 'Non-Compliant Rate'}</span>
             <div className="nc-stat-val" style={{ color: 'var(--warn)' }}>
-              {nc?.ncCells.toLocaleString() ?? '—'}
+              {viewMode === 'count' ? (nc?.ncCells.toLocaleString() ?? '—') : (nc?.ncRate != null ? `${nc.ncRate}%` : '—')}
             </div>
             <div className="nc-stat-sub">
-              <span style={{ fontWeight: 600, color: 'var(--text)' }}>{nc?.ncRate != null ? `${nc.ncRate}%` : '—'}</span> fleet breach rate
+              {viewMode === 'count' ? (
+                <><span style={{ fontWeight: 600, color: 'var(--text)' }}>{nc?.ncRate != null ? `${nc.ncRate}%` : '—'}</span> fleet breach rate</>
+              ) : (
+                <><span style={{ fontWeight: 600, color: 'var(--text)' }}>{nc?.ncCells.toLocaleString() ?? '—'}</span> breaching sectors</>
+              )}
             </div>
           </div>
 

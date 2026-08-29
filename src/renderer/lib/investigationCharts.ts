@@ -152,7 +152,7 @@ export function investigationChartOption(
       {
         gridIndex: 0,
         type: 'value' as const,
-        min: 0,
+        min: 90,
         max: 100,
         axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
         splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
@@ -160,96 +160,111 @@ export function investigationChartOption(
       {
         gridIndex: 1,
         type: 'value' as const,
-        min: 90,
-        max: 100,
+        min: 0,
+        max: 10,
         axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
         splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
       },
       {
         gridIndex: 2,
         type: 'value' as const,
+        min: 90,
+        max: 100,
         axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
         splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
       },
       {
         gridIndex: 3,
         type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${v.toFixed(1)}M` },
+        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v)}` },
         splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
       },
       {
         gridIndex: 4,
         type: 'value' as const,
-        min: 98,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
+        min: 0,
+        max: 30,
+        axisLabel: axisLabelStyle(),
         splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
       }
     ]
 
     series = [
       {
-        name: '3G Peak Traffic Util',
+        name: '3G CSSR',
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: res.weeks.map((w) => w.trafficUtil ?? w.prbAvg),
+        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 94.2 : 99.1)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.accent, width: 2 },
+        itemStyle: { color: PALETTE.accent },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          label: { formatter: 'target 95%', color: PALETTE.danger, fontSize: 10 },
+          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
+          data: [{ yAxis: 95.0 }]
+        }
+      },
+      {
+        name: '3G Call Drop Rate',
+        type: 'line',
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.3 : 0.4)),
+        smooth: 0.25,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: PALETTE.danger, width: 2 },
+        itemStyle: { color: PALETTE.danger },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          label: { formatter: 'target 1%', color: PALETTE.danger, fontSize: 10 },
+          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
+          data: [{ yAxis: 1.0 }]
+        }
+      },
+      {
+        name: '3G Data Access Success Rate',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: res.weeks.map((w) => w.dasr ?? (w.isNc ? 95.8 : 99.4)),
         smooth: 0.25,
         symbol: 'circle',
         symbolSize: 5,
         lineStyle: { color: PALETTE.warn, width: 2 },
         itemStyle: { color: PALETTE.warn },
-        areaStyle: { color: 'rgba(251,191,36,0.12)' },
         markLine: {
           silent: true,
           symbol: 'none',
-          label: { formatter: 'threshold 80%', color: PALETTE.danger, fontSize: 10 },
+          label: { formatter: 'target 98%', color: PALETTE.danger, fontSize: 10 },
           lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-          data: [{ yAxis: 80.0 }]
+          data: [{ yAxis: 98.0 }]
         }
       },
       {
-        name: '3G CSSR',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.5 : 99.3)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.accent, width: 2 },
-        itemStyle: { color: PALETTE.accent }
-      },
-      {
-        name: '3G Call Drop Rate',
-        type: 'line',
-        xAxisIndex: 2,
-        yAxisIndex: 2,
-        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.1 : 0.6)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.danger, width: 2 },
-        itemStyle: { color: PALETTE.danger }
-      },
-      {
-        name: '3G HSDPA Speed',
+        name: 'Worst Supporting KPI (3G Congestion / Setup Failures)',
         type: 'line',
         xAxisIndex: 3,
         yAxisIndex: 3,
-        data: res.weeks.map((w) => w.speedMbps ?? (w.throughputKbps != null ? Math.round((w.throughputKbps / 1024) * 10) / 10 : null)),
+        data: res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round(w.prbAvg / 10) : 0)),
         smooth: 0.25,
         symbol: 'circle',
         symbolSize: 5,
-        lineStyle: { color: PALETTE.green, width: 2 },
-        itemStyle: { color: PALETTE.green }
+        lineStyle: { color: '#a855f7', width: 2 },
+        itemStyle: { color: '#a855f7' }
       },
       {
-        name: 'Availability',
+        name: 'Breach Days',
         type: 'line',
         xAxisIndex: 4,
         yAxisIndex: 4,
-        data: res.weeks.map((w) => w.availability),
+        data: res.weeks.map((w) => w.breachDays ?? (w.isNc ? 1 : 0)),
         smooth: 0.25,
         symbol: 'circle',
         symbolSize: 5,

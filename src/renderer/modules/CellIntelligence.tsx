@@ -47,6 +47,7 @@ export default function CellIntelligence(): React.JSX.Element {
   const [detail, setDetail] = useState<CellDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [kpiCatFilter, setKpiCatFilter] = useState<string>('All')
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const pageSize = 100
@@ -337,20 +338,41 @@ export default function CellIntelligence(): React.JSX.Element {
 
             {detail.kpis.length > 0 && (
               <div className="card drawer-kpis">
-                <div className="drawer-sub">Per-technology KPIs (latest week)</div>
+                <div className="drawer-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span>{selectedTech} Cell KPI Cards (latest week)</span>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    {['All', 'Core', 'Congestion', 'Accessibility', 'Retainability', 'Availability', 'Integrity'].map((cat) => (
+                      <button
+                        key={cat}
+                        className={`btn btn-xs ${kpiCatFilter === cat ? 'btn-primary' : 'btn-ghost'}`}
+                        style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid var(--border)' }}
+                        onClick={() => setKpiCatFilter(cat)}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="kpi-grid">
-                  {detail.kpis.map((k) => (
-                    <div key={k.key} className={`kpi-cell${k.breached ? ' kpi-breached' : ''}`}>
-                      <span className="kpi-grid-label">{k.label}</span>
-                      <span className="kpi-grid-value">
-                        {k.value != null ? `${Number(k.value).toFixed(1)}${k.unit ? ` ${k.unit}` : ''}` : '—'}
-                        {k.breached && ' ⚠'}
-                      </span>
-                      <span className="kpi-grid-target">
-                        target {k.target ?? '—'} · {k.worseIsHigher ? '↑ worse' : '↓ worse'}
-                      </span>
-                    </div>
-                  ))}
+                  {detail.kpis
+                    .filter((k) => {
+                      if (kpiCatFilter === 'All') return true
+                      if (kpiCatFilter === 'Core') return k.breached || k.target != null
+                      if (!k.category) return true
+                      return k.category.toLowerCase().includes(kpiCatFilter.toLowerCase())
+                    })
+                    .map((k) => (
+                      <div key={k.key} className={`kpi-cell${k.breached ? ' kpi-breached' : ''}`}>
+                        <span className="kpi-grid-label">{k.label}</span>
+                        <span className="kpi-grid-value">
+                          {k.value != null ? `${Number(k.value).toFixed(1)}${k.unit ? ` ${k.unit}` : ''}` : '—'}
+                          {k.breached && ' ⚠'}
+                        </span>
+                        <span className="kpi-grid-target">
+                          target {k.target ?? '—'} · {k.worseIsHigher ? '↑ worse' : '↓ worse'}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
@@ -358,7 +380,22 @@ export default function CellIntelligence(): React.JSX.Element {
             {detailLoading ? (
               <p className="card-note">Loading {grain} data…</p>
             ) : detail.weeks.length > 0 ? (
-              <Chart option={cellDetailOption(detail, prbThreshold, grain, selectedTech)} height={480} />
+              <Chart
+                option={cellDetailOption(
+                  detail,
+                  prbThreshold,
+                  grain,
+                  selectedTech,
+                  kpiCatFilter !== 'All'
+                    ? detail.kpis.filter((k) => {
+                        if (kpiCatFilter === 'Core') return k.isCore || k.breached || k.target != null
+                        if (!k.category) return true
+                        return k.category.toLowerCase().includes(kpiCatFilter.toLowerCase())
+                      })
+                    : undefined
+                )}
+                height={540}
+              />
             ) : (
               <p className="card-note">No {grain} history for this cell yet.</p>
             )}

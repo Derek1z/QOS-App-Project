@@ -165,6 +165,7 @@ export default function Overview(): React.JSX.Element {
   const [targetsOpen, setTargetsOpen] = useState(false)
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({ techCards: true, health: true, movement: true, other: true })
   const [movementMode, setMovementMode] = useState<'lifecycle' | 'core_kpis'>('lifecycle')
+  const [kpiViewMode, setKpiViewMode] = useState<'rate' | 'count'>('rate')
   const [activeKpiFilters, setActiveKpiFilters] = useState<string[]>([])
   const s = summary
 
@@ -457,8 +458,24 @@ export default function Overview(): React.JSX.Element {
       {/* Dynamic Available KPI Cards Grid */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
-            {selectedTech} Available Key Performance Indicators ({dynamicKpiCards.length})
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
+              {selectedTech} Key Performance Indicators ({dynamicKpiCards.length})
+            </div>
+            <div className="btn-group" style={{ display: 'inline-flex' }}>
+              <button
+                className={`btn btn-xs ${kpiViewMode === 'rate' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setKpiViewMode('rate')}
+              >
+                Breach Rate (%)
+              </button>
+              <button
+                className={`btn btn-xs ${kpiViewMode === 'count' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setKpiViewMode('count')}
+              >
+                Breach Count (# Cells)
+              </button>
+            </div>
           </div>
           <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
             Prioritized by: Core KPIs → Configured Derived → Other Imported
@@ -547,7 +564,13 @@ export default function Overview(): React.JSX.Element {
 
                 <div className="dynamic-kpi-footer">
                   <div className="dynamic-kpi-nc-stat">
-                    <span>Non-compliant: <b>{k.nonCompliantCellCount}</b> cells ({k.nonCompliantCellPct ?? 0}%)</span>
+                    <span>
+                      {kpiViewMode === 'count' ? (
+                        <>Non-compliant: <b style={{ fontSize: '13px', color: 'var(--danger, #ef4444)' }}>{k.nonCompliantCellCount} cells</b> ({k.nonCompliantCellPct ?? 0}%)</>
+                      ) : (
+                        <>Breach Rate: <b style={{ fontSize: '13px', color: 'var(--danger, #ef4444)' }}>{k.nonCompliantCellPct ?? 0}%</b> ({k.nonCompliantCellCount} cells)</>
+                      )}
+                    </span>
                     {k.persistentNcCount > 0 && (
                       <span style={{ color: 'var(--amber, #f59e0b)', fontWeight: 600 }}>
                         {k.persistentNcCount} persistent

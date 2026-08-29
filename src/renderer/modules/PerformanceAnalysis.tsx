@@ -30,6 +30,16 @@ function Stat({ label, value }: { label: string; value: string }): React.JSX.Ele
   )
 }
 
+export function downsamplePoints<T>(data: T[], maxPoints = 5000): T[] {
+  if (data.length <= maxPoints) return data
+  const step = Math.ceil(data.length / maxPoints)
+  const sampled: T[] = []
+  for (let i = 0; i < data.length; i += step) {
+    sampled.push(data[i])
+  }
+  return sampled
+}
+
 const DEFAULT_SCATTER_PAIRS: Record<Technology, { x: string; y: string }> = {
   '2G': { x: 'gprs_throughput', y: 'call_drop_rate_2g' },
   '3G': { x: 'peak_hour_traffic_utilization_3g', y: 'call_drop_rate_3g' },

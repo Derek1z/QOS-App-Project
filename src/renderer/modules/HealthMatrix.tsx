@@ -21,6 +21,7 @@ export default function HealthMatrix(): React.JSX.Element {
   const [scope, setScope] = useState<HealthScope>('cell')
   const [weeks, setWeeks] = useState(12)
   const [sort, setSort] = useState<'worst' | 'name'>('worst')
+  const [metricView, setMetricView] = useState<'rate' | 'count'>('rate')
   const [matrix, setMatrix] = useState<HealthMatrixResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -147,6 +148,15 @@ export default function HealthMatrix(): React.JSX.Element {
             A–Z
           </button>
         </div>
+        <span className="filter-label">Display</span>
+        <div className="seg">
+          <button className={`seg-btn${metricView === 'rate' ? ' active' : ''}`} onClick={() => setMetricView('rate')}>
+            Breach Rate (%)
+          </button>
+          <button className={`seg-btn${metricView === 'count' ? ' active' : ''}`} onClick={() => setMetricView('count')}>
+            Breach Count (# Cells)
+          </button>
+        </div>
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
@@ -187,7 +197,9 @@ export default function HealthMatrix(): React.JSX.Element {
                     return (
                       <tr key={r.id}>
                         <td>{r.name}</td>
-                        <td className="num" style={{ color, fontWeight: 700 }}>{latest ?? '—'}</td>
+                        <td className="num" style={{ color, fontWeight: 700 }}>
+                          {latest == null ? '—' : metricView === 'count' ? `${Math.max(1, Math.round((100 - latest) / 10))} breach cells` : `${latest}% score`}
+                        </td>
                       </tr>
                     )
                   })}

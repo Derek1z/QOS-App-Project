@@ -179,6 +179,7 @@ export const SCHEMA_SQL: string[] = [
      value DOUBLE,
      PRIMARY KEY (date_id, cell_id, kpi_id)
    )`,
+  `CREATE INDEX IF NOT EXISTS idx_fact_extra_cell_date ON fact_extra_metrics (cell_id, date_id)`,
   `CREATE TABLE IF NOT EXISTS agg_cell_kpi_weekly (
      week_start DATE NOT NULL,
      cell_id BIGINT NOT NULL,
@@ -338,5 +339,31 @@ export const SCHEMA_SQL: string[] = [
      f.value AS min_value,
      1 AS observed_days
    FROM fact_extra_metrics f
-   JOIN dim_date d USING (date_id)`
+   JOIN dim_date d USING (date_id)`,
+
+  `CREATE VIEW IF NOT EXISTS view_cell_kpi_unified_daily AS
+   SELECT
+     d.date AS period_start,
+     c.cell_id,
+     c.name AS cell_name,
+     s.name AS site,
+     dt.name AS district,
+     rg.name AS region,
+     COALESCE(l.is_nc, false) AS is_nc,
+     COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
+     COALESCE(l.severity, 'Normal') AS severity,
+     COALESCE(l.trend, 'Stable') AS trend,
+     f.prb_utilization AS prb_avg,
+     f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+     f.connected_users AS connected_users_sum,
+     f.data_volume_mb AS data_volume_mb_sum,
+     f.availability_pct AS availability_pct_avg,
+     CAST(COALESCE(l.breach_days, 0) AS DOUBLE) AS breach_days
+   FROM fact_cell_daily f
+   JOIN dim_date d ON d.date_id = f.date_id
+   JOIN dim_cell c ON c.cell_id = f.cell_id
+   LEFT JOIN dim_site s ON s.site_id = c.site_id
+   LEFT JOIN dim_district dt ON dt.district_id = c.district_id
+   LEFT JOIN dim_region rg ON rg.region_id = c.region_id
+   LEFT JOIN cell_nc_lifecycle l ON l.cell_id = f.cell_id AND l.period_start = d.date AND l.grain = 'daily'`
 ]

@@ -3,7 +3,7 @@ import type { EChartsOption } from 'echarts'
 import { useAppStore } from '../store'
 import type {
   CompareMetric, CompareScope, CompareSort, CompareView, ComparisonKpi,
-  ComparisonResult, ComparisonType
+  ComparisonResult, ComparisonType, Technology
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { formatCompare, rankingOption, rankRows } from '../lib/comparisonCharts'
@@ -21,14 +21,35 @@ const SCOPES: Array<{ id: CompareScope; label: string }> = [
   { id: 'region', label: 'Region' }
 ]
 
-const METRICS: Array<{ id: CompareMetric; label: string }> = [
-  { id: 'prb', label: 'PRB' },
-  { id: 'throughput', label: 'Speed' },
-  { id: 'users', label: 'Users' },
-  { id: 'volume', label: 'Volume' },
-  { id: 'availability', label: 'Avail.' },
-  { id: 'nc', label: 'NC' }
-]
+const TECH_METRICS: Record<Technology, Array<{ id: CompareMetric; label: string }>> = {
+  '4G': [
+    { id: 'prb', label: 'PRB' },
+    { id: 'throughput', label: 'Speed' },
+    { id: 'users', label: 'Users' },
+    { id: 'volume', label: 'Volume' },
+    { id: 'availability', label: 'Avail.' },
+    { id: 'nc', label: 'NC' }
+  ],
+  '3G': [
+    { id: 'cssr_3g', label: '3G CSSR' },
+    { id: 'call_drop_3g', label: '3G CDR' },
+    { id: 'data_access_3g', label: '3G DASR' },
+    { id: 'dl_power_cong_3g', label: 'DL Power Cong' },
+    { id: 'ul_ce_cong_3g', label: 'UL CE Cong' },
+    { id: 'throughput', label: 'HSDPA Speed' },
+    { id: 'availability', label: '3G Avail.' },
+    { id: 'nc', label: 'NC' }
+  ],
+  '2G': [
+    { id: 'tch_congestion', label: 'TCH Cong' },
+    { id: 'sdcch_congestion', label: 'SDCCH Cong' },
+    { id: 'cssr_2g', label: 'Voice CSSR' },
+    { id: 'call_drop_2g', label: 'Call Drop Rate' },
+    { id: 'throughput', label: 'GPRS Speed' },
+    { id: 'availability', label: '2G Avail.' },
+    { id: 'nc', label: 'NC' }
+  ]
+}
 
 const VIEWS: Array<{ id: CompareView; label: string }> = [
   { id: 'actual', label: 'Actual' },
@@ -97,6 +118,15 @@ export default function ComparisonLab(): React.JSX.Element {
   const [result, setResult] = useState<ComparisonResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const tech = workspace?.technology ?? '4G'
+  const metrics = TECH_METRICS[tech] ?? TECH_METRICS['4G']
+
+  useEffect(() => {
+    if (!metrics.some((m) => m.id === metric)) {
+      setMetric(metrics[0].id)
+    }
+  }, [tech, metrics, metric])
 
   useEffect(() => {
     let alive = true
@@ -180,7 +210,7 @@ export default function ComparisonLab(): React.JSX.Element {
           </div>
         )}
         <div className="seg">
-          {METRICS.map((m) => (
+          {metrics.map((m) => (
             <button
               key={m.id}
               className={`seg-btn${metric === m.id ? ' active' : ''}`}
@@ -226,7 +256,7 @@ export default function ComparisonLab(): React.JSX.Element {
             <div className="card-head-row">
               <h3>
                 Difference ranking —{' '}
-                {metric === 'nc' ? 'NC cells' : METRICS.find((m) => m.id === metric)?.label}
+                {metric === 'nc' ? 'NC cells' : metrics.find((m) => m.id === metric)?.label}
               </h3>
               <span className="card-note">
                 {type === 'period'

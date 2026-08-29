@@ -130,7 +130,8 @@ export default function SimulationLab(): React.JSX.Element {
 
     if (tech === '4G') {
       // 4G LTE Mathematical Model
-      let spectralGain = (baseBwMHz + deltaBwMHz) / baseBwMHz
+      const safeBaseBw = Math.max(1, baseBwMHz)
+      let spectralGain = (safeBaseBw + deltaBwMHz) / safeBaseBw
       if (enableCA) spectralGain *= 1.30 // CA 2CC/3CC ~30% scheduling gain
       if (mimoMode === '4x4') spectralGain *= 1.35 // 4x4 MIMO ~35%
       else if (mimoMode === 'massive_32t32r') spectralGain *= 1.70 // 32T32R Massive MIMO ~70%

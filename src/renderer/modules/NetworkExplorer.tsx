@@ -141,9 +141,14 @@ export default function NetworkExplorer(): React.JSX.Element {
   const togglePin = useAppStore((s) => s.togglePin)
   const isPinned = useAppStore((s) => s.isPinned)
   const setModule = useAppStore((s) => s.setModule)
-  const [level, setLevel] = useState<ExplorerLevel>('region')
-  const [parentId, setParentId] = useState<number | null>(null)
-  const [q, setQ] = useState('')
+  const explorerState = useAppStore((s) => s.explorerState)
+  const setExplorerState = useAppStore((s) => s.setExplorerState)
+  const level = explorerState.level
+  const parentId = explorerState.parentId
+  const q = explorerState.search
+  const setLevel = (l: ExplorerLevel) => setExplorerState({ level: l })
+  const setParentId = (p: number | null) => setExplorerState({ parentId: p })
+  const setQ = (s: string) => setExplorerState({ search: s })
   const [result, setResult] = useState<ExplorerResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -245,12 +250,36 @@ export default function NetworkExplorer(): React.JSX.Element {
     }
   }
 
-  const nodes = result?.nodes ?? []
+  const [statusFilter, setStatusFilter] = useState<'all' | 'nc' | 'healthy' | 'critical'>('all')
+
+  const nodes = (result?.nodes ?? []).filter((n) => {
+    if (statusFilter === 'nc') return n.ncCells > 0 || n.lifecycle === 'New NC' || n.lifecycle === 'Recurring NC' || n.lifecycle === 'Persistent NC'
+    if (statusFilter === 'healthy') return n.ncCells === 0 && (n.lifecycle == null || n.lifecycle === 'Healthy')
+    if (statusFilter === 'critical') return n.severity === 'Critical' || n.priorityBand === 'Critical' || (n.healthScore != null && n.healthScore < 65)
+    return true
+  })
   const isCellLevel = level === 'cell'
   const is4G = selectedTech === '4G'
   const is3G = selectedTech === '3G'
 
   const analytics = detail ? computeCellAnalytics(detail, prbThreshold, grain, selectedTech) : null
+
+  // Compute summary stats over visible nodes
+  const totalNodesCount = result?.nodes?.length ?? 0
+  const totalCellsCount = result?.totalCells ?? 0
+  const ncCellsCount = result?.ncCells ?? 0
+  const ncPct = totalCellsCount > 0 ? ((ncCellsCount / totalCellsCount) * 100).toFixed(1) : '0.0'
+  const avgHealth =
+    totalNodesCount > 0
+      ? (
+          (result?.nodes ?? []).reduce((acc, curr) => acc + (curr.healthScore ?? 100), 0) / totalNodesCount
+        ).toFixed(1)
+      : '100'
+  const totalVolume = (result?.nodes ?? []).reduce((acc, curr) => acc + (curr.volumeMb ?? 0), 0)
+  const avgSpeed =
+    totalNodesCount > 0
+      ? (result?.nodes ?? []).reduce((acc, curr) => acc + (curr.throughputKbps ?? 0), 0) / totalNodesCount
+      : 0
 
   return (
     <div className="module">
@@ -259,13 +288,50 @@ export default function NetworkExplorer(): React.JSX.Element {
         <span className="module-workspace">{workspace?.name}</span>
         {result && (
           <span className="module-workspace">
-            {nodes.length.toLocaleString()} {LEVEL_LABEL[level].toLowerCase()}
-            {result.ncCells > 0 ? `s · ${result.ncCells.toLocaleString()} NC` : 's'} · {result.totalCells.toLocaleString()} cells
+            {totalNodesCount.toLocaleString()} {LEVEL_LABEL[level].toLowerCase()}s · {totalCellsCount.toLocaleString()} cells
           </span>
         )}
       </div>
 
-      <div className="row-actions filter-row">
+      {result && (
+        <div className="card-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '16px' }}>
+          <div className="kpi-card">
+            <span className="kpi-label">{LEVEL_LABEL[level]} Inventory ({selectedTech})</span>
+            <span className="kpi-value">{totalNodesCount.toLocaleString()}</span>
+            <span className="kpi-sub">Total {LEVEL_LABEL[level].toLowerCase()}s in scope</span>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Average Health Score</span>
+            <span className="kpi-value" style={{ color: healthColor(Number(avgHealth)) }}>
+              {avgHealth} <span style={{ fontSize: '13px', color: 'var(--text-dim)' }}>/ 100</span>
+            </span>
+            <div className="health-bar" style={{ marginTop: '6px' }}>
+              <div
+                className="health-fill"
+                style={{ width: `${Math.min(100, Math.max(0, Number(avgHealth)))}%`, background: healthColor(Number(avgHealth)) }}
+              />
+            </div>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Non-Compliant Ratio</span>
+            <span className="kpi-value" style={{ color: ncCellsCount > 0 ? 'var(--danger)' : 'var(--green)' }}>
+              {ncCellsCount.toLocaleString()} <span style={{ fontSize: '13px', color: 'var(--text-dim)' }}>({ncPct}%)</span>
+            </span>
+            <span className="kpi-sub">{ncCellsCount > 0 ? `${ncCellsCount} cells requiring intervention` : 'All cells compliant'}</span>
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Payload & Speed</span>
+            <span className="kpi-value">
+              {totalVolume >= 1024 * 1024
+                ? `${(totalVolume / (1024 * 1024)).toFixed(1)} TB`
+                : `${(totalVolume / 1024).toFixed(1)} GB`}
+            </span>
+            <span className="kpi-sub">Avg Throughput: {(avgSpeed / 1024).toFixed(1)} Mbps</span>
+          </div>
+        </div>
+      )}
+
+      <div className="row-actions filter-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <nav className="crumbs" aria-label="Hierarchy">
           <button className={`crumb${level === 'region' ? ' crumb-current' : ''}`} onClick={() => { setQ(''); setLevel('region'); setParentId(null) }}>
             Network
@@ -280,48 +346,72 @@ export default function NetworkExplorer(): React.JSX.Element {
             </span>
           ))}
         </nav>
-        <input
-          className="input"
-          placeholder={`Search ${LEVEL_LABEL[level].toLowerCase()}s…`}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
+
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="btn-group" style={{ display: 'flex', gap: '4px' }}>
+            {(
+              [
+                ['all', 'All'],
+                ['nc', 'NC Only'],
+                ['healthy', 'Healthy'],
+                ['critical', 'Critical']
+              ] as const
+            ).map(([fKey, fLabel]) => (
+              <button
+                key={fKey}
+                className={`btn btn-xs ${statusFilter === fKey ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11px', padding: '3px 10px', border: '1px solid var(--border)' }}
+                onClick={() => setStatusFilter(fKey)}
+              >
+                {fLabel}
+              </button>
+            ))}
+          </div>
+
+          <input
+            className="input"
+            style={{ width: '220px' }}
+            placeholder={`Search ${LEVEL_LABEL[level].toLowerCase()}s…`}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
       {loading && !result && <div className="notice">Loading {LEVEL_LABEL[level].toLowerCase()}s…</div>}
       {!loading && !error && nodes.length === 0 && (
         <div className="notice">
-          {q ? 'No matches — try a different search.' : 'Nothing here yet — import data first.'}
+          {q || statusFilter !== 'all' ? 'No matches — try adjusting search or status filters.' : 'Nothing here yet — import data first.'}
         </div>
       )}
 
       {nodes.length > 0 && (
-        <div className="card">
+        <div className="card" style={{ width: '100%' }}>
           <div className="preview-scroll">
-            <table className="data-table">
+            <table className="data-table" style={{ width: '100%' }}>
               <thead>
                 <tr>
-                  <th>{LEVEL_LABEL[level]}</th>
-                  <th>Health</th>
-                  <th>NC</th>
+                  <th style={{ width: '24%' }}>{LEVEL_LABEL[level]} Asset Name</th>
+                  <th style={{ width: '14%' }}>Health Score</th>
+                  <th style={{ width: '10%' }}>NC Ratio</th>
                   {isCellLevel && (
                     <>
-                      <th>Lifecycle</th>
-                      <th>Severity</th>
-                      <th>Priority</th>
+                      <th style={{ width: '12%' }}>Lifecycle</th>
+                      <th style={{ width: '10%' }}>Severity</th>
+                      <th style={{ width: '8%' }}>Priority</th>
                     </>
                   )}
-                  <th>{is4G ? 'PRB' : is3G ? '3G Util' : 'TCH Cong'}</th>
-                  <th>Speed</th>
+                  <th>{is4G ? 'PRB Util' : is3G ? '3G Util' : 'TCH Cong'}</th>
+                  <th>Throughput</th>
                   {is4G && (
                     <>
-                      <th>Users</th>
-                      <th>Vol</th>
+                      <th>Active Users</th>
+                      <th>Data Payload</th>
                     </>
                   )}
-                  <th>Avail</th>
-                  {!is4G && <th>Breach Count</th>}
+                  <th>Availability</th>
+                  <th style={{ textAlign: 'right', width: '10%' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -333,16 +423,16 @@ export default function NetworkExplorer(): React.JSX.Element {
                     title={isCellLevel ? 'Open cell detail' : `Drill into ${n.name}`}
                   >
                     <td>
-                      <span className="node-name">
-                        {!isCellLevel && <span className="node-chevron">›</span>}
+                      <span className="node-name" style={{ fontWeight: 600, color: 'var(--text)' }}>
+                        {!isCellLevel && <span className="node-chevron" style={{ marginRight: '6px', color: 'var(--accent)' }}>›</span>}
                         {n.name}
                       </span>
                     </td>
                     <td>
                       <div className="health-cell">
-                        <span style={{ color: healthColor(n.healthScore), fontWeight: 700 }}>{n.healthScore ?? '—'}</span>
+                        <span style={{ color: healthColor(n.healthScore), fontWeight: 700, minWidth: '32px' }}>{n.healthScore ?? '—'}</span>
                         {n.healthScore != null && (
-                          <div className="health-bar">
+                          <div className="health-bar" style={{ flex: 1 }}>
                             <div
                               className="health-fill"
                               style={{ width: `${n.healthScore}%`, background: healthColor(n.healthScore) }}
@@ -353,7 +443,7 @@ export default function NetworkExplorer(): React.JSX.Element {
                     </td>
                     <td>
                       {n.ncCells > 0 ? (
-                        <span className="nc-count" style={{ color: 'var(--danger)' }}>
+                        <span className="nc-count" style={{ color: 'var(--danger)', fontWeight: 700 }}>
                           {n.ncCells}
                           {n.cells > 1 ? ` / ${n.cells}` : ''}
                         </span>
@@ -365,12 +455,12 @@ export default function NetworkExplorer(): React.JSX.Element {
                       <>
                         <td>
                           <Chip
-                            text={n.lifecycle ?? '—'}
+                            text={n.lifecycle ?? 'Healthy'}
                             tone={n.lifecycle === 'Persistent NC' ? 'bad' : n.lifecycle === 'Recurring NC' ? 'warn' : n.lifecycle === 'New NC' ? 'ok' : 'dim'}
                           />
                         </td>
                         <td>
-                          <Chip text={n.severity ?? '—'} tone={n.severity === 'Critical' ? 'bad' : n.severity === 'High' ? 'warn' : 'dim'} />
+                          <Chip text={n.severity ?? 'Normal'} tone={n.severity === 'Critical' ? 'bad' : n.severity === 'High' ? 'warn' : 'dim'} />
                         </td>
                         <td>
                           {n.priorityScore != null ? (
@@ -383,7 +473,7 @@ export default function NetworkExplorer(): React.JSX.Element {
                         </td>
                       </>
                     )}
-                    <td>{fmtPct(n.prbAvg)}</td>
+                    <td style={{ fontWeight: 600 }}>{fmtPct(n.prbAvg)}</td>
                     <td>{fmtMbps(n.throughputKbps)}</td>
                     {is4G && (
                       <>
@@ -391,8 +481,19 @@ export default function NetworkExplorer(): React.JSX.Element {
                         <td>{fmtG(n.volumeMb)}</td>
                       </>
                     )}
-                    <td>{fmtPct(n.availability)}</td>
-                    {!is4G && <td>{n.ncCells > 0 ? n.ncCells : '0'}</td>}
+                    <td style={{ color: n.availability != null && n.availability < 98 ? 'var(--warn)' : 'var(--text)' }}>{fmtPct(n.availability)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        className="btn btn-xs btn-ghost"
+                        style={{ border: '1px solid var(--border)', fontSize: '11px', padding: '2px 8px' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void (isCellLevel ? openDetail(n) : drill(n))
+                        }}
+                      >
+                        {isCellLevel ? 'Inspect ↗' : 'Drill ›'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -3620,7 +3620,7 @@ function demoWorkspaceInfo(): WorkspaceInfo {
     path: 'C:\\Demo\\workspaces\\Preview_Network.qosdb',
     name: demoWorkspaceName + ' (browser demo)',
     readOnly: false,
-    schemaVersion: '0.1.0',
+    schemaVersion: '1.0.0',
     createdAt: new Date().toISOString(),
     sizeBytes: 48_000_000 + demoFacts.length * 200,
     rowCount: BASELINE.rowCount + demoFacts.length,

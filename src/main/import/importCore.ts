@@ -375,27 +375,20 @@ async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
   const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
   if (Number(r.getRowObjects()[0].n) === 0) return
 
-  const kpis = await conn.runAndReadAll(`SELECT kpi_id, kpi_key FROM kpi_defs`)
-  const kpiList = kpis.getRowObjects()
-  if (kpiList.length === 0) return
-
-  for (const k of kpiList) {
-    const kpiId = Number(k.kpi_id)
-    const kpiKey = String(k.kpi_key).replace(/'/g, "''")
-    await conn.run(`
-      INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
-      SELECT s.date_id, c.cell_id, ${kpiId}, try_cast(json_extract_string(s.kpi_json, '$.${kpiKey}') AS DOUBLE)
-      FROM stg_clean s
-      JOIN dim_cell c ON c.name = s.cell_name
-      WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
-        AND json_extract_string(s.kpi_json, '$.${kpiKey}') IS NOT NULL
-        AND try_cast(json_extract_string(s.kpi_json, '$.${kpiKey}') AS DOUBLE) IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM fact_extra_metrics f
-          WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = ${kpiId}
-        )
-    `)
-  }
+  await conn.run(`
+    INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
+    SELECT s.date_id, c.cell_id, k.kpi_id, try_cast(json_extract_string(s.kpi_json, '$.' || kv.k_key) AS DOUBLE)
+    FROM stg_clean s
+    JOIN dim_cell c ON c.name = s.cell_name
+    CROSS JOIN UNNEST(json_keys(s.kpi_json)) AS kv(k_key)
+    JOIN kpi_defs k ON k.kpi_key = kv.k_key
+    WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.rn = 1
+      AND try_cast(json_extract_string(s.kpi_json, '$.' || kv.k_key) AS DOUBLE) IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM fact_extra_metrics f
+        WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = k.kpi_id
+      )
+  `)
 }
 
 async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
@@ -652,7 +645,7 @@ async function runImportCoreInner(
         duplicatesIgnored,
         rejectedRows,
         job.fingerprint,
-        '0.1.0',
+        '1.0.0',
         JSON.stringify(issues),
         job.checksum,
         job.dbBefore,
@@ -661,6 +654,11 @@ async function runImportCoreInner(
     )
     await saveProfileConn(conn, job.fingerprint, mapping, Math.min(1, job.confidence + 0.05))
     rotateBackups(job.workspaceName, job.backupDir)
+    try {
+      await conn.run('CHECKPOINT')
+    } catch {
+      /* ignore */
+    }
 
     return {
       importId, filename: basename(path), sourceRows: staged + csvRejects,

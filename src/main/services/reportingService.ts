@@ -45,7 +45,7 @@ interface SectionData {
 type SectionBuilder = () => Promise<SectionTable>
 
 const fmt = (v: number | null | undefined, unit = '', digits = 1): string =>
-  v == null ? '—' : `${Number(v).toFixed(digits)}${unit}`
+  v == null || !Number.isFinite(Number(v)) ? '—' : `${Number(v).toFixed(digits)}${unit}`
 
 /** KPI columns present across the row set, in first-seen order (spec §54a). */
 function kpiColumnDefs(rows: CellIntelligenceRow[]): CellKpiValue[] {

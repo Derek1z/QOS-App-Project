@@ -54,6 +54,16 @@ interface AppStore {
   pinned: PinnedItem[]
   compareCellIds: [number, number] | null
   investigationTarget: { scope: 'cell' | 'site' | 'district' | 'region'; id: number; name: string; path: string[] } | null
+  technologyId: number
+  primaryKpiId: number | null
+  supportingKpiIds: number[]
+  reportingRange: string
+  targetsModalOpen: boolean
+  setTechnologyId(id: number): void
+  setPrimaryKpiId(id: number | null): void
+  setSupportingKpiIds(ids: number[]): void
+  setReportingRange(range: string): void
+  setTargetsModalOpen(open: boolean): void
   explorerState: { level: 'region' | 'district' | 'site' | 'cell'; parentId: number | null; search: string }
   setExplorerState: (state: Partial<{ level: 'region' | 'district' | 'site' | 'cell'; parentId: number | null; search: string }>) => void
   setModule(m: ModuleId): void
@@ -89,12 +99,32 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pinned: loadPinned(),
   compareCellIds: null,
   investigationTarget: null,
+  technologyId: 4, // Default: 4G
+  primaryKpiId: null,
+  supportingKpiIds: [],
+  reportingRange: '7r',
+  targetsModalOpen: false,
+  setTechnologyId: (technologyId) => {
+    const techName: Technology = technologyId === 2 ? '2G' : technologyId === 3 ? '3G' : '4G'
+    set({ technologyId, selectedTech: techName, primaryKpiId: null })
+  },
+  setPrimaryKpiId: (primaryKpiId) => set({ primaryKpiId }),
+  setSupportingKpiIds: (supportingKpiIds) => set({ supportingKpiIds }),
+  setReportingRange: (reportingRange) => set({ reportingRange }),
+  setTargetsModalOpen: (targetsModalOpen) => set({ targetsModalOpen }),
   explorerState: { level: 'region', parentId: null, search: '' },
   setExplorerState: (state) =>
     set((s) => ({ explorerState: { ...s.explorerState, ...state } })),
   setModule: (module) => set({ module }),
-  setWorkspace: (workspace) => set({ workspace, selectedTech: workspace?.technology ?? '4G' }),
-  setSelectedTech: (selectedTech) => set({ selectedTech }),
+  setWorkspace: (workspace) => set({
+    workspace,
+    selectedTech: workspace?.technology ?? '4G',
+    technologyId: workspace?.technology === '2G' ? 2 : workspace?.technology === '3G' ? 3 : 4
+  }),
+  setSelectedTech: (selectedTech) => {
+    const techId = selectedTech === '2G' ? 2 : selectedTech === '3G' ? 3 : 4
+    set({ selectedTech, technologyId: techId })
+  },
   setSummary: (summary) => set({ summary }),
   setRecent: (recent) => set({ recent }),
   setPeriod: (period) => set({ period }),

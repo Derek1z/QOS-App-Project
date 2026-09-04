@@ -27,6 +27,7 @@ import {
   rawArchive, purgeRawArchive, isImportBusy
 } from './import/importer'
 import { isExcelPath, excelToCsvFile } from './import/excel'
+import { inspectExcelSheets } from './import/excelSheetParser'
 import {
   createSnapshot, listSnapshots, restoreSnapshot, removeSnapshot, compareSnapshots
 } from './services/snapshotService'
@@ -246,6 +247,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('import:archive', () => rawArchive())
   ipcMain.handle('import:purgeArchive', () => purgeRawArchive())
 
+  ipcMain.handle('import:inspect-excel', (_e, filePath: string) => inspectExcelSheets(filePath))
   ipcMain.handle('import:geoStats', (_e, id: string, mapping: MappingConfig) =>
     geoStats(id, mapping))
   ipcMain.handle('import:exportCsv', async (_e, sourcePath: string) => {

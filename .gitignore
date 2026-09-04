@@ -13,3 +13,5 @@ app_state.json
 release/
 *.tmp
 win-unpacked/
+.gemini/
+graphify-out/

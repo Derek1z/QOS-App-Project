@@ -113,6 +113,8 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const [checklist, setChecklist] = useState<Record<string, boolean>>({})
   const [activeTab, setActiveTab] = useState<'evidence' | 'rca' | 'peers' | 'workflow'>('evidence')
+  const [rcaModalOpen, setRcaModalOpen] = useState(false)
+  const [expandedRcaHypothesis, setExpandedRcaHypothesis] = useState<any | null>(null)
 
   // Dropdown overlay state: closed by default
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -807,9 +809,20 @@ export default function InvestigationWorkspace(): React.JSX.Element {
                     <div className="card">
                       <div className="card-head-row">
                         <h3>Root Cause Probability &amp; Hypothesis Weight Distribution</h3>
-                        <span className="card-note">Relative diagnostic score contribution</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span className="card-note">Click chart to expand drill-down breakdown</span>
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => setRcaModalOpen(true)}
+                            style={{ fontSize: '11px', padding: '3px 10px', background: 'var(--bg-3)', color: '#38bdf8', border: '1px solid var(--border)' }}
+                          >
+                            🔍 Expand RCA Drill-Down
+                          </button>
+                        </div>
                       </div>
-                      <Chart option={rcaDonutOption} height={260} />
+                      <div onClick={() => setRcaModalOpen(true)} style={{ cursor: 'pointer' }} title="Click to expand detailed RCA drill-down">
+                        <Chart option={rcaDonutOption} height={260} />
+                      </div>
                     </div>
                   )}
                 </>
@@ -1073,6 +1086,125 @@ export default function InvestigationWorkspace(): React.JSX.Element {
                     {copied ? 'Copied to Clipboard!' : 'Copy Markdown'}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+          {/* Expandable RCA Donut Drill-Down Modal */}
+          {rcaModalOpen && (
+            <div
+              className="modal-backdrop"
+              onClick={() => setRcaModalOpen(false)}
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(15, 23, 42, 0.8)',
+                backdropFilter: 'blur(6px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000,
+                padding: '20px'
+              }}
+            >
+              <div
+                className="modal-card"
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '16px',
+                  maxWidth: '860px',
+                  width: '100%',
+                  maxHeight: '85vh',
+                  overflowY: 'auto',
+                  padding: '24px',
+                  boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '20px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                      🔬 Expanded Root Cause Analysis (RCA) Drill-Down
+                    </h2>
+                    <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                      {selected?.name} ({scope.toUpperCase()}) · {tech} Network Diagnostic Matrix
+                    </span>
+                  </div>
+                  <button className="btn btn-sm btn-ghost" onClick={() => setRcaModalOpen(false)}>
+                    ✕ Close
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
+                      Diagnostic Weight Distribution
+                    </h4>
+                    {rcaDonutOption && <Chart option={rcaDonutOption} height={280} />}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <h4 style={{ margin: '0 0 4px 0', fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
+                      Root Cause Hypotheses (Click to inspect)
+                    </h4>
+                    {result?.hypotheses.map((h) => (
+                      <div
+                        key={h.id}
+                        onClick={() => setExpandedRcaHypothesis(h)}
+                        style={{
+                          background: expandedRcaHypothesis?.id === h.id ? 'rgba(56, 189, 248, 0.15)' : 'var(--bg-3)',
+                          border: expandedRcaHypothesis?.id === h.id ? '1px solid #38bdf8' : '1px solid var(--border)',
+                          borderRadius: '8px',
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>{h.title}</span>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: h.score >= 70 ? '#f87171' : '#38bdf8' }}>
+                            {h.score}%
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                          Verdict: <b style={{ color: h.verdict === 'consistent' ? '#f87171' : '#34d399' }}>{h.verdict}</b> · {h.supporting.length} supporting indicator(s)
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {expandedRcaHypothesis && (
+                  <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px' }}>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: 700, color: '#38bdf8' }}>
+                      Detailed Telemetry Findings for: {expandedRcaHypothesis.title}
+                    </h4>
+                    <div style={{ fontSize: '12px', color: 'var(--text)', marginBottom: '8px' }}>
+                      <b>Supporting Evidence Indicators:</b>
+                      <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                        {expandedRcaHypothesis.supporting.map((s: string, idx: number) => (
+                          <li key={idx} style={{ color: '#f87171', marginBottom: '2px' }}>✓ {s}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    {expandedRcaHypothesis.recommendations && (
+                      <div style={{ fontSize: '12px', color: 'var(--text)', marginTop: '8px' }}>
+                        <b>Recommended Remediation Actions:</b>
+                        <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                          {expandedRcaHypothesis.recommendations.map((r: string, idx: number) => (
+                            <li key={idx} style={{ color: '#34d399', marginBottom: '2px' }}>→ {r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

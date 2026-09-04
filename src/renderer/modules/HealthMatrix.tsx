@@ -5,6 +5,8 @@ import type { HealthMatrixResult, HealthScope } from '../../../shared/api'
 import Chart, { PALETTE, tooltipStyle, axisLabelStyle } from '../lib/Chart'
 import { formatTimeLabel } from '../lib/overviewCharts'
 
+import GhanaMap from './GhanaMap'
+
 const SCOPES: Array<{ id: HealthScope; label: string }> = [
   { id: 'cell', label: 'Cell' },
   { id: 'site', label: 'Site' },
@@ -172,6 +174,15 @@ export default function HealthMatrix(): React.JSX.Element {
         </div>
       ) : (
         <>
+          {/* Geographic Ghana Choropleth Map */}
+          <div className="card">
+            <div className="card-head-row">
+              <h3>Ghana Regional &amp; District Health Choropleth Map</h3>
+              <span className="card-note">Interactive geographic compliance score gradients across Ghana</span>
+            </div>
+            <GhanaMap />
+          </div>
+
           <div className="card">
             <Chart option={option} height={height} />
             <p className="card-note">

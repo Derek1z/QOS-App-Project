@@ -27,9 +27,9 @@ export default function StatusBar(): React.JSX.Element {
       <span className="status-grain">Grain: {grain}</span>
       <span className="status-spacer" />
       {error && <span className="status-error">⚠ {error}</span>}
-      <span>DuckDB · offline</span>
+      <span>DuckDB · v2.0 Engine</span>
       <span className="status-sep">·</span>
-      <span>v1.0.0</span>
+      <span>v2.0.0</span>
       <span className="status-credit">Developed by Derrick Baalaboore ™</span>
     </footer>
   )

@@ -25,7 +25,8 @@ const api: Api = {
     archive: () => ipcRenderer.invoke('import:archive'),
     purgeArchive: () => ipcRenderer.invoke('import:purgeArchive'),
     exportCsv: (sourcePath: string) => ipcRenderer.invoke('import:exportCsv', sourcePath),
-    geoStats: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:geoStats', id, mapping)
+    geoStats: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:geoStats', id, mapping),
+    inspectExcel: (filePath: string) => ipcRenderer.invoke('import:inspect-excel', filePath)
   },
   workspace: {
     listRecent: () => ipcRenderer.invoke('workspace:listRecent'),

@@ -8,6 +8,7 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "test": "vitest run",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "icon": "node scripts/generate-icon.cjs",
@@ -65,6 +66,7 @@
     "pptxgenjs": "^4.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
   },
@@ -81,6 +83,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^5.0.0"
   }
 }

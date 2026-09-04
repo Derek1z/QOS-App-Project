@@ -5,9 +5,10 @@ import type {
   FileAnalysis, MappingConfig, PreviewResult, ImportResult,
   ImportAuditRow, CoverageRow, QualityRow, CanonicalField, ValidationIssue, ImportProgress,
   RawArchiveResult, MaintenanceAction, MaintenanceResult,
-  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition, GeoStatsResult
+  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition, GeoStatsResult, SheetInfo
 } from '../../../shared/api'
 import { FIELD_LABELS, FIELD_ORDER } from '../../../shared/api'
+import { SheetSelectorModal } from '../components/SheetSelectorModal'
 
 type Tab = 'import' | 'coverage' | 'audit' | 'quality' | 'archive' | 'maintenance'
 
@@ -100,8 +101,30 @@ export default function DataManager(): React.JSX.Element {
   const [schedBusy, setSchedBusy] = useState(false)
   const [syntheticBusy, setSyntheticBusy] = useState(false)
   const [elapsedSec, setElapsedSec] = useState(0)
+  const [excelModalOpen, setExcelModalOpen] = useState(false)
+  const [excelModalFile, setExcelModalFile] = useState<string>('')
+  const [excelSheets, setExcelSheets] = useState<SheetInfo[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  async function handleFileSelection(paths: string[]): Promise<void> {
+    if (!paths.length) return
+    const excelPaths = paths.filter((p) => /\.(xlsx|xls)$/i.test(p))
+    if (excelPaths.length > 0) {
+      try {
+        const sheets = await window.api.imports.inspectExcel(excelPaths[0])
+        if (sheets.length > 0) {
+          setExcelSheets(sheets)
+          setExcelModalFile(excelPaths[0])
+          setExcelModalOpen(true)
+          return
+        }
+      } catch {
+        /* fallback */
+      }
+    }
+    void analyze(paths)
+  }
 
   async function generateSynthetic(tech?: '2G' | '3G' | '4G'): Promise<void> {
     setSyntheticBusy(true)
@@ -847,7 +870,7 @@ export default function DataManager(): React.JSX.Element {
                 e.preventDefault()
                 setDragOver(false)
                 const paths = Array.from(e.dataTransfer.files).map((f) => window.api.files.path(f))
-                void analyze(paths)
+                void handleFileSelection(paths)
               }}
             >
               <div className="dropzone-inner">
@@ -895,7 +918,7 @@ export default function DataManager(): React.JSX.Element {
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const paths = Array.from(e.target.files ?? []).map((f) => window.api.files.path(f))
-                    void analyze(paths)
+                    void handleFileSelection(paths)
                     e.target.value = ''
                   }}
                 />
@@ -1732,6 +1755,17 @@ export default function DataManager(): React.JSX.Element {
           )}
         </div>
       )}
+
+      <SheetSelectorModal
+        fileName={excelModalFile}
+        sheets={excelSheets}
+        isOpen={excelModalOpen}
+        onClose={() => setExcelModalOpen(false)}
+        onConfirm={() => {
+          setExcelModalOpen(false)
+          void analyze([excelModalFile])
+        }}
+      />
     </div>
   )
 }

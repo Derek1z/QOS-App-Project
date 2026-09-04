@@ -89,9 +89,9 @@ export default function Welcome(): React.JSX.Element {
         <div className="welcome-logo" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
           <AppLogo size={72} />
         </div>
-        <h1>2G/3G/4G QoS Network Intelligence</h1>
+        <h1>QoS Network Intelligence v2.0</h1>
         <p>
-          Portable telecom QoS analytics workstation. Open a <code>.qosdb</code> workspace or create
+          Multi-technology 2G/3G/4G telecom QoS analytics workstation. Open a <code>.qosdb</code> workspace or create
           a new one to begin.
         </p>
       </div>

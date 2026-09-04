@@ -1569,6 +1569,14 @@ export interface SyntheticGenerateResult {
   injectedFaultsCount: number
 }
 
+export interface SheetInfo {
+  name: string
+  rowCount: number
+  headers: string[]
+  sampleRows: string[][]
+  detectedTech: '2G' | '3G' | '4G' | 'Unknown'
+}
+
 /** Progress event streamed from the import worker while a CSV is being staged,
  *  validated, merged and re-aggregated (M5 background-import hardening). */
 export interface ImportProgress {
@@ -1596,6 +1604,8 @@ export interface Api {
     exportCsv(sourcePath: string): Promise<{ path: string } | null>
     /** geo-field match stats against the workspace dimensions (spec §13 mapping) */
     geoStats(id: string, mapping: MappingConfig): Promise<GeoStatsResult | null>
+    /** inspect sheet names, row counts, and previews for an Excel workbook */
+    inspectExcel(filePath: string): Promise<SheetInfo[]>
   }
   workspace: {
     listRecent(): Promise<RecentWorkspace[]>

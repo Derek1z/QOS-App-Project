@@ -81,52 +81,10 @@ export default function CommandBar(): React.JSX.Element {
   return (
     <header className="bar">
       <div className="bar-left">
-        <span className="bar-workspace" title={workspace?.path}>
-          {workspace ? workspace.name : 'No workspace'}
+        <span className="bar-workspace" title={workspace?.path} style={{ fontWeight: 600, fontSize: '0.95rem' }}>
+          {workspace ? workspace.name : 'QoS Network Intelligence Workstation v2.0'}
           {workspace?.readOnly && <span className="badge badge-ro">READ ONLY</span>}
         </span>
-        <div className="seg tech-seg" title="Switch technology — analysis uses that technology's imported KPI columns">
-          {TECHS.map((t) => (
-            <button
-              key={t}
-              className={`seg-btn${workspace?.technology === t ? ' active' : ''}`}
-              disabled={!workspace || workspace.readOnly || switching}
-              onClick={() => void switchTech(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <select
-          className="sel"
-          value={period}
-          disabled={!workspace}
-          onChange={(e) => {
-            setPeriod(e.target.value as PeriodId)
-            emit('PERIOD_CHANGED')
-          }}
-        >
-          {PERIODS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-        <div className="seg">
-          {GRAINS.map((g) => (
-            <button
-              key={g}
-              className={`seg-btn${grain === g ? ' active' : ''}`}
-              disabled={!workspace}
-              onClick={() => {
-                setGrain(g)
-                emit('GRAIN_CHANGED')
-              }}
-            >
-              {grainLabel(g)}
-            </button>
-          ))}
-        </div>
       </div>
       <div className="bar-right">
         <button
@@ -135,15 +93,7 @@ export default function CommandBar(): React.JSX.Element {
           title="Open Technology Targets & Thresholds Panel"
           onClick={() => setTargetsOpen(true)}
         >
-          Targets
-        </button>
-        <button
-          className="btn btn-ghost"
-          disabled={!workspace}
-          title="Open Comparison Lab to benchmark periods and regions"
-          onClick={() => goTo('comparison-lab')}
-        >
-          Compare
+          🎯 Targets
         </button>
         <button
           className="btn btn-ghost"
@@ -151,7 +101,7 @@ export default function CommandBar(): React.JSX.Element {
           title="Open Data Manager to import CSV/Excel and review quality"
           onClick={() => goTo('data-manager')}
         >
-          Import
+          📥 Import Data
         </button>
         <button
           className="btn btn-ghost"
@@ -159,14 +109,14 @@ export default function CommandBar(): React.JSX.Element {
           title="Open Reporting Center to generate Excel, PowerPoint, PDF and HTML report packs"
           onClick={() => goTo('reports')}
         >
-          Export
+          📊 Export Packs
         </button>
         <button
           className="btn btn-ghost"
           title="Open Command Palette (Ctrl+K)"
           onClick={() => useAppStore.getState().setPaletteOpen(true)}
         >
-          Palette
+          🔍 Palette
         </button>
         <span className="kbd-hint">Ctrl K</span>
       </div>

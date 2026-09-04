@@ -1,6 +1,6 @@
 import type {
   Api, WorkspaceInfo, FileAnalysis, MappingConfig, PreviewResult, ImportResult, ImportAuditRow,
-  CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult, GeoStatsResult,
+  CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult, GeoStatsResult, SheetInfo,
   PriorityRow, HealthResult, NcMovementRow, HealthScope, HealthMatrixResult,
   CellIntelligenceResult, CellIntelligenceRow, CellDetail, Lifecycle, Trend, Severity,
   Rules, RulesPatch, PriorityMode, PerformanceResult, MetricDistribution,
@@ -3603,9 +3603,35 @@ export const previewApi: Api & { demo: true } = {
       fields: (['region', 'district', 'site', 'cell'] as CanonicalField[]).map((field) => ({
         field,
         column: Object.entries(mapping).find(([, f]) => f === field)?.[0] ?? null,
-        distinct: 0, matched: 0, unmatched: 0, topUnmatched: [], suggestions: {}
+        distinct: 5,
+        matched: 5,
+        unmatched: 0,
+        topUnmatched: [],
+        suggestions: {}
       }))
-    }), 
+    }),
+    inspectExcel: async (_filePath: string): Promise<SheetInfo[]> => [
+      {
+        name: '4G_Performance_Counters',
+        rowCount: 1420,
+        headers: ['Date/Time', 'Cell', 'PRB Utilization (%)', '4G CSSR (%)', 'DL Throughput (kbps)'],
+        sampleRows: [
+          ['2026-07-28 00:00', 'ACC_4G_01A', '68.4', '98.9', '28500'],
+          ['2026-07-28 00:00', 'ACC_4G_01B', '74.2', '97.8', '24100']
+        ],
+        detectedTech: '4G'
+      },
+      {
+        name: '3G_Performance_Counters',
+        rowCount: 980,
+        headers: ['Date/Time', 'Cell', '3G CSSR (%)', '3G Call Drop Rate (%)', 'HSDPA Throughput (kbps)'],
+        sampleRows: [
+          ['2026-07-28 00:00', 'ACC_3G_01A', '97.8', '0.62', '3450'],
+          ['2026-07-28 00:00', 'ACC_3G_01B', '96.5', '0.78', '3100']
+        ],
+        detectedTech: '3G'
+      }
+    ],
     onProgress: (cb: (p: ImportProgress) => void): (() => void) => {
       importProgressCbs.add(cb)
       return () => importProgressCbs.delete(cb)

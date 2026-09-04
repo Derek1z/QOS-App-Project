@@ -11,8 +11,8 @@ export default function Nav(): React.JSX.Element {
       <div className="nav-brand">
         <AppLogo size={28} style={{ marginRight: '4px' }} />
         <div>
-          <div className="nav-title">2G/3G/4G QoS</div>
-          <div className="nav-subtitle">Network Intelligence</div>
+          <div className="nav-title">QoS Intelligence</div>
+          <div className="nav-subtitle">Workstation v2.0</div>
         </div>
       </div>
       {MODULE_GROUPS.map((group) => (

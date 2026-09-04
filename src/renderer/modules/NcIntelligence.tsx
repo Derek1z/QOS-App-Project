@@ -102,7 +102,7 @@ export default function NcIntelligence(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly, mode, grain])
+  }, [workspace?.path, workspace?.readOnly, mode, grain, selectedTech])
 
   const latestHealth = health && health.network.length > 0 ? health.network[health.network.length - 1] : null
   const healthScore = latestHealth ? Math.round(latestHealth.score * 10) / 10 : null

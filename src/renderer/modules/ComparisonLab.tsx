@@ -119,7 +119,8 @@ export default function ComparisonLab(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const tech = workspace?.technology ?? '4G'
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const tech = selectedTech ?? '4G'
   const metrics = TECH_METRICS[tech] ?? TECH_METRICS['4G']
 
   useEffect(() => {
@@ -148,7 +149,7 @@ export default function ComparisonLab(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path, workspace?.readOnly, type, scope, metric, grain, period])
+  }, [workspace?.path, workspace?.readOnly, type, scope, metric, grain, period, selectedTech])
 
   const ranked = useMemo(() => (result ? rankRows(result, sort) : []), [result, sort])
   const chartRows = ranked.slice(0, 15)

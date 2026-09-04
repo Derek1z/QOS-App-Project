@@ -43,7 +43,7 @@ function fmtScore(s: number | null): string {
 
 export default function PriorityCenter(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
-  const selectedTech = useAppStore((s) => s.selectedTech ?? s.workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech ?? '4G')
   const setModule = useAppStore((s) => s.setModule)
   const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
 
@@ -63,6 +63,7 @@ export default function PriorityCenter(): React.JSX.Element {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const PAGE = 100
+  const storeGrain = useAppStore((s) => s.grain)
 
   const load = useCallback(
     async (ofs: number): Promise<void> => {
@@ -87,7 +88,7 @@ export default function PriorityCenter(): React.JSX.Element {
         setLoading(false)
       }
     },
-    [scope, status, band, search, sort, overdueOnly]
+    [scope, status, band, search, sort, overdueOnly, selectedTech, storeGrain]
   )
 
   useEffect(() => {

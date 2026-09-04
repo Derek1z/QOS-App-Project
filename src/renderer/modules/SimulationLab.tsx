@@ -11,15 +11,13 @@ export default function SimulationLab(): React.JSX.Element {
   const grain = useAppStore((s) => s.grain)
   const setGrain = useAppStore((s) => s.setGrain)
 
-  // Active technology state (defaults to workspace/store tech, with switchable tabs)
-  const [tech, setTech] = useState<Technology>(workspace?.technology ?? selectedTech ?? '4G')
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
+  const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   useEffect(() => {
-    if (workspace?.technology) {
-      setTech(workspace.technology)
-    } else if (selectedTech) {
+    if (selectedTech && selectedTech !== tech) {
       setTech(selectedTech)
     }
-  }, [workspace?.technology, selectedTech])
+  }, [selectedTech])
 
   const [cells, setCells] = useState<CellIntelligenceRow[]>([])
   const [selectedCellId, setSelectedCellId] = useState<number | null>(null)
@@ -682,21 +680,21 @@ export default function SimulationLab(): React.JSX.Element {
           <div className="seg">
             <button
               className={`seg-btn ${tech === '4G' ? 'active' : ''}`}
-              onClick={() => setTech('4G')}
+              onClick={() => { setSelectedTech('4G'); setTech('4G') }}
               style={{ fontWeight: tech === '4G' ? 700 : 500, padding: '4px 10px' }}
             >
               4G LTE
             </button>
             <button
               className={`seg-btn ${tech === '3G' ? 'active' : ''}`}
-              onClick={() => setTech('3G')}
+              onClick={() => { setSelectedTech('3G'); setTech('3G') }}
               style={{ fontWeight: tech === '3G' ? 700 : 500, padding: '4px 10px' }}
             >
               3G UMTS
             </button>
             <button
               className={`seg-btn ${tech === '2G' ? 'active' : ''}`}
-              onClick={() => setTech('2G')}
+              onClick={() => { setSelectedTech('2G'); setTech('2G') }}
               style={{ fontWeight: tech === '2G' ? 700 : 500, padding: '4px 10px' }}
             >
               2G GSM

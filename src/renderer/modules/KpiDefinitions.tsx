@@ -72,7 +72,9 @@ export function validateFormulaSyntax(formula: string): { valid: boolean; error?
 
 export default function KpiDefinitions(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
-  const [tech, setTech] = useState<Technology>(workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
+  const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [defs, setDefs] = useState<KpiDefinition[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -95,8 +97,10 @@ export default function KpiDefinitions(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    setTech(workspace?.technology ?? '4G')
-  }, [workspace?.path])
+    if (selectedTech && selectedTech !== tech) {
+      setTech(selectedTech)
+    }
+  }, [selectedTech])
 
   useEffect(() => {
     void load(tech)
@@ -214,9 +218,9 @@ export default function KpiDefinitions(): React.JSX.Element {
 
       <div className="tabs">
         {TECHS.map((t) => (
-          <button key={t} className={`tab${tech === t ? ' active' : ''}`} onClick={() => setTech(t)}>
+          <button key={t} className={`tab${tech === t ? ' active' : ''}`} onClick={() => { setSelectedTech(t); setTech(t) }}>
             {t}
-            {workspace?.technology === t && <span className="tab-note"> · workspace</span>}
+            {selectedTech === t && <span className="tab-note"> · active</span>}
           </button>
         ))}
       </div>

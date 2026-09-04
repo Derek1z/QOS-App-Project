@@ -86,7 +86,7 @@ export default function CellIntelligence(): React.JSX.Element {
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [search, fLifecycle, fTrend, fSeverity, fPriority, workspace?.technology, workspace?.path, load])
+  }, [search, fLifecycle, fTrend, fSeverity, fPriority, selectedTech, grain, workspace?.path, load])
 
   useEffect(() => {
     void (async () => {
@@ -195,7 +195,7 @@ export default function CellIntelligence(): React.JSX.Element {
                   <th>Trend</th>
                   <th>Severity</th>
                   <th style={{ textAlign: 'right' }}>
-                    {workspace?.technology === '2G' ? 'TCH Cong avg' : workspace?.technology === '3G' ? '3G Load avg' : 'PRB avg'}
+                    {selectedTech === '2G' ? 'TCH Cong avg' : selectedTech === '3G' ? '3G Load avg' : 'PRB avg'}
                   </th>
                   <th style={{ textAlign: 'right' }}>Breach</th>
                   <th style={{ textAlign: 'right' }}>Priority</th>

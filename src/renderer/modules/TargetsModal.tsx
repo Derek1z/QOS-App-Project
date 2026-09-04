@@ -9,8 +9,8 @@ export interface TargetsModalProps {
 }
 
 export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): React.JSX.Element | null {
-  const workspace = useAppStore((s) => s.workspace)
-  const [activeTech, setActiveTech] = useState<Technology>(workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const [activeTech, setActiveTech] = useState<Technology>(selectedTech || '4G')
   const [defs, setDefs] = useState<KpiDefinition[]>([])
   const [derivedList, setDerivedList] = useState<DerivedKPI[]>([])
   const [loading, setLoading] = useState(false)
@@ -62,10 +62,11 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
 
   useEffect(() => {
     if (isOpen) {
-      setActiveTech(workspace?.technology ?? '4G')
-      void load(workspace?.technology ?? '4G')
+      const techToLoad = selectedTech || '4G'
+      setActiveTech(techToLoad)
+      void load(techToLoad)
     }
-  }, [isOpen, workspace?.technology, load])
+  }, [isOpen, selectedTech, load])
 
   useEffect(() => {
     if (!isOpen) return
@@ -198,7 +199,7 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
               style={{ fontWeight: 600, minWidth: '70px' }}
               onClick={() => handleTechChange(t)}
             >
-              {t} {t === workspace?.technology && '(Active)'}
+              {t} {t === selectedTech && '(Active)'}
             </button>
           ))}
         </div>

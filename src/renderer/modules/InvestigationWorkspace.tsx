@@ -96,7 +96,10 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const period = useAppStore((s) => s.period)
   const target = useAppStore((s) => s.investigationTarget)
   const setTarget = useAppStore((s) => s.setInvestigationTarget)
-  const [tech, setTech] = useState<Technology>(workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
+  const reportingRange = useAppStore((s) => s.reportingRange)
+  const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [scope, setScope] = useState<InvestigationScope>('cell')
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<EntityOption[]>([])
@@ -123,10 +126,10 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    if (workspace?.technology) {
-      setTech(workspace.technology)
+    if (selectedTech && selectedTech !== tech) {
+      setTech(selectedTech)
     }
-  }, [workspace?.technology])
+  }, [selectedTech])
 
   const load = useCallback(
     async (ent: EntityOption | null, iv: string, scopeOverride?: InvestigationScope, techOverride?: Technology): Promise<void> => {
@@ -363,6 +366,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
                 key={t}
                 className={`seg-btn${tech === t ? ' active' : ''}`}
                 onClick={() => {
+                  setSelectedTech(t)
                   setTech(t)
                   if (selected) void load(selected, intervention, undefined, t)
                 }}

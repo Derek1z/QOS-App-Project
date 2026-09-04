@@ -54,7 +54,7 @@ interface DemoFact {
 }
 
 const demoFacts: DemoFact[] = []
-let demoWorkspaceName = 'Preview Network'
+let demoWorkspaceName = 'QoS Workstation v2.0'
 let demoTech: Technology = '4G'
 // remembered choices for workspace creation (demo mirror of appState)
 const demoAppState: {
@@ -2196,7 +2196,7 @@ const invFmt = (v: number | null, unit: string): string => {
 function demoInvestigation(
   scope: InvestigationScope,
   entityId: number,
-  opts: { interventionWeek?: string } = {}
+  opts: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology } = {}
 ): InvestigationResult | null {
   const cells = demoNcLifecycle().cells
   const nameId = (names: string[]): Map<string, number> => {
@@ -2261,14 +2261,20 @@ function demoInvestigation(
     }
   }
 
+  const grain = opts.grain === 'daily' ? 'daily' : 'weekly'
+  const stepCount = grain === 'daily' ? 14 : 12
   const end = new Date(Date.UTC(2026, 6, 27))
   const cellWeeks = (c: (typeof cells)[number]): InvestigationWeek[] =>
-    Array.from({ length: 12 }, (_, i) => {
+    Array.from({ length: stepCount }, (_, i) => {
       const d = new Date(end)
-      d.setUTCDate(d.getUTCDate() - (11 - i) * 7)
+      if (grain === 'daily') {
+        d.setUTCDate(d.getUTCDate() - (stepCount - 1 - i))
+      } else {
+        d.setUTCDate(d.getUTCDate() - (stepCount - 1 - i) * 7)
+      }
       const weekStart = d.toISOString().slice(0, 10)
       const wobble = ((c.cellId + i * 7) % 11) - 5
-      const isNc = c.isNc && i >= 12 - (c.lifecycle === 'Persistent NC' ? 4 : c.lifecycle === 'Recurring NC' ? 3 : c.lifecycle === 'New NC' ? 1 : 0)
+      const isNc = c.isNc && i >= stepCount - (c.lifecycle === 'Persistent NC' ? 4 : c.lifecycle === 'Recurring NC' ? 3 : c.lifecycle === 'New NC' ? 1 : 0)
       return {
         weekStart,
         prbAvg: Math.round(Math.min(100, Math.max(20, (c.prbAvg ?? 55) + wobble * 1.4)) * 10) / 10,
@@ -2277,7 +2283,7 @@ function demoInvestigation(
         volumeMb: 8_000 + ((c.cellId * 97 + i * 317) % 60_000),
         availability: Math.round((99 + ((c.cellId * 7 + i) % 10) / 10) * 10) / 10,
         isNc,
-        lifecycle: isNc ? c.lifecycle : i >= 11 && c.lifecycle === 'Recovering' ? 'Recovering' : 'Healthy'
+        lifecycle: isNc ? c.lifecycle : i >= stepCount - 1 && c.lifecycle === 'Recovering' ? 'Recovering' : 'Healthy'
       }
     })
 

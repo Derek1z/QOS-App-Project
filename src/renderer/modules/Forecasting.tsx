@@ -67,7 +67,10 @@ export default function Forecasting(): React.JSX.Element {
   const grain = useAppStore((s) => s.grain)
   const period = useAppStore((s) => s.period)
 
-  const [tech, setTech] = useState<Technology>(workspace?.technology ?? '4G')
+  const selectedTech = useAppStore((s) => s.selectedTech)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
+
+  const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [scope, setScope] = useState<ForecastScope>('network')
   const [entity, setEntity] = useState<EntityOption | null>(null)
   const [query, setQuery] = useState('')
@@ -94,12 +97,12 @@ export default function Forecasting(): React.JSX.Element {
     else setMetric('prb')
   }, [tech])
 
-  // Sync workspace technology
+  // Sync selected technology
   useEffect(() => {
-    if (workspace?.technology) {
-      setTech(workspace.technology)
+    if (selectedTech && selectedTech !== tech) {
+      setTech(selectedTech)
     }
-  }, [workspace?.technology])
+  }, [selectedTech])
 
   const load = useCallback(async (): Promise<void> => {
     if (scope !== 'network' && !entity) {
@@ -266,7 +269,10 @@ export default function Forecasting(): React.JSX.Element {
             <button
               key={t}
               className={`fc-tab-btn${tech === t ? ' active' : ''}`}
-              onClick={() => setTech(t)}
+              onClick={() => {
+                setSelectedTech(t)
+                setTech(t)
+              }}
             >
               {t} {t === '4G' ? 'LTE' : t === '3G' ? 'UMTS' : 'GSM'}
             </button>

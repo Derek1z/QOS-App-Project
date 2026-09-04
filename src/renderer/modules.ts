@@ -10,7 +10,7 @@ export interface ModuleDef {
 
 export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
   {
-    title: 'V2 Analytics',
+    title: 'Executive Analytics',
     items: [
       {
         id: 'overview',
@@ -25,6 +25,46 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         icon: '🚦',
         milestone: 1,
         blurb: 'Multi-grain non-compliance and breach classification across daily, weekly, and monthly views.'
+      },
+      {
+        id: 'priority-center',
+        label: 'Smart Priority Queue',
+        icon: '🎯',
+        milestone: 1,
+        blurb: 'Automated priority ranking queue for critical cell remediation.'
+      }
+    ]
+  },
+  {
+    title: 'Investigation & Maps',
+    items: [
+      {
+        id: 'investigation',
+        label: 'Cell Investigation',
+        icon: '🔬',
+        milestone: 1,
+        blurb: 'Deep-dive single cell investigation, trend lines, threshold overlays, and expandable RCA donut chart.'
+      },
+      {
+        id: 'explorer',
+        label: 'Network Explorer',
+        icon: '🌐',
+        milestone: 1,
+        blurb: 'Multi-level network hierarchy tree: Region → District → BTS Site → Sector Cell.'
+      },
+      {
+        id: 'health-matrix',
+        label: 'Ghana Health Matrix',
+        icon: '🗺️',
+        milestone: 1,
+        blurb: 'Interactive Ghana geographic choropleth map and regional health matrix.'
+      },
+      {
+        id: 'performance',
+        label: 'Performance Analysis',
+        icon: '📈',
+        milestone: 1,
+        blurb: 'Statistical distributions, 2D scatter quadrant matrices, and Pearson correlation matrices.'
       }
     ]
   },
@@ -40,7 +80,7 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
       },
       {
         id: 'kpi-definitions',
-        label: 'KPI Definitions & Derived Engine',
+        label: 'KPI Definitions & Derived',
         icon: '🎚️',
         milestone: 1,
         blurb: 'Per-technology KPI targets, derived formula engine, and counter discovery.'

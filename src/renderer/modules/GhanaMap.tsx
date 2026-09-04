@@ -205,7 +205,7 @@ export default function GhanaMap(): React.JSX.Element {
   selectedRef.current = selected
   districtsRef.current = districts
 
-  const currentTech: Technology = selectedTech || workspace?.technology || '4G'
+  const currentTech: Technology = selectedTech || '4G'
   const activeMetrics = TECH_CORE_METRICS[currentTech] || TECH_CORE_METRICS['4G']
 
   // reset metric if not available in current technology

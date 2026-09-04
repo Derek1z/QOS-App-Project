@@ -1,399 +1,502 @@
-import type { EChartsOption, SeriesOption } from 'echarts'
+import type { EChartsOption } from 'echarts'
 import type { InvestigationResult, Grain, Technology } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 import { formatTimeLabel } from './overviewCharts'
 
-/** Actual-metrics strip (spec §33, §47): Multi-technology 2G / 3G / 4G telemetry on shared axes */
-export function investigationChartOption(
+export interface TelemetryMetricConfig {
+  id: string
+  label: string
+  shortLabel: string
+  unit: string
+  target: number | null
+  targetLabel: string | null
+  color: string
+  areaColor: string
+  currentValue: number | null
+  formattedCurrent: string
+  data: Array<number | null>
+}
+
+/** Returns the complete list of available telemetry metrics for the active technology */
+export function getAvailableTelemetryMetrics(
+  res: InvestigationResult,
+  tech: Technology,
+  prbThreshold: number
+): TelemetryMetricConfig[] {
+  const latestWeek = res.weeks[res.weeks.length - 1]
+
+  if (tech === '2G') {
+    const tchData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null))
+    const sdcchData = res.weeks.map((w) => w.sdcchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 6) * 10) / 10 : null))
+    const cssrData = res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.2 : 99.4))
+    const dropData = res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.4 : 0.5))
+    const voiceData = res.weeks.map((w) => w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null))
+
+    const latestTch = tchData[tchData.length - 1] ?? null
+    const latestSdcch = sdcchData[sdcchData.length - 1] ?? null
+    const latestCssr = cssrData[cssrData.length - 1] ?? null
+    const latestDrop = dropData[dropData.length - 1] ?? null
+    const latestVoice = voiceData[voiceData.length - 1] ?? null
+
+    return [
+      {
+        id: 'tch_cong',
+        label: '2G TCH Congestion (%)',
+        shortLabel: 'TCH Congestion',
+        unit: '%',
+        target: 2.0,
+        targetLabel: 'Target ≤ 2.0%',
+        color: '#f87171',
+        areaColor: 'rgba(248, 113, 113, 0.15)',
+        currentValue: latestTch,
+        formattedCurrent: latestTch != null ? `${latestTch.toFixed(1)}%` : '—',
+        data: tchData
+      },
+      {
+        id: 'sdcch_cong',
+        label: '2G SDCCH Congestion (%)',
+        shortLabel: 'SDCCH Congestion',
+        unit: '%',
+        target: 1.5,
+        targetLabel: 'Target ≤ 1.5%',
+        color: '#fbbf24',
+        areaColor: 'rgba(251, 191, 36, 0.15)',
+        currentValue: latestSdcch,
+        formattedCurrent: latestSdcch != null ? `${latestSdcch.toFixed(1)}%` : '—',
+        data: sdcchData
+      },
+      {
+        id: 'cssr_2g',
+        label: '2G Voice CSSR (%)',
+        shortLabel: 'Voice CSSR',
+        unit: '%',
+        target: 98.0,
+        targetLabel: 'Target ≥ 98.0%',
+        color: '#38bdf8',
+        areaColor: 'rgba(56, 189, 248, 0.15)',
+        currentValue: latestCssr,
+        formattedCurrent: latestCssr != null ? `${latestCssr.toFixed(1)}%` : '—',
+        data: cssrData
+      },
+      {
+        id: 'call_drop_2g',
+        label: '2G Call Drop Rate (%)',
+        shortLabel: 'Call Drop Rate',
+        unit: '%',
+        target: 1.0,
+        targetLabel: 'Target ≤ 1.0%',
+        color: '#f43f5e',
+        areaColor: 'rgba(244, 63, 94, 0.15)',
+        currentValue: latestDrop,
+        formattedCurrent: latestDrop != null ? `${latestDrop.toFixed(1)}%` : '—',
+        data: dropData
+      },
+      {
+        id: 'voice_traffic',
+        label: 'Voice Traffic (Erlang)',
+        shortLabel: 'Voice Traffic',
+        unit: 'Erl',
+        target: null,
+        targetLabel: null,
+        color: '#34d399',
+        areaColor: 'rgba(52, 211, 153, 0.15)',
+        currentValue: latestVoice,
+        formattedCurrent: latestVoice != null ? `${Math.round(latestVoice)} Erl` : '—',
+        data: voiceData
+      }
+    ]
+  }
+
+  if (tech === '3G') {
+    const cssrData = res.weeks.map((w) => w.cssr ?? (w.isNc ? 94.2 : 99.1))
+    const dropData = res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.3 : 0.4))
+    const dasrData = res.weeks.map((w) => w.dasr ?? (w.isNc ? 95.8 : 99.4))
+    const congData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : 0))
+    const breachData = res.weeks.map((w) => w.breachDays ?? (w.isNc ? 1 : 0))
+
+    const latestCssr = cssrData[cssrData.length - 1] ?? null
+    const latestDrop = dropData[dropData.length - 1] ?? null
+    const latestDasr = dasrData[dasrData.length - 1] ?? null
+    const latestCong = congData[congData.length - 1] ?? null
+    const latestBreach = breachData[breachData.length - 1] ?? 0
+
+    return [
+      {
+        id: 'cssr_3g',
+        label: '3G Call Setup Success (CSSR %)',
+        shortLabel: '3G CSSR',
+        unit: '%',
+        target: 95.0,
+        targetLabel: 'Target ≥ 95.0%',
+        color: '#38bdf8',
+        areaColor: 'rgba(56, 189, 248, 0.15)',
+        currentValue: latestCssr,
+        formattedCurrent: latestCssr != null ? `${latestCssr.toFixed(1)}%` : '—',
+        data: cssrData
+      },
+      {
+        id: 'call_drop_3g',
+        label: '3G Call Drop Rate (%)',
+        shortLabel: 'Call Drop Rate',
+        unit: '%',
+        target: 1.0,
+        targetLabel: 'Target ≤ 1.0%',
+        color: '#f87171',
+        areaColor: 'rgba(248, 113, 113, 0.15)',
+        currentValue: latestDrop,
+        formattedCurrent: latestDrop != null ? `${latestDrop.toFixed(1)}%` : '—',
+        data: dropData
+      },
+      {
+        id: 'dasr_3g',
+        label: '3G Data Access Success (DASR %)',
+        shortLabel: 'Data Access',
+        unit: '%',
+        target: 98.0,
+        targetLabel: 'Target ≥ 98.0%',
+        color: '#fbbf24',
+        areaColor: 'rgba(251, 191, 36, 0.15)',
+        currentValue: latestDasr,
+        formattedCurrent: latestDasr != null ? `${latestDasr.toFixed(1)}%` : '—',
+        data: dasrData
+      },
+      {
+        id: 'cong_3g',
+        label: '3G Power & CE Congestion (%)',
+        shortLabel: 'Congestion',
+        unit: '%',
+        target: null,
+        targetLabel: null,
+        color: '#a855f7',
+        areaColor: 'rgba(168, 85, 247, 0.15)',
+        currentValue: latestCong,
+        formattedCurrent: latestCong != null ? `${latestCong.toFixed(1)}%` : '—',
+        data: congData
+      },
+      {
+        id: 'breach_days_3g',
+        label: 'Breach Days Count',
+        shortLabel: 'Breach Days',
+        unit: 'Days',
+        target: null,
+        targetLabel: null,
+        color: '#94a3b8',
+        areaColor: 'rgba(148, 163, 184, 0.15)',
+        currentValue: latestBreach,
+        formattedCurrent: `${latestBreach} Days`,
+        data: breachData
+      }
+    ]
+  }
+
+  // 4G Default
+  const prbData = res.weeks.map((w) => w.prbAvg)
+  const tpData = res.weeks.map((w) => (w.throughputKbps != null ? Math.round((w.throughputKbps / 1024) * 10) / 10 : null))
+  const usersData = res.weeks.map((w) => w.users)
+  const volData = res.weeks.map((w) => (w.volumeMb != null ? Math.round((w.volumeMb / 1024) * 10) / 10 : null))
+  const availData = res.weeks.map((w) => w.availability)
+
+  const latestPrb = latestWeek?.prbAvg ?? null
+  const latestTp = latestWeek?.throughputKbps != null ? Math.round((latestWeek.throughputKbps / 1024) * 10) / 10 : null
+  const latestUsers = latestWeek?.users ?? null
+  const latestVol = latestWeek?.volumeMb != null ? Math.round((latestWeek.volumeMb / 1024) * 10) / 10 : null
+  const latestAvail = latestWeek?.availability ?? null
+
+  return [
+    {
+      id: 'prb',
+      label: '4G DL PRB Utilization (%)',
+      shortLabel: 'PRB Utilization',
+      unit: '%',
+      target: prbThreshold,
+      targetLabel: `Target ≤ ${prbThreshold}%`,
+      color: '#fbbf24',
+      areaColor: 'rgba(251, 191, 36, 0.15)',
+      currentValue: latestPrb,
+      formattedCurrent: latestPrb != null ? `${latestPrb.toFixed(1)}%` : '—',
+      data: prbData
+    },
+    {
+      id: 'throughput',
+      label: 'DL User Speed (Mbps)',
+      shortLabel: 'DL Speed',
+      unit: 'Mbps',
+      target: 10.0,
+      targetLabel: 'Benchmark ≥ 10.0 Mbps',
+      color: '#38bdf8',
+      areaColor: 'rgba(56, 189, 248, 0.15)',
+      currentValue: latestTp,
+      formattedCurrent: latestTp != null ? `${latestTp.toFixed(1)} Mbps` : '—',
+      data: tpData
+    },
+    {
+      id: 'users',
+      label: 'Active Connected Users',
+      shortLabel: 'Active Users',
+      unit: 'Users',
+      target: null,
+      targetLabel: null,
+      color: '#34d399',
+      areaColor: 'rgba(52, 211, 153, 0.15)',
+      currentValue: latestUsers,
+      formattedCurrent: latestUsers != null ? `${Math.round(latestUsers).toLocaleString()}` : '—',
+      data: usersData
+    },
+    {
+      id: 'volume',
+      label: 'Traffic Volume (GB)',
+      shortLabel: 'Traffic Volume',
+      unit: 'GB',
+      target: null,
+      targetLabel: null,
+      color: '#a855f7',
+      areaColor: 'rgba(168, 85, 247, 0.15)',
+      currentValue: latestVol,
+      formattedCurrent: latestVol != null ? `${latestVol.toFixed(1)} GB` : '—',
+      data: volData
+    },
+    {
+      id: 'availability',
+      label: 'Cell Availability (%)',
+      shortLabel: 'Availability',
+      unit: '%',
+      target: 99.5,
+      targetLabel: 'Target ≥ 99.5%',
+      color: '#94a3b8',
+      areaColor: 'rgba(148, 163, 184, 0.15)',
+      currentValue: latestAvail,
+      formattedCurrent: latestAvail != null ? `${latestAvail.toFixed(1)}%` : '—',
+      data: availData
+    }
+  ]
+}
+
+/** Mode 1: Spacious, Beautiful Hero Metric Chart (Height: 380px) */
+export function heroMetricChartOption(
+  res: InvestigationResult,
+  metricKey: string,
+  prbThreshold: number,
+  grain: Grain = 'weekly',
+  technologyOverride?: Technology
+): EChartsOption {
+  const tech: Technology = technologyOverride ?? res.technology ?? '4G'
+  const metrics = getAvailableTelemetryMetrics(res, tech, prbThreshold)
+  const activeMetric = metrics.find((m) => m.id === metricKey) ?? metrics[0]
+  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+
+  const interventionIdx = res.interventionWeek
+    ? res.weeks.findIndex((w) => w.weekStart === res.interventionWeek)
+    : -1
+
+  const markLineData: any[] = []
+  if (activeMetric.target != null) {
+    markLineData.push({
+      yAxis: activeMetric.target,
+      label: {
+        formatter: `${activeMetric.targetLabel ?? 'Threshold'}`,
+        color: '#f87171',
+        fontSize: 11,
+        position: 'end'
+      },
+      lineStyle: { type: 'dashed', color: '#f87171', width: 1.5 }
+    })
+  }
+
+  if (interventionIdx >= 0) {
+    markLineData.push({
+      xAxis: interventionIdx,
+      label: {
+        formatter: 'Intervention',
+        color: PALETTE.warn,
+        fontSize: 11,
+        position: 'end'
+      },
+      lineStyle: { type: 'dashed', color: PALETTE.warn, width: 1.5 }
+    })
+  }
+
+  return {
+    backgroundColor: 'transparent',
+    grid: {
+      left: 54,
+      right: 36,
+      top: 40,
+      bottom: 36,
+      containLabel: true
+    },
+    tooltip: {
+      trigger: 'axis',
+      ...tooltipStyle(),
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const idx = Number(arr[0]?.dataIndex ?? 0)
+        const w = res.weeks[idx]
+        if (!w) return ''
+        const val = arr[0]?.value
+        const formattedVal =
+          val != null ? `${Number(val).toFixed(1)} ${activeMetric.unit}` : '—'
+        const state = w.isNc ? `${w.lifecycle ?? 'NC'}` : w.lifecycle ?? 'Normal'
+        const stateColor = w.isNc ? '#f87171' : '#34d399'
+
+        return `
+          <div style="font-weight: 800; font-size: 13px; color: #f8fafc; margin-bottom: 6px;">
+            ${w.weekStart} (${timeLabels[idx]})
+          </div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px;">
+            Technology: <strong style="color: #38bdf8">${tech}</strong> · State: <strong style="color: ${stateColor}">${state}</strong>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px;">
+            <span style="display: flex; align-items: center; gap: 6px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: ${activeMetric.color}"></span>
+              ${activeMetric.shortLabel}:
+            </span>
+            <strong style="color: #f8fafc; font-size: 14px;">${formattedVal}</strong>
+          </div>
+          ${
+            activeMetric.targetLabel
+              ? `<div style="font-size: 10px; color: var(--text-dim); margin-top: 4px; border-top: 1px solid var(--border); padding-top: 4px;">
+                  Benchmark: ${activeMetric.targetLabel}
+                </div>`
+              : ''
+          }
+        `
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: timeLabels,
+      axisLabel: { ...axisLabelStyle(), color: '#cbd5e1', fontSize: 11 },
+      axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.12)' } },
+      axisTick: { alignWithLabel: true, lineStyle: { color: 'rgba(255, 255, 255, 0.12)' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        ...axisLabelStyle(),
+        formatter: (v: number) => `${Math.round(v)}${activeMetric.unit === '%' ? '%' : ''}`
+      },
+      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
+      axisLine: { show: false }
+    },
+    series: [
+      {
+        name: activeMetric.shortLabel,
+        type: 'line',
+        data: activeMetric.data,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: activeMetric.color, width: 3 },
+        itemStyle: {
+          color: activeMetric.color,
+          borderWidth: 2,
+          borderColor: '#0f172a'
+        },
+        areaStyle: {
+          color: activeMetric.areaColor
+        },
+        markLine: markLineData.length > 0 ? { silent: true, symbol: 'none', data: markLineData } : undefined
+      }
+    ]
+  }
+}
+
+/** Mode 2: Multi-Chart Standalone Card Option (Height: 220px) */
+export function standaloneKpiChartOption(
+  res: InvestigationResult,
+  metric: TelemetryMetricConfig,
+  grain: Grain = 'weekly'
+): EChartsOption {
+  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+  const markLineData: any[] = []
+  if (metric.target != null) {
+    markLineData.push({
+      yAxis: metric.target,
+      label: { show: false },
+      lineStyle: { type: 'dashed', color: '#f87171', width: 1 }
+    })
+  }
+
+  return {
+    backgroundColor: 'transparent',
+    grid: {
+      left: 42,
+      right: 18,
+      top: 18,
+      bottom: 24,
+      containLabel: true
+    },
+    tooltip: {
+      trigger: 'axis',
+      ...tooltipStyle(),
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const idx = Number(arr[0]?.dataIndex ?? 0)
+        const val = arr[0]?.value
+        return `${timeLabels[idx]}: <b>${val != null ? `${Number(val).toFixed(1)} ${metric.unit}` : '—'}</b>`
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: timeLabels,
+      axisLabel: { ...axisLabelStyle(), fontSize: 9 },
+      axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.08)' } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        ...axisLabelStyle(),
+        fontSize: 9,
+        formatter: (v: number) => `${Math.round(v)}${metric.unit === '%' ? '%' : ''}`
+      },
+      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } },
+      axisLine: { show: false }
+    },
+    series: [
+      {
+        name: metric.shortLabel,
+        type: 'line',
+        data: metric.data,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { color: metric.color, width: 2 },
+        itemStyle: { color: metric.color },
+        areaStyle: { color: metric.areaColor },
+        markLine: markLineData.length > 0 ? { silent: true, symbol: 'none', data: markLineData } : undefined
+      }
+    ]
+  }
+}
+
+/** Mode 3: Dual-Axis Correlation Chart Option (Height: 380px) */
+export function correlationChartOption(
   res: InvestigationResult,
   prbThreshold: number,
   grain: Grain = 'weekly',
   technologyOverride?: Technology
 ): EChartsOption {
   const tech: Technology = technologyOverride ?? res.technology ?? '4G'
+  const metrics = getAvailableTelemetryMetrics(res, tech, prbThreshold)
+  const loadMetric = metrics[0] // Primary load metric
+  const perfMetric = metrics[1] // Performance / Speed / Drop metric
   const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
-  const grids = [0, 1, 2, 3, 4].map((i) => ({
-    left: 64,
-    right: 30,
-    top: i * 108 + 6,
-    height: 88
-  }))
-  const xAxis = [0, 1, 2, 3, 4].map((i) => ({
-    type: 'category' as const,
-    gridIndex: i,
-    data: timeLabels,
-    axisLabel: i === 4 ? axisLabelStyle() : { show: false },
-    axisLine: { lineStyle: { color: PALETTE.border } },
-    axisTick: { show: i === 4 }
-  }))
-
-  const interventionIdx = res.interventionWeek ? res.weeks.findIndex((w) => w.weekStart === res.interventionWeek) : -1
-  const interventionMark = interventionIdx >= 0
-    ? {
-        silent: true,
-        symbol: 'none',
-        label: { color: PALETTE.warn, fontSize: 10, formatter: 'intervention' },
-        lineStyle: { type: 'dashed' as const, color: PALETTE.warn, width: 1 },
-        data: [{ xAxis: interventionIdx }]
-      }
-    : undefined
-
-  let yAxis: any[] = []
-  let series: SeriesOption[] = []
-
-  if (tech === '2G') {
-    yAxis = [
-      {
-        gridIndex: 0,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 1,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 2,
-        type: 'value' as const,
-        min: 90,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 3,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 4,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v)}E` },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      }
-    ]
-
-    series = [
-      {
-        name: '2G TCH Congestion',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.danger, width: 2 },
-        itemStyle: { color: PALETTE.danger },
-        areaStyle: { color: 'rgba(239,68,68,0.12)' },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          label: { formatter: 'threshold 2%', color: PALETTE.danger, fontSize: 10 },
-          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-          data: [{ yAxis: 2.0 }]
-        }
-      },
-      {
-        name: '2G SDCCH Congestion',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: res.weeks.map((w) => w.sdcchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 6) * 10) / 10 : null)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.warn, width: 2 },
-        itemStyle: { color: PALETTE.warn }
-      },
-      {
-        name: '2G CSSR',
-        type: 'line',
-        xAxisIndex: 2,
-        yAxisIndex: 2,
-        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.2 : 99.4)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.accent, width: 2 },
-        itemStyle: { color: PALETTE.accent }
-      },
-      {
-        name: '2G Call Drop Rate',
-        type: 'line',
-        xAxisIndex: 3,
-        yAxisIndex: 3,
-        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.4 : 0.5)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.text, width: 2 },
-        itemStyle: { color: PALETTE.text }
-      },
-      {
-        name: 'Voice Traffic (Erlang)',
-        type: 'line',
-        xAxisIndex: 4,
-        yAxisIndex: 4,
-        data: res.weeks.map((w) => w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.green, width: 2 },
-        itemStyle: { color: PALETTE.green }
-      }
-    ]
-  } else if (tech === '3G') {
-    yAxis = [
-      {
-        gridIndex: 0,
-        type: 'value' as const,
-        min: 90,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 1,
-        type: 'value' as const,
-        min: 0,
-        max: 10,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 2,
-        type: 'value' as const,
-        min: 90,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 3,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v)}` },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 4,
-        type: 'value' as const,
-        min: 0,
-        max: 30,
-        axisLabel: axisLabelStyle(),
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      }
-    ]
-
-    series = [
-      {
-        name: '3G CSSR',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: res.weeks.map((w) => w.cssr ?? (w.isNc ? 94.2 : 99.1)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.accent, width: 2 },
-        itemStyle: { color: PALETTE.accent },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          label: { formatter: 'target 95%', color: PALETTE.danger, fontSize: 10 },
-          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-          data: [{ yAxis: 95.0 }]
-        }
-      },
-      {
-        name: '3G Call Drop Rate',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.3 : 0.4)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.danger, width: 2 },
-        itemStyle: { color: PALETTE.danger },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          label: { formatter: 'target 1%', color: PALETTE.danger, fontSize: 10 },
-          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-          data: [{ yAxis: 1.0 }]
-        }
-      },
-      {
-        name: '3G Data Access Success Rate',
-        type: 'line',
-        xAxisIndex: 2,
-        yAxisIndex: 2,
-        data: res.weeks.map((w) => w.dasr ?? (w.isNc ? 95.8 : 99.4)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.warn, width: 2 },
-        itemStyle: { color: PALETTE.warn },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          label: { formatter: 'target 98%', color: PALETTE.danger, fontSize: 10 },
-          lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-          data: [{ yAxis: 98.0 }]
-        }
-      },
-      {
-        name: 'Worst Supporting KPI (3G Congestion / Setup Failures)',
-        type: 'line',
-        xAxisIndex: 3,
-        yAxisIndex: 3,
-        data: res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round(w.prbAvg / 10) : 0)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: '#a855f7', width: 2 },
-        itemStyle: { color: '#a855f7' }
-      },
-      {
-        name: 'Breach Days',
-        type: 'line',
-        xAxisIndex: 4,
-        yAxisIndex: 4,
-        data: res.weeks.map((w) => w.breachDays ?? (w.isNc ? 1 : 0)),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.text, width: 2 },
-        itemStyle: { color: PALETTE.text }
-      }
-    ]
-  } else {
-    // 4G Default
-    yAxis = [
-      {
-        gridIndex: 0,
-        type: 'value' as const,
-        min: 0,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 1,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}M` },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 2,
-        type: 'value' as const,
-        axisLabel: axisLabelStyle(),
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 3,
-        type: 'value' as const,
-        axisLabel: { ...axisLabelStyle(), formatter: (v: number) => `${Math.round(v / 1024)}G` },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      },
-      {
-        gridIndex: 4,
-        type: 'value' as const,
-        min: 98,
-        max: 100,
-        axisLabel: { ...axisLabelStyle(), formatter: '{value}%' },
-        splitLine: { lineStyle: { color: 'rgba(38,48,65,0.5)' } }
-      }
-    ]
-
-    series = [
-      {
-        name: '4G DL PRB Util',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: res.weeks.map((w) => w.prbAvg),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.warn, width: 2 },
-        itemStyle: { color: PALETTE.warn },
-        areaStyle: { color: 'rgba(251,191,36,0.12)' },
-        markLine: interventionMark
-          ? {
-              ...interventionMark,
-              data: [
-                ...(interventionMark.data ?? []),
-                { yAxis: prbThreshold, lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 } }
-              ]
-            }
-          : {
-              silent: true,
-              symbol: 'none',
-              label: { formatter: `threshold {c}%`, color: PALETTE.danger, fontSize: 10 },
-              lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-              data: [{ yAxis: prbThreshold }]
-            }
-      },
-      {
-        name: '4G DL Throughput',
-        type: 'line',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: res.weeks.map((w) => w.throughputKbps),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.accent, width: 2 },
-        itemStyle: { color: PALETTE.accent }
-      },
-      {
-        name: 'Connected Users',
-        type: 'line',
-        xAxisIndex: 2,
-        yAxisIndex: 2,
-        data: res.weeks.map((w) => w.users),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.green, width: 2 },
-        itemStyle: { color: PALETTE.green }
-      },
-      {
-        name: 'Data Volume',
-        type: 'line',
-        xAxisIndex: 3,
-        yAxisIndex: 3,
-        data: res.weeks.map((w) => w.volumeMb),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.text, width: 2 },
-        itemStyle: { color: PALETTE.text }
-      },
-      {
-        name: 'Availability',
-        type: 'line',
-        xAxisIndex: 4,
-        yAxisIndex: 4,
-        data: res.weeks.map((w) => w.availability),
-        smooth: 0.25,
-        symbol: 'circle',
-        symbolSize: 5,
-        lineStyle: { color: PALETTE.accent, width: 2 },
-        itemStyle: { color: PALETTE.accent }
-      }
-    ]
-  }
 
   return {
     backgroundColor: 'transparent',
-    grid: grids,
+    legend: {
+      data: [loadMetric.shortLabel, perfMetric.shortLabel],
+      top: 6,
+      textStyle: { color: '#cbd5e1', fontSize: 12 }
+    },
+    grid: {
+      left: 54,
+      right: 54,
+      top: 50,
+      bottom: 36,
+      containLabel: true
+    },
     tooltip: {
       trigger: 'axis',
       ...tooltipStyle(),
@@ -404,27 +507,76 @@ export function investigationChartOption(
         if (!w) return ''
         const lines = arr.map((p: any) => {
           const v = Number(p.value)
-          const name = String(p.seriesName ?? '')
-          if (name.includes('PRB') || name.includes('Congestion') || name.includes('CSSR') || name.includes('Drop') || name.includes('Util') || name.includes('Availability')) {
-            return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)}%</b>`
-          }
-          if (name.includes('Throughput')) return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} Mbps</b>`
-          if (name.includes('Speed')) return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)} Mbps</b>`
-          if (name.includes('Erlang')) return `${p.marker ?? ''}${name}: <b>${v.toFixed(1)} Erl</b>`
-          if (name.includes('Volume')) return `${p.marker ?? ''}${name}: <b>${(v / 1024).toFixed(1)} GB</b>`
-          return `${p.marker ?? ''}${name}: <b>${Math.round(v)}</b>`
+          return `<div style="display: flex; justify-content: space-between; gap: 16px;">
+            <span>${p.marker} ${p.seriesName}:</span>
+            <strong>${v.toFixed(1)}</strong>
+          </div>`
         })
-        const state = w.isNc ? `${w.lifecycle ?? 'NC'}` : w.lifecycle ?? 'OK'
-        return [
-          `<b>${w.weekStart} (${timeLabels[idx]})</b>`,
-          `Technology: <b>${tech}</b> · State: ${state}`,
-          ...lines
-        ].join('<br/>')
+        return `
+          <div style="font-weight: 800; margin-bottom: 6px;">${w.weekStart} (${timeLabels[idx]})</div>
+          ${lines.join('')}
+        `
       }
     },
-    axisPointer: { link: [{ xAxisIndex: 'all' }] },
-    xAxis,
-    yAxis,
-    series
+    xAxis: {
+      type: 'category',
+      data: timeLabels,
+      axisLabel: { ...axisLabelStyle(), color: '#cbd5e1', fontSize: 11 },
+      axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.12)' } },
+      axisTick: { alignWithLabel: true }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: loadMetric.shortLabel,
+        nameTextStyle: { color: loadMetric.color, fontSize: 11 },
+        axisLabel: { ...axisLabelStyle(), formatter: `{value}${loadMetric.unit === '%' ? '%' : ''}` },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
+        axisLine: { show: false }
+      },
+      {
+        type: 'value',
+        name: perfMetric.shortLabel,
+        nameTextStyle: { color: perfMetric.color, fontSize: 11 },
+        axisLabel: { ...axisLabelStyle(), formatter: `{value} ${perfMetric.unit}` },
+        splitLine: { show: false },
+        axisLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: loadMetric.shortLabel,
+        type: 'line',
+        yAxisIndex: 0,
+        data: loadMetric.data,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: loadMetric.color, width: 3 },
+        itemStyle: { color: loadMetric.color }
+      },
+      {
+        name: perfMetric.shortLabel,
+        type: 'line',
+        yAxisIndex: 1,
+        data: perfMetric.data,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: perfMetric.color, width: 3 },
+        itemStyle: { color: perfMetric.color }
+      }
+    ]
   }
 }
+
+/** Legacy wrapper preserved for backwards compatibility */
+export function investigationChartOption(
+  res: InvestigationResult,
+  prbThreshold: number,
+  grain: Grain = 'weekly',
+  technologyOverride?: Technology
+): EChartsOption {
+  return heroMetricChartOption(res, 'prb', prbThreshold, grain, technologyOverride)
+}
+

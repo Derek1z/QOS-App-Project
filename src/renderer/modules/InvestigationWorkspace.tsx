@@ -6,7 +6,12 @@ import type {
   InvestigationScope, Technology
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
-import { investigationChartOption } from '../lib/investigationCharts'
+import {
+  getAvailableTelemetryMetrics,
+  heroMetricChartOption,
+  standaloneKpiChartOption,
+  correlationChartOption
+} from '../lib/investigationCharts'
 
 const SCOPES: Array<{ id: InvestigationScope; label: string }> = [
   { id: 'cell', label: 'Cell Scope' },
@@ -91,6 +96,8 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const [, setReport] = useState<InvestigationReport | null>(null)
   const [activeTab, setActiveTab] = useState<'evidence' | 'rca' | 'peers' | 'workflow'>('evidence')
   const [rcaModalOpen, setRcaModalOpen] = useState(false)
+  const [telemetryMode, setTelemetryMode] = useState<'hero' | 'grid' | 'correlation'>('hero')
+  const [selectedMetricId, setSelectedMetricId] = useState('prb')
 
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -218,10 +225,26 @@ export default function InvestigationWorkspace(): React.JSX.Element {
     setTarget(null)
   }, [target, load, setTarget, tech])
 
-  const chartOption: EChartsOption | null = useMemo(
-    () => (result && result.weeks.length > 0 ? investigationChartOption(result, prbThreshold, grain, tech) : null),
-    [result, prbThreshold, grain, tech]
-  )
+  const telemetryMetrics = useMemo(() => {
+    if (!result || result.weeks.length === 0) return []
+    return getAvailableTelemetryMetrics(result, tech, prbThreshold)
+  }, [result, tech, prbThreshold])
+
+  useEffect(() => {
+    if (telemetryMetrics.length > 0 && !telemetryMetrics.some((m) => m.id === selectedMetricId)) {
+      setSelectedMetricId(telemetryMetrics[0].id)
+    }
+  }, [telemetryMetrics, selectedMetricId])
+
+  const heroChart: EChartsOption | null = useMemo(() => {
+    if (!result || result.weeks.length === 0) return null
+    return heroMetricChartOption(result, selectedMetricId, prbThreshold, grain, tech)
+  }, [result, selectedMetricId, prbThreshold, grain, tech])
+
+  const correlationChart: EChartsOption | null = useMemo(() => {
+    if (!result || result.weeks.length === 0) return null
+    return correlationChartOption(result, prbThreshold, grain, tech)
+  }, [result, prbThreshold, grain, tech])
 
   async function pick(ent: EntityOption): Promise<void> {
     setQuery('')
@@ -671,19 +694,161 @@ export default function InvestigationWorkspace(): React.JSX.Element {
 
       {/* Sub-Tab 1: Telemetry & Evidence */}
       {activeTab === 'evidence' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Telemetry Header with View Mode Switcher */}
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              padding: '16px 20px',
+              borderRadius: '14px',
+              border: '1px solid var(--border)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}
+          >
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>
                 {tech} Primary Telemetry Timeline ({grain === 'daily' ? 'Daily Dates' : 'ISO Weeks'})
               </h3>
-              <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Threshold Line: {prbThreshold}%</span>
+              <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '2px 0 0 0' }}>
+                Spacious timeline with zero crowded axes · Threshold benchmark: {prbThreshold}%
+              </p>
             </div>
-            {chartOption ? (
-              <Chart option={chartOption} height={360} />
-            ) : (
-              <div style={{ height: '240px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)' }}>
-                {loading ? 'Loading Telemetry...' : 'No telemetry data available for selected entity.'}
+
+            {/* View Mode Switcher */}
+            <div style={{ display: 'flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              {[
+                { id: 'hero', label: '★ Hero Focus' },
+                { id: 'grid', label: '☷ Multi-Chart Grid' },
+                { id: 'correlation', label: '⚡ Dual-Axis Correlation' }
+              ].map((vm) => (
+                <button
+                  key={vm.id}
+                  onClick={() => setTelemetryMode(vm.id as any)}
+                  style={{
+                    padding: '6px 14px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    background: telemetryMode === vm.id ? 'var(--accent)' : 'transparent',
+                    color: telemetryMode === vm.id ? '#0f172a' : 'var(--text-dim)',
+                    boxShadow: telemetryMode === vm.id ? '0 2px 6px rgba(56, 189, 248, 0.3)' : 'none'
+                  }}
+                >
+                  {vm.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Metric Selector Cards Row (in Hero Mode) */}
+          {telemetryMode === 'hero' && telemetryMetrics.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+              {telemetryMetrics.map((m) => {
+                const isActive = selectedMetricId === m.id
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setSelectedMetricId(m.id)}
+                    style={{
+                      background: isActive ? 'var(--bg-3)' : 'var(--bg-card)',
+                      border: isActive ? `1.5px solid ${m.color}` : '1px solid var(--border)',
+                      borderRadius: '12px',
+                      padding: '12px 16px',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      boxShadow: isActive ? `0 4px 14px ${m.color}33` : 'none'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: isActive ? m.color : 'var(--text-dim)', textTransform: 'uppercase' }}>
+                        {m.shortLabel}
+                      </span>
+                      {m.targetLabel && (
+                        <span style={{ fontSize: '9px', fontWeight: 800, padding: '1px 6px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171' }}>
+                          {m.targetLabel}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>
+                      {m.formattedCurrent}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Chart Display Area */}
+          <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)' }}>
+            {telemetryMode === 'hero' && (
+              heroChart ? (
+                <Chart option={heroChart} height={380} />
+              ) : (
+                <div style={{ height: '260px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)' }}>
+                  {loading ? 'Loading Telemetry...' : 'No telemetry data available for selected entity.'}
+                </div>
+              )
+            )}
+
+            {telemetryMode === 'correlation' && (
+              correlationChart ? (
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginBottom: '12px', textAlign: 'center' }}>
+                    Comparing Primary Network Load (Left Y-Axis) against Performance / User Experience (Right Y-Axis)
+                  </div>
+                  <Chart option={correlationChart} height={380} />
+                </div>
+              ) : (
+                <div style={{ height: '260px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)' }}>
+                  {loading ? 'Loading Correlation...' : 'No correlation data available.'}
+                </div>
+              )
+            )}
+
+            {telemetryMode === 'grid' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px' }}>
+                {telemetryMetrics.map((metric) => {
+                  const cardOpt = standaloneKpiChartOption(result!, metric, grain)
+                  return (
+                    <div
+                      key={metric.id}
+                      style={{
+                        background: 'var(--bg-3)',
+                        borderRadius: '12px',
+                        border: '1px solid var(--border)',
+                        padding: '16px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: '#f8fafc' }}>
+                            {metric.shortLabel}
+                          </span>
+                          {metric.targetLabel && (
+                            <span style={{ marginLeft: '8px', fontSize: '10px', color: '#f87171' }}>
+                              ({metric.targetLabel})
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '14px', fontWeight: 800, color: metric.color }}>
+                          {metric.formattedCurrent}
+                        </span>
+                      </div>
+                      <Chart option={cardOpt} height={200} />
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useAppStore, emit } from '../store'
 import { errMsg } from '../lib/flows'
 import type { KpiDefinition, Technology, DerivedKPI, BetterDirection } from '../../../shared/api'
@@ -10,15 +10,15 @@ export interface TargetsModalProps {
 
 export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): React.JSX.Element | null {
   const selectedTech = useAppStore((s) => s.selectedTech)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
   const [activeTech, setActiveTech] = useState<Technology>(selectedTech || '4G')
   const [defs, setDefs] = useState<KpiDefinition[]>([])
-  const [derivedList, setDerivedList] = useState<DerivedKPI[]>([])
+  const [, setDerivedList] = useState<DerivedKPI[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  // Local state for editable targets
   const [editedTargets, setEditedTargets] = useState<Record<number, {
     target: string
     warningThreshold: string
@@ -68,76 +68,34 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
     }
   }, [isOpen, selectedTech, load])
 
-  useEffect(() => {
-    if (!isOpen) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isOpen, onClose])
-
-  if (!isOpen) return null
-
-  const handleTechChange = (tech: Technology) => {
-    setActiveTech(tech)
-    void load(tech)
+  const handleTechChange = (t: Technology) => {
+    setActiveTech(t)
+    setSelectedTech(t)
+    void load(t)
   }
 
-  const handleTargetChange = (kpiId: number, field: 'target' | 'warningThreshold' | 'criticalThreshold' | 'betterDirection', val: string) => {
-    setEditedTargets((prev) => ({
-      ...prev,
-      [kpiId]: {
-        ...prev[kpiId],
-        [field]: val
-      }
-    }))
-  }
-
-  const handleResetDefaults = async () => {
-    if (!confirm(`Reset all ${activeTech} KPI targets and thresholds to standard defaults?`)) return
-    setLoading(true)
-    setError(null)
-    try {
-      await window.api.kpis.resetDefaults(activeTech)
-      await load(activeTech)
-      setSuccess(`${activeTech} targets reset to baseline defaults.`)
-      emit('RULESET_CHANGED')
-      emit('KPIDEFS_CHANGED')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (e) {
-      setError(errMsg(e))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSaveAll = async () => {
+  const handleSave = async () => {
     setSaving(true)
     setError(null)
+    setSuccess(null)
     try {
       for (const d of defs) {
-        const edits = editedTargets[d.kpiId]
-        if (!edits) continue
-
-        const target = edits.target.trim() === '' ? null : Number(edits.target)
-        const warningThreshold = edits.warningThreshold.trim() === '' ? null : Number(edits.warningThreshold)
-        const criticalThreshold = edits.criticalThreshold.trim() === '' ? null : Number(edits.criticalThreshold)
-        const worseIsHigher = edits.betterDirection === 'lower_is_better'
+        const edited = editedTargets[d.kpiId]
+        if (!edited) continue
+        const numTarget = edited.target.trim() === '' ? null : Number(edited.target)
+        const numWarn = edited.warningThreshold.trim() === '' ? null : Number(edited.warningThreshold)
+        const numCrit = edited.criticalThreshold.trim() === '' ? null : Number(edited.criticalThreshold)
 
         await window.api.kpis.save({
           ...d,
-          target,
-          warningThreshold,
-          criticalThreshold,
-          betterDirection: edits.betterDirection,
-          worseIsHigher
+          target: numTarget,
+          warningThreshold: numWarn,
+          criticalThreshold: numCrit,
+          betterDirection: edited.betterDirection
         })
       }
-
-      setSuccess(`All ${activeTech} targets and thresholds updated successfully.`)
-      emit('RULESET_CHANGED')
-      emit('KPIDEFS_CHANGED')
+      setSuccess(`Successfully updated targets for ${activeTech}!`)
+      emit('WORKSPACE_CHANGED')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
       setError(errMsg(e))
@@ -146,242 +104,98 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
     }
   }
 
-  const handleToggleDerived = async (derived: DerivedKPI) => {
-    try {
-      await window.api.derived.save({
-        ...derived,
-        enabled: !derived.enabled
-      })
-      await load(activeTech)
-      emit('KPIDEFS_CHANGED')
-    } catch (e) {
-      setError(errMsg(e))
-    }
-  }
+  if (!isOpen) return null
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose} style={{ zIndex: 1100 }}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="targets-modal-title"
-        className="palette"
-        style={{
-          width: '900px',
-          maxWidth: '95vw',
-          maxHeight: '90vh',
-          display: 'flex',
-          flexDirection: 'column',
-          padding: 20,
-          background: 'var(--surface-raised, #181c24)',
-          borderRadius: 8,
-          boxShadow: '0 12px 40px rgba(0,0,0,0.6)'
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.8)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '24px' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '28px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div>
-            <h2 id="targets-modal-title" style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Technology Targets & Thresholds</h2>
-            <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: 2 }}>
-              Configure QoS compliance thresholds, warnings, and derived metrics for each technology.
-            </div>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>🎯 Technology Targets & Threshold Governance</h2>
+            <p style={{ fontSize: '12px', color: 'var(--text-dim)', margin: '4px 0 0 0' }}>Configure KPI target limits and severity thresholds</p>
           </div>
-          <button className="btn btn-sm" onClick={onClose} aria-label="Close">✕</button>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', fontSize: '20px', cursor: 'pointer' }}>✕</button>
         </div>
 
-        {/* Technology Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+        {/* Tech Pills */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
           {(['2G', '3G', '4G'] as Technology[]).map((t) => (
             <button
               key={t}
-              className={`btn ${activeTech === t ? 'btn-primary' : 'btn-ghost'}`}
-              style={{ fontWeight: 600, minWidth: '70px' }}
               onClick={() => handleTechChange(t)}
+              style={{
+                padding: '6px 18px',
+                fontSize: '12px',
+                fontWeight: 800,
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                background: activeTech === t ? 'linear-gradient(135deg, #059669, #10b981)' : 'var(--bg-3)',
+                color: activeTech === t ? '#ffffff' : 'var(--text-dim)'
+              }}
             >
               {t} {t === selectedTech && '(Active)'}
             </button>
           ))}
         </div>
 
-        {error && (
-          <div className="callout callout-error" style={{ marginBottom: 12 }}>
-            {error}
-          </div>
-        )}
-        {success && (
-          <div className="callout callout-success" style={{ marginBottom: 12 }}>
-            ✓ {success}
-          </div>
-        )}
+        {error && <div style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', borderRadius: '8px', marginBottom: '16px', fontSize: '12px' }}>{error}</div>}
+        {success && <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', borderRadius: '8px', marginBottom: '16px', fontSize: '12px' }}>{success}</div>}
 
-        {/* Targets Table */}
-        <div style={{ flex: 1, overflowY: 'auto', marginBottom: 16, paddingRight: 4 }}>
+        {/* Form List */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
           {loading ? (
-            <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-dim)' }}>Loading targets...</div>
+            <div style={{ textAlign: 'center', padding: '30px', color: 'var(--text-dim)' }}>Loading targets...</div>
           ) : (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: 8, color: 'var(--text)' }}>
-                  Standard & Imported KPIs ({defs.length})
-                </div>
-                <table className="data-table" style={{ width: '100%', fontSize: '13px' }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: 'left' }}>KPI Name</th>
-                      <th style={{ textAlign: 'left', width: '100px' }}>Category</th>
-                      <th style={{ textAlign: 'center', width: '130px' }}>Direction</th>
-                      <th style={{ textAlign: 'right', width: '110px' }}>Target</th>
-                      <th style={{ textAlign: 'right', width: '110px' }}>Warning</th>
-                      <th style={{ textAlign: 'right', width: '110px' }}>Critical</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {defs.map((d) => {
-                      const cur = editedTargets[d.kpiId] ?? {
-                        target: '',
-                        warningThreshold: '',
-                        criticalThreshold: '',
-                        betterDirection: 'lower_is_better'
-                      }
-                      const isDerived = Boolean(d.isDerived || d.key.startsWith('3g_') || d.key.includes('congestion'))
-
-                      return (
-                        <tr key={d.kpiId}>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>{d.label}</div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <span><code>{d.key}</code></span>
-                              {d.unit && <span>({d.unit})</span>}
-                              {d.isCore && <span className="badge badge-tech" style={{ fontSize: '9px', padding: '1px 4px' }}>CORE</span>}
-                              {isDerived && <span className="badge badge-derived" style={{ fontSize: '9px', padding: '1px 4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>DERIVED</span>}
-                            </div>
-                          </td>
-                          <td>
-                            <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>{d.category ?? '—'}</span>
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <select
-                              aria-label={`${d.label} direction`}
-                              className="input"
-                              style={{ padding: '2px 6px', fontSize: '11px', height: '28px' }}
-                              value={cur.betterDirection}
-                              onChange={(e) => handleTargetChange(d.kpiId, 'betterDirection', e.target.value)}
-                            >
-                              <option value="lower_is_better">≤ Lower is better</option>
-                              <option value="higher_is_better">≥ Higher is better</option>
-                            </select>
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <input
-                              aria-label={`${d.label} target`}
-                              className="input"
-                              type="number"
-                              step="any"
-                              style={{ width: '100%', textAlign: 'right', padding: '2px 6px', height: '28px' }}
-                              value={cur.target}
-                              placeholder="—"
-                              onChange={(e) => handleTargetChange(d.kpiId, 'target', e.target.value)}
-                            />
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <input
-                              aria-label={`${d.label} warning threshold`}
-                              className="input"
-                              type="number"
-                              step="any"
-                              style={{ width: '100%', textAlign: 'right', padding: '2px 6px', height: '28px' }}
-                              value={cur.warningThreshold}
-                              placeholder="—"
-                              onChange={(e) => handleTargetChange(d.kpiId, 'warningThreshold', e.target.value)}
-                            />
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <input
-                              aria-label={`${d.label} critical threshold`}
-                              className="input"
-                              type="number"
-                              step="any"
-                              style={{ width: '100%', textAlign: 'right', padding: '2px 6px', height: '28px' }}
-                              value={cur.criticalThreshold}
-                              placeholder="—"
-                              onChange={(e) => handleTargetChange(d.kpiId, 'criticalThreshold', e.target.value)}
-                            />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Derived Formulas Section */}
-              {derivedList.length > 0 && (
-                <div style={{ marginTop: 24, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: 8, color: 'var(--text)' }}>
-                    Configured Derived Formulas & Congestion Aggregations
+            defs.map((def) => {
+              const edited = editedTargets[def.kpiId] || { target: '', warningThreshold: '', criticalThreshold: '', betterDirection: 'higher_is_better' }
+              return (
+                <div key={def.kpiId} style={{ background: 'var(--bg-3)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 800, color: '#f8fafc' }}>{def.label}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Unit: {def.unit || '—'}</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {derivedList.map((der) => (
-                      <div
-                        key={der.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '10px 14px',
-                          background: 'rgba(255,255,255,0.03)',
-                          borderRadius: 6,
-                          border: '1px solid var(--border)'
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                            {der.name}
-                            <span className="badge badge-derived" style={{ fontSize: '9px', padding: '1px 4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>DERIVED KPI</span>
-                            <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>[{der.operation}]</span>
-                          </div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 4, fontFamily: 'monospace' }}>
-                            Formula: {der.sourceKPIs.join(' + ')}
-                          </div>
-                          {der.description && (
-                            <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
-                              {der.description}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={der.enabled !== false}
-                              onChange={() => handleToggleDerived(der)}
-                            />
-                            Enabled
-                          </label>
-                        </div>
-                      </div>
-                    ))}
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'block', marginBottom: '4px' }}>Target</label>
+                      <input
+                        type="text"
+                        value={edited.target}
+                        onChange={(e) => setEditedTargets({ ...editedTargets, [def.kpiId]: { ...edited, target: e.target.value } })}
+                        style={{ width: '100%', background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px', fontSize: '12px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'block', marginBottom: '4px' }}>Warning Threshold</label>
+                      <input
+                        type="text"
+                        value={edited.warningThreshold}
+                        onChange={(e) => setEditedTargets({ ...editedTargets, [def.kpiId]: { ...edited, warningThreshold: e.target.value } })}
+                        style={{ width: '100%', background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px', fontSize: '12px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'block', marginBottom: '4px' }}>Critical Threshold</label>
+                      <input
+                        type="text"
+                        value={edited.criticalThreshold}
+                        onChange={(e) => setEditedTargets({ ...editedTargets, [def.kpiId]: { ...edited, criticalThreshold: e.target.value } })}
+                        style={{ width: '100%', background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px', fontSize: '12px' }}
+                      />
+                    </div>
                   </div>
                 </div>
-              )}
-            </>
+              )
+            })
           )}
         </div>
 
-        {/* Modal Footer Actions */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-          <button className="btn btn-ghost" onClick={handleResetDefaults} disabled={loading || saving}>
-            ↺ Reset Defaults
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+          <button onClick={onClose} style={{ padding: '10px 20px', background: 'var(--bg-3)', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>Close</button>
+          <button onClick={() => void handleSave()} disabled={saving} style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #059669, #10b981)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)' }}>
+            {saving ? 'Saving...' : 'Save Targets'}
           </button>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
-              Cancel
-            </button>
-            <button className="btn btn-primary" onClick={handleSaveAll} disabled={saving || loading}>
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
         </div>
       </div>
     </div>

@@ -1,425 +1,277 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store'
 import type {
-  CellIntelligenceRow, CellIntelligenceResult, CellDetail, Lifecycle, Trend, Severity
+  CellIntelligenceResult, CellDetail, Technology, CellIntelligenceRow
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
 import { cellDetailOption } from '../lib/cellCharts'
 
-const LIFECYCLES: Lifecycle[] = ['Persistent NC', 'Recurring NC', 'New NC', 'Recovering', 'Healthy']
-const TRENDS: Trend[] = ['Worsening', 'Stable', 'Improving']
-const SEVERITIES: Severity[] = ['Critical', 'High', 'Watch', 'Normal']
-const PRIORITY_FLOORS = [
-  { value: 0, label: 'Any priority' },
-  { value: 75, label: '≥ 75 (High+)' },
-  { value: 50, label: '≥ 50 (Medium+)' },
-  { value: 25, label: '≥ 25 (Watch+)' }
-]
-
-function Chip({ text, tone }: { text: string; tone?: 'ok' | 'warn' | 'bad' | 'dim' }): React.JSX.Element {
-  return <span className={`chip chip-${tone ?? 'dim'}`}>{text}</span>
-}
-
-const BAND_COLOR: Record<string, string> = {
-  Critical: 'var(--danger)',
-  High: 'var(--warn)',
-  Medium: 'var(--accent)',
-  Watch: 'var(--text-dim)',
-  Low: 'var(--text-faint)'
-}
-
 export default function CellIntelligence(): React.JSX.Element {
-  const workspace = useAppStore((s) => s.workspace)
   const grain = useAppStore((s) => s.grain)
   const selectedTech = useAppStore((s) => s.selectedTech)
-  const togglePin = useAppStore((s) => s.togglePin)
-  const isPinned = useAppStore((s) => s.isPinned)
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
   const setModule = useAppStore((s) => s.setModule)
+  const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
+
+  const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [data, setData] = useState<CellIntelligenceResult>({ total: 0, rows: [] })
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [fLifecycle, setFLifecycle] = useState<string>('')
-  const [fTrend, setFTrend] = useState<string>('')
-  const [fSeverity, setFSeverity] = useState<string>('')
-  const [fPriority, setFPriority] = useState<number>(0)
-  const [prbThreshold, setPrbThreshold] = useState(80)
+  const [fSeverity, setFSeverity] = useState<string>('all')
   const [detail, setDetail] = useState<CellDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [kpiCatFilter, setKpiCatFilter] = useState<string>('All')
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const pageSize = 100
+  useEffect(() => {
+    if (selectedTech && selectedTech !== tech) {
+      setTech(selectedTech)
+    }
+  }, [selectedTech])
 
-  const load = useCallback(
-    async (offset: number, append: boolean): Promise<void> => {
-      setLoading(true)
-      setError(null)
-      try {
-        const res = await window.api.analytics.cellIntelligence({
-          search: search.trim() || undefined,
-          lifecycle: (fLifecycle || undefined) as Lifecycle | undefined,
-          trend: (fTrend || undefined) as Trend | undefined,
-          severity: (fSeverity || undefined) as Severity | undefined,
-          minPriority: fPriority || undefined,
-          limit: pageSize,
-          offset
-        })
-        setData((prev) => ({
-          total: res.total,
-          rows: append ? [...prev.rows, ...res.rows] : res.rows
-        }))
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        setLoading(false)
-      }
-    },
-    [search, fLifecycle, fTrend, fSeverity, fPriority]
-  )
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await window.api.analytics.cellIntelligence({
+        search: search.trim() || undefined,
+        severity: fSeverity !== 'all' ? (fSeverity as any) : undefined,
+        limit: 50,
+        offset: 0
+      })
+      setData(res)
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false)
+    }
+  }, [search, fSeverity])
 
-  // reset to page 0 on any filter change (search debounced) or tech switch
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current)
-    debounce.current = setTimeout(() => void load(0, false), search === '' ? 0 : 350)
+    debounce.current = setTimeout(() => {
+      void load()
+    }, search === '' ? 0 : 250)
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [search, fLifecycle, fTrend, fSeverity, fPriority, selectedTech, grain, workspace?.path, load])
+  }, [load, search, grain, tech])
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const rules = await window.api.rules.get()
-        if (rules) setPrbThreshold(rules.prbThresholdPct)
-      } catch {
-        /* keep default */
-      }
-    })()
-  }, [workspace?.path])
-
-  async function openDetail(row: CellIntelligenceRow): Promise<void> {
+  const openCellDetail = async (row: CellIntelligenceRow) => {
+    setDetailOpen(true)
     setDetailLoading(true)
     try {
-      const d = await window.api.analytics.cellDetail(row.cellId, grain)
-      if (d) {
-        setDetail(d)
-        setDetailOpen(true)
-      }
+      const det = await window.api.analytics.cellDetail(row.cellId)
+      setDetail(det)
+    } catch {
+      setDetail(null)
     } finally {
       setDetailLoading(false)
     }
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setDetailOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  const handleInvestigate = (row: CellIntelligenceRow) => {
+    setInvestigationTarget({
+      id: row.cellId,
+      name: row.cellName,
+      scope: 'cell',
+      path: [row.region || '', row.district || '', row.site || ''].filter(Boolean)
+    })
+    setModule('investigation')
+  }
 
-  const hasMore = data.rows.length < data.total
-  const loadedAny = data.rows.length > 0 || loading
+  const chartOption = detail ? cellDetailOption(detail, 80) : null
 
   return (
-    <div className="module">
-      <div className="module-head">
-        <h2>Cell Intelligence</h2>
-        <span className="module-workspace">{workspace?.name}</span>
-        {data.total > 0 && <span className="module-workspace">{data.total.toLocaleString()} cells · latest week</span>}
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
+      {/* Executive Control Bar */}
+      <div
+        style={{
+          background: 'var(--bg-card)',
+          padding: '14px 20px',
+          borderRadius: '12px',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          {/* Technology Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Technology:
+            </span>
+            <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              {(['2G', '3G', '4G'] as Technology[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  style={{
+                    padding: '5px 16px',
+                    fontSize: '12px',
+                    fontWeight: 800,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    background: tech === t ? 'linear-gradient(135deg, #059669, #10b981)' : 'transparent',
+                    color: tech === t ? '#ffffff' : 'var(--text-dim)',
+                    boxShadow: tech === t ? '0 2px 6px rgba(16, 185, 129, 0.3)' : 'none'
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Search Input */}
+          <input
+            type="text"
+            placeholder={`Search ${tech} cell name, ID or BTS site...`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              background: 'var(--bg-3)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              padding: '6px 14px',
+              fontSize: '12px',
+              width: '260px'
+            }}
+          />
+
+          {/* Severity Filter Pills */}
+          <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            {['all', 'critical', 'high', 'watch', 'normal'].map((sev) => (
+              <button
+                key={sev}
+                onClick={() => setFSeverity(sev)}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textTransform: 'capitalize',
+                  background: fSeverity === sev ? 'var(--accent)' : 'transparent',
+                  color: fSeverity === sev ? '#ffffff' : 'var(--text-dim)'
+                }}
+              >
+                {sev}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontWeight: 600 }}>
+          Total Cells: <strong style={{ color: '#f8fafc' }}>{data.total}</strong>
+        </div>
       </div>
 
-      <div className="row-actions filter-row">
-        <input
-          className="input"
-          placeholder="Search cell / site / district…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select className="sel" value={fLifecycle} onChange={(e) => setFLifecycle(e.target.value)}>
-          <option value="">All lifecycles</option>
-          {LIFECYCLES.map((l) => (
-            <option key={l} value={l}>{l}</option>
-          ))}
-        </select>
-        <select className="sel" value={fTrend} onChange={(e) => setFTrend(e.target.value)}>
-          <option value="">All trends</option>
-          {TRENDS.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <select className="sel" value={fSeverity} onChange={(e) => setFSeverity(e.target.value)}>
-          <option value="">All severities</option>
-          {SEVERITIES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select className="sel" value={fPriority} onChange={(e) => setFPriority(Number(e.target.value))}>
-          {PRIORITY_FLOORS.map((p) => (
-            <option key={p.value} value={p.value}>{p.label}</option>
-          ))}
-        </select>
-        {(search || fLifecycle || fTrend || fSeverity || fPriority > 0) && (
-          <button
-            className="btn"
-            onClick={() => {
-              setSearch('')
-              setFLifecycle('')
-              setFTrend('')
-              setFSeverity('')
-              setFPriority(0)
-            }}
-          >
-            Reset
-          </button>
+      {/* Main Executive Banner Card */}
+      <div
+        style={{
+          background: 'var(--bg-card)',
+          padding: '20px 24px',
+          borderRadius: '16px',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '20px',
+          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ position: 'relative', width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="80" height="80" viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)', width: '80px', height: '80px' }}>
+              <path stroke="var(--bg-3)" strokeWidth="3.5" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              <path stroke="#38bdf8" strokeDasharray="90, 100" strokeWidth="3.5" strokeLinecap="round" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            </svg>
+            <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>{data.total}</span>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800, background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                {tech}
+              </span>
+              <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>
+                Cell Telemetry & Sector Health Intelligence
+              </h2>
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
+              Granularity: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · Showing {data.rows.length} sector cells matching filters.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Cell Cards Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+        {data.rows.length === 0 ? (
+          <div style={{ background: 'var(--bg-card)', padding: '40px', textAlign: 'center', borderRadius: '16px', border: '1px solid var(--border)', color: 'var(--text-dim)', gridColumn: '1 / -1' }}>
+            {loading ? 'Loading cells...' : 'No cells found.'}
+          </div>
+        ) : (
+          data.rows.map((cell) => (
+            <div key={cell.cellId} style={{ background: 'var(--bg-card)', padding: '18px 20px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 800, color: '#f8fafc' }}>{cell.cellName}</span>
+                  <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', background: cell.severity === 'Critical' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)', color: cell.severity === 'Critical' ? '#f87171' : '#fbbf24', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                    {cell.severity || 'Normal'}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Site: {cell.site || '—'}</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>PRB Utilization: <strong style={{ color: '#f87171' }}>{cell.prbAvg != null ? `${cell.prbAvg.toFixed(1)}%` : '—'}</strong></div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => void openCellDetail(cell)}
+                  style={{ flex: 1, padding: '6px 12px', fontSize: '11px', fontWeight: 700, background: 'var(--bg-3)', color: '#f8fafc', border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  📊 View Telemetry
+                </button>
+                <button
+                  onClick={() => handleInvestigate(cell)}
+                  style={{ padding: '6px 12px', fontSize: '11px', fontWeight: 700, background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  🔬 Investigate
+                </button>
+              </div>
+            </div>
+          ))
         )}
       </div>
 
-      {error && <div className="notice notice-error">{error}</div>}
-      {!loadedAny && !error && (
-        <div className="notice">No cell classifications yet — import data first.</div>
-      )}
-
-      {data.rows.length > 0 && (
-        <div className="card">
-          <div className="preview-scroll cell-table">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Cell</th>
-                  <th>Site</th>
-                  <th>District</th>
-                  <th>Lifecycle</th>
-                  <th>Trend</th>
-                  <th>Severity</th>
-                  <th style={{ textAlign: 'right' }}>
-                    {selectedTech === '2G' ? 'TCH Cong avg' : selectedTech === '3G' ? '3G Load avg' : 'PRB avg'}
-                  </th>
-                  <th style={{ textAlign: 'right' }}>Breach</th>
-                  <th style={{ textAlign: 'right' }}>Priority</th>
-                  {data.rows[0]?.kpis.map((k) => (
-                    <th key={k.key} style={{ textAlign: 'right' }} title={`${k.label} target ${k.target ?? '—'}`}>
-                      {k.label}
-                      {k.breached && ' ⚠'}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r) => (
-                  <tr
-                    key={r.cellId}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`View details for cell ${r.cellName}`}
-                    className="cell-row"
-                    onClick={() => void openDetail(r)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        void openDetail(r)
-                      }
-                    }}
-                  >
-                    <td>{r.cellName}</td>
-                    <td>{r.site ?? '—'}</td>
-                    <td>{r.district ?? '—'}</td>
-                    <td>
-                      <Chip
-                        text={r.lifecycle}
-                        tone={r.lifecycle === 'Persistent NC' ? 'bad' : r.lifecycle === 'Recurring NC' ? 'warn' : r.lifecycle === 'New NC' ? 'ok' : 'dim'}
-                      />
-                    </td>
-                    <td>
-                      <Chip text={r.trend} tone={r.trend === 'Worsening' ? 'bad' : r.trend === 'Improving' ? 'ok' : 'dim'} />
-                    </td>
-                    <td>
-                      <Chip text={r.severity} tone={r.severity === 'Critical' ? 'bad' : r.severity === 'High' ? 'warn' : 'dim'} />
-                    </td>
-                    <td className="num">{r.prbAvg != null ? `${r.prbAvg.toFixed(1)}%` : '—'}</td>
-                    <td className="num">{r.breachDays}</td>
-                    <td className="num">
-                      {r.priorityScore != null ? (
-                        <span style={{ color: BAND_COLOR[r.priorityBand ?? 'Low'] ?? 'var(--text)', fontWeight: 700 }}>
-                          {r.priorityScore}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    {r.kpis.map((k) => (
-                      <td key={k.key} className="num">
-                        {k.value != null ? (
-                          <span className={k.breached ? 'kpi-breached' : ''} title={k.breached ? `Breaches ${k.target}` : k.target != null ? `Within ${k.target}` : undefined}>
-                            {Number(k.value).toFixed(1)}
-                            {k.unit ? ` ${k.unit}` : ''}
-                            {k.breached && ' ⚠'}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="row-actions">
-            <span className="card-note">
-              Showing {data.rows.length.toLocaleString()} of {data.total.toLocaleString()}
-            </span>
-            {hasMore && (
-              <button className="btn" disabled={loading} onClick={() => void load(data.rows.length, true)}>
-                {loading ? 'Loading…' : 'Show more'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {detailOpen && detail && (
-        <div className="drawer-overlay" onClick={() => setDetailOpen(false)}>
-          <div className="drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="drawer-head">
-              <div>
-                <div className="drawer-title">{detail.cellName}</div>
-                <div className="drawer-sub">
-                  {[detail.site, detail.district, detail.region].filter(Boolean).join(' · ') || '—'}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  className={`btn btn-sm ${isPinned(`cell:${detail.cellId}`) ? 'btn-primary' : 'btn-ghost'}`}
-                  style={{ border: '1px solid var(--border)' }}
-                  onClick={() => {
-                    togglePin({
-                      id: `cell:${detail.cellId}`,
-                      type: 'cell',
-                      name: detail.cellName,
-                      detail: detail.site ?? undefined
-                    })
-                  }}
-                >
-                  {isPinned(`cell:${detail.cellId}`) ? '⭐ Pinned' : '☆ Pin'}
-                </button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  style={{ border: '1px solid var(--border)' }}
-                  title="Open in Simulation Lab"
-                  onClick={() => {
-                    setDetailOpen(false)
-                    setModule('simulation-lab')
-                  }}
-                >
-                  🧪 Simulate
-                </button>
-                <button className="btn btn-sm" onClick={() => setDetailOpen(false)}>✕</button>
-              </div>
+      {/* Cell Detail Modal */}
+      {detailOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '24px' }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '28px', maxWidth: '720px', width: '100%', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>📊 Cell Telemetry: {detail?.cellName || 'Loading...'}</h3>
+              <button onClick={() => setDetailOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
-
-            {detail.current && (
-              <div className="drawer-current">
-                <Chip
-                  text={detail.current.lifecycle}
-                  tone={detail.current.lifecycle === 'Persistent NC' ? 'bad' : detail.current.lifecycle === 'Recurring NC' ? 'warn' : detail.current.lifecycle === 'New NC' ? 'ok' : 'dim'}
-                />
-                <Chip text={detail.current.trend} tone={detail.current.trend === 'Worsening' ? 'bad' : detail.current.trend === 'Improving' ? 'ok' : 'dim'} />
-                <Chip text={detail.current.severity} tone={detail.current.severity === 'Critical' ? 'bad' : detail.current.severity === 'High' ? 'warn' : 'dim'} />
-                {detail.current.priorityScore != null && (
-                  <span className="drawer-prio" style={{ color: BAND_COLOR[detail.current.priorityBand ?? 'Low'] }}>
-                    Priority {detail.current.priorityScore} · {detail.current.priorityBand}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {detail.kpis.length > 0 && (
-              <div className="card drawer-kpis">
-                <div className="drawer-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span>{selectedTech} Cell KPI Cards (latest week)</span>
-                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    {['All', 'Core', 'Congestion', 'Accessibility', 'Retainability', 'Availability', 'Integrity'].map((cat) => (
-                      <button
-                        key={cat}
-                        className={`btn btn-xs ${kpiCatFilter === cat ? 'btn-primary' : 'btn-ghost'}`}
-                        style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid var(--border)' }}
-                        onClick={() => setKpiCatFilter(cat)}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="kpi-grid">
-                  {detail.kpis
-                    .filter((k) => {
-                      if (kpiCatFilter === 'All') return true
-                      if (kpiCatFilter === 'Core') return k.breached || k.target != null
-                      if (!k.category) return true
-                      return k.category.toLowerCase().includes(kpiCatFilter.toLowerCase())
-                    })
-                    .map((k) => (
-                      <div key={k.key} className={`kpi-cell${k.breached ? ' kpi-breached' : ''}`}>
-                        <span className="kpi-grid-label">{k.label}</span>
-                        <span className="kpi-grid-value">
-                          {k.value != null ? `${Number(k.value).toFixed(1)}${k.unit ? ` ${k.unit}` : ''}` : '—'}
-                          {k.breached && ' ⚠'}
-                        </span>
-                        <span className="kpi-grid-target">
-                          target {k.target ?? '—'} · {k.worseIsHigher ? '↑ worse' : '↓ worse'}
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-
             {detailLoading ? (
-              <p className="card-note">Loading {grain} data…</p>
-            ) : detail.weeks.length > 0 ? (
-              <Chart
-                option={cellDetailOption(
-                  detail,
-                  prbThreshold,
-                  grain,
-                  selectedTech,
-                  kpiCatFilter !== 'All'
-                    ? detail.kpis.filter((k) => {
-                        if (kpiCatFilter === 'Core') return k.isCore || k.breached || k.target != null
-                        if (!k.category) return true
-                        return k.category.toLowerCase().includes(kpiCatFilter.toLowerCase())
-                      })
-                    : undefined
-                )}
-                height={540}
-              />
+              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-dim)' }}>Loading cell telemetry...</div>
+            ) : chartOption ? (
+              <Chart option={chartOption} height={320} />
             ) : (
-              <p className="card-note">No {grain} history for this cell yet.</p>
+              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-dim)' }}>No chart telemetry available.</div>
             )}
-
-            {detail.weeks.length > 0 && (
-              <div className="week-strip">
-                {detail.weeks.map((w) => (
-                  <span
-                    key={w.weekStart}
-                    className={`week-cell${w.isNc ? ' week-nc' : ''}`}
-                    title={`${w.weekStart}: ${w.lifecycle} · ${w.severity}`}
-                  >
-                    {w.lifecycle === 'Persistent NC' ? 'P' : w.lifecycle === 'Recurring NC' ? 'R' : w.lifecycle === 'New NC' ? 'N' : w.lifecycle === 'Recovering' ? 'C' : '·'}
-                  </span>
-                ))}
-              </div>
-            )}
-            <p className="card-note" style={{ marginTop: 4 }}>
-              {grain === 'daily'
-                ? `Daily history (day-by-day observations). ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
-                : grain === 'monthly'
-                ? `Monthly history. ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%.`
-                : `Weekly history (ISO weeks). ${selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? 'Utilization' : 'TCH'} threshold: ${prbThreshold}%; strip marks NC state (N new · R recurring · P persistent · C recovering).`}
-            </p>
+            <button onClick={() => setDetailOpen(false)} style={{ width: '100%', padding: '12px', background: 'var(--bg-3)', color: '#fff', border: '1px solid var(--border)', borderRadius: '10px', fontWeight: 700, cursor: 'pointer', marginTop: '20px' }}>
+              Close Telemetry
+            </button>
           </div>
         </div>
       )}

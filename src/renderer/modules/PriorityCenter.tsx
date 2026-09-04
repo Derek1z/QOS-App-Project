@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store'
 import type {
   ActionStatus, InvestigationScope, PriorityBand, PriorityCenterRow,
-  PriorityCenterResult
+  PriorityCenterResult, Technology
 } from '../../../shared/api'
 
 const STATUSES: ActionStatus[] = [
@@ -17,56 +16,33 @@ const STATUSES: ActionStatus[] = [
 ]
 const BANDS: PriorityBand[] = ['Critical', 'High', 'Medium', 'Watch', 'Low']
 
-const bandTone = (b: PriorityBand | null): string =>
-  b === 'Critical' ? 'bad' : b === 'High' ? 'warn' : b === 'Medium' ? 'ok' : 'dim'
-
-function statusTone(s: ActionStatus | null): string {
-  switch (s) {
-    case 'Unreviewed': return 'dim'
-    case 'Investigating': return 'warn'
-    case 'Escalated': return 'bad'
-    case 'Optimization in progress': return 'ok'
-    case 'Monitoring': return 'ok'
-    case 'Resolved': return 'ok'
-    case 'Deferred': return 'dim'
-    default: return 'dim'
-  }
-}
-
-function Chip({ text, tone }: { text: string; tone: string }): ReactElement {
-  return <span className={`chip chip-${tone}`}>{text}</span>
-}
-
-function fmtScore(s: number | null): string {
-  return s == null ? '—' : String(Math.round(s))
-}
-
 export default function PriorityCenter(): React.JSX.Element {
-  const workspace = useAppStore((s) => s.workspace)
   const selectedTech = useAppStore((s) => s.selectedTech ?? '4G')
+  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
   const setModule = useAppStore((s) => s.setModule)
   const setInvestigationTarget = useAppStore((s) => s.setInvestigationTarget)
+  const storeGrain = useAppStore((s) => s.grain)
+  const setStoreGrain = useAppStore((s) => s.setGrain)
 
+  const [tech, setTech] = useState<Technology>(selectedTech)
   const [scope, setScope] = useState<InvestigationScope>('cell')
   const [status, setStatus] = useState<ActionStatus | 'unset' | ''>('')
   const [band, setBand] = useState<PriorityBand | ''>('')
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<'priority' | 'due' | 'name'>('priority')
-  const [overdueOnly, setOverdueOnly] = useState(false)
   const [result, setResult] = useState<PriorityCenterResult | null>(null)
-  const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [bulkStatus, setBulkStatus] = useState('')
-  const [bulkMsg, setBulkMsg] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [, setError] = useState<string | null>(null)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const PAGE = 100
-  const storeGrain = useAppStore((s) => s.grain)
+  useEffect(() => {
+    if (selectedTech && selectedTech !== tech) {
+      setTech(selectedTech)
+    }
+  }, [selectedTech])
 
   const load = useCallback(
-    async (ofs: number): Promise<void> => {
+    async (): Promise<void> => {
       setLoading(true)
       setError(null)
       try {
@@ -76,267 +52,377 @@ export default function PriorityCenter(): React.JSX.Element {
           band: band || undefined,
           search: search.trim() || undefined,
           sort,
-          overdueOnly,
-          limit: PAGE,
-          offset: ofs
+          limit: 50,
+          offset: 0
         })
         setResult(r)
-        setOffset(ofs)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setLoading(false)
       }
     },
-    [scope, status, band, search, sort, overdueOnly, selectedTech, storeGrain]
+    [scope, status, band, search, sort, tech]
   )
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current)
     debounce.current = setTimeout(() => {
-      void load(0)
+      void load()
     }, search === '' ? 0 : 250)
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [load, search])
+  }, [load, search, storeGrain, tech])
 
-  useEffect(() => {
-    setSelected(new Set())
-  }, [scope, status, band, sort, overdueOnly])
-
-  const rows = useMemo(() => result?.rows ?? [], [result])
-  const total = result?.total ?? 0
-  const byStatus = result?.byStatus ?? {}
-  const overdue = result?.overdue ?? 0
-
-  function toggle(id: number): void {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    setSelected(next)
-  }
-
-  async function applyBulk(): Promise<void> {
-    if (!bulkStatus || selected.size === 0) return
-    const newStatus = bulkStatus === '__unset' ? null : (bulkStatus as ActionStatus)
-    for (const id of selected) {
-      const row = rows.find((r) => r.id === id)
-      if (!row) continue
-      await window.api.investigation.setStatus(row.scope, row.id, {
-        status: newStatus,
-        owner: newStatus == null ? null : row.owner,
-        externalTicket: newStatus == null ? null : row.externalTicket,
-        targetReviewDate: newStatus == null ? null : row.targetReviewDate
-      })
-    }
-    setBulkMsg(`${selected.size} row${selected.size === 1 ? '' : 's'} updated → ${newStatus ?? 'Unset'}`)
-    setSelected(new Set())
-    await load(offset)
-  }
-
-  function openInvestigation(row: PriorityCenterRow): void {
-    setInvestigationTarget({ scope: row.scope, id: row.id, name: row.name, path: row.path })
+  const handleInvestigate = (row: PriorityCenterRow) => {
+    setInvestigationTarget({
+      id: row.id,
+      name: row.name,
+      scope: row.scope || scope,
+      path: row.path ?? []
+    })
     setModule('investigation')
   }
 
-  const selCount = selected.size
-  const allShownSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
+  const criticalCount = result?.rows.filter((r) => r.priorityBand === 'Critical').length ?? 0
+  const highCount = result?.rows.filter((r) => r.priorityBand === 'High').length ?? 0
+  const totalCount = result?.total ?? 0
 
   return (
-    <div className="module">
-      <div className="module-head">
-        <h2>Priority Center</h2>
-        <span className="module-workspace">{workspace?.name}</span>
-        <span className="module-workspace">{total.toLocaleString()} entities · {overdue} overdue</span>
-      </div>
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
+      {/* Executive Control Bar */}
+      <div
+        style={{
+          background: 'var(--bg-card)',
+          padding: '14px 20px',
+          borderRadius: '12px',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          {/* Technology Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Technology:
+            </span>
+            <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              {(['2G', '3G', '4G'] as Technology[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  style={{
+                    padding: '5px 16px',
+                    fontSize: '12px',
+                    fontWeight: 800,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    background: tech === t ? 'linear-gradient(135deg, #059669, #10b981)' : 'transparent',
+                    color: tech === t ? '#ffffff' : 'var(--text-dim)',
+                    boxShadow: tech === t ? '0 2px 6px rgba(16, 185, 129, 0.3)' : 'none'
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {/* controls */}
-      <div className="row-actions filter-row">
-        <div className="seg">
-          {(['cell', 'site', 'district'] as InvestigationScope[]).map((s) => (
-            <button
-              key={s}
-              className={`seg-btn${scope === s ? ' active' : ''}`}
-              onClick={() => setScope(s)}
-            >
-              {s === 'cell' ? 'Cells' : s === 'site' ? 'Sites' : 'Districts'}
-            </button>
-          ))}
+          {/* Scope Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Scope:
+            </span>
+            <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              {[
+                { id: 'cell', label: 'Cell' },
+                { id: 'site', label: 'Site' },
+                { id: 'district', label: 'District' }
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setScope(s.id as InvestigationScope)}
+                  style={{
+                    padding: '5px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: scope === s.id ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                    color: scope === s.id ? '#818cf8' : 'var(--text-dim)'
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Granularity Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Grain:
+            </span>
+            <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              {['daily', 'weekly'].map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setStoreGrain(g as any)}
+                  style={{
+                    padding: '5px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textTransform: 'capitalize',
+                    background: storeGrain === g ? 'var(--accent)' : 'transparent',
+                    color: storeGrain === g ? '#ffffff' : 'var(--text-dim)'
+                  }}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <input
-          className="input"
-          style={{ flex: 1, minWidth: 180 }}
-          placeholder="Search name, site, district, region…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select className="input" value={status} onChange={(e) => setStatus(e.target.value as ActionStatus | 'unset' | '')}>
-          <option value="">All statuses</option>
-          <option value="unset">Unset</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <select className="input" value={band} onChange={(e) => setBand(e.target.value as PriorityBand | '')}>
-          <option value="">All bands</option>
-          {BANDS.map((b) => (
-            <option key={b} value={b}>{b}</option>
-          ))}
-        </select>
-        <select className="input" value={sort} onChange={(e) => setSort(e.target.value as 'priority' | 'due' | 'name')}>
-          <option value="priority">Sort: priority</option>
-          <option value="due">Sort: due date</option>
-          <option value="name">Sort: name</option>
-        </select>
-        <label className="pc-toggle" title="Only rows past their target review date">
-          <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
-          Overdue only
-        </label>
-      </div>
 
-      {error && <div className="status-error">{error}</div>}
-      {loading && <div className="status-dim">Loading…</div>}
-
-      {/* status rollup */}
-      <div className="pc-rollup">
-        <span className="pc-rollup-total">{total.toLocaleString()} matching</span>
         <button
-          className={`pc-rollup-chip${status === 'unset' ? ' active' : ''}`}
-          onClick={() => setStatus(status === 'unset' ? '' : 'unset')}
+          onClick={() => setModule('investigation')}
+          style={{
+            padding: '8px 16px',
+            fontSize: '12px',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #059669, #10b981)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+          }}
         >
-          Unset {byStatus['unset'] ?? 0}
+          🔬 Direct Cell Investigation
         </button>
-        {STATUSES.map((s) => (
-          <button
-            key={s}
-            className={`pc-rollup-chip${status === s ? ' active' : ''}`}
-            onClick={() => setStatus(status === s ? '' : s)}
-          >
-            {s} {byStatus[s] ?? 0}
-          </button>
-        ))}
-        <span className={`pc-overdue${overdue > 0 ? ' has' : ''}`}>⚠ {overdue} overdue</span>
       </div>
 
-      {/* bulk bar */}
-      <div className="pc-bulk">
-        <label className="pc-toggle">
-          <input
-            type="checkbox"
-            checked={allShownSelected}
-            onChange={(e) => {
-              const next = new Set(selected)
-              if (e.target.checked) rows.forEach((r) => next.add(r.id))
-              else rows.forEach((r) => next.delete(r.id))
-              setSelected(next)
-            }}
-          />
-          {selCount > 0 ? `${selCount} selected` : 'Select shown'}
-        </label>
-        <select className="input" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
-          <option value="">Bulk set status…</option>
-          <option value="__unset">Unset (clear)</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <button className="btn" disabled={!bulkStatus || selCount === 0} onClick={() => void applyBulk()}>
-          Apply
-        </button>
-        {bulkMsg && <span className="pc-bulk-msg">{bulkMsg}</span>}
+      {/* Main Executive Banner Card */}
+      <div
+        style={{
+          background: 'var(--bg-card)',
+          padding: '20px 24px',
+          borderRadius: '16px',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '20px',
+          boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ position: 'relative', width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="80" height="80" viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)', width: '80px', height: '80px' }}>
+              <path
+                stroke="var(--bg-3)"
+                strokeWidth="3.5"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+              <path
+                stroke="#f87171"
+                strokeDasharray="88, 100"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+            </svg>
+            <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f87171' }}>{totalCount}</span>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span
+                style={{
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  background: 'rgba(99, 102, 241, 0.15)',
+                  color: '#818cf8',
+                  border: '1px solid rgba(99, 102, 241, 0.3)'
+                }}
+              >
+                {tech} {scope.toUpperCase()}
+              </span>
+              <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>
+                Smart Priority Remediation Action Queue
+              </h2>
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
+              Automated composite risk score queue · {criticalCount} Critical P1, {highCount} High P2 Priority items needing immediate action.
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* queue table */}
-      <div className="card">
-        <div className="table-wrap">
-          <table className="data-table pc-table">
+      {/* Priority Action Queue Table */}
+      <div style={{ background: 'var(--bg-card)', borderRadius: '16px', border: '1px solid var(--border)', padding: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <input
+              type="text"
+              placeholder={`Search ${scope} name...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                background: 'var(--bg-3)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '12px'
+              }}
+            />
+
+            {/* Band Filters */}
+            <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <button
+                onClick={() => setBand('')}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: band === '' ? 'var(--accent)' : 'transparent',
+                  color: band === '' ? '#ffffff' : 'var(--text-dim)'
+                }}
+              >
+                All Bands
+              </button>
+              {BANDS.map((b) => (
+                <button
+                  key={b}
+                  onClick={() => setBand(b)}
+                  style={{
+                    padding: '4px 12px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: band === b ? 'var(--accent)' : 'transparent',
+                    color: band === b ? '#ffffff' : 'var(--text-dim)'
+                  }}
+                >
+                  {b}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+            Showing {result?.rows.length ?? 0} prioritized entities
+          </div>
+        </div>
+
+        {/* Table */}
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
             <thead>
-              <tr>
-                <th style={{ width: 28 }}></th>
-                <th>Priority</th>
-                <th>Entity</th>
-                <th>Status</th>
-                <th>Owner</th>
-                <th>Ticket</th>
-                <th>Review due</th>
-                <th className="num">NC</th>
-                <th className="num">Cells</th>
-                <th className="num">{selectedTech === '4G' ? 'PRB' : selectedTech === '3G' ? '3G Util' : 'TCH Cong'}</th>
-                <th style={{ width: 40 }}></th>
+              <tr style={{ background: 'var(--bg-3)', borderBottom: '1px solid var(--border)', color: 'var(--text-dim)', textTransform: 'uppercase', fontSize: '11px' }}>
+                <th style={{ padding: '10px 14px' }}>Rank & Entity Name</th>
+                <th style={{ padding: '10px 14px' }}>Priority Band</th>
+                <th style={{ padding: '10px 14px' }}>Composite Risk</th>
+                <th style={{ padding: '10px 14px' }}>Status</th>
+                <th style={{ padding: '10px 14px' }}>Owner / Ticket</th>
+                <th style={{ padding: '10px 14px', textAlign: 'right' }}>Action</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const overdueRow = r.overdue
-                return (
-                  <tr
-                    key={`${r.scope}-${r.id}`}
-                    className="pc-row"
-                    onClick={() => toggle(r.id)}
-                  >
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(r.id)}
-                        onChange={() => toggle(r.id)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
+              {!result || result.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)' }}>
+                    {loading ? 'Loading priority queue...' : 'No priority entities found for active filters.'}
+                  </td>
+                </tr>
+              ) : (
+                result.rows.map((row, idx) => (
+                  <tr key={row.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 14px', fontWeight: 700, color: '#f8fafc' }}>
+                      <span style={{ color: 'var(--text-dim)', fontSize: '11px', marginRight: '8px' }}>#{idx + 1}</span>
+                      {row.name}
                     </td>
-                    <td>
-                      <span className={`pc-score${r.priorityScore == null ? ' none' : r.priorityScore >= 75 ? ' hot' : r.priorityScore >= 50 ? ' mid' : ''}`}>
-                        {fmtScore(r.priorityScore)}
-                      </span>{' '}
-                      <Chip text={r.priorityBand ?? '—'} tone={bandTone(r.priorityBand)} />
-                    </td>
-                    <td>
-                      <div className="pc-name">{r.name}</div>
-                      <div className="pc-path">{r.path.slice(0, -1).join(' › ')}</div>
-                    </td>
-                    <td><Chip text={r.status ?? 'Unset'} tone={statusTone(r.status)} /></td>
-                    <td className="pc-owner">{r.owner ?? '—'}</td>
-                    <td className="pc-owner">{r.externalTicket ?? '—'}</td>
-                    <td className={overdueRow ? 'pc-due overdue' : 'pc-due'}>
-                      {r.targetReviewDate ? r.targetReviewDate.slice(0, 10) : '—'}
-                      {overdueRow && <span className="pc-flag"> overdue</span>}
-                    </td>
-                    <td className="num">{r.ncCells}</td>
-                    <td className="num">{r.cells}</td>
-                    <td className="num">{r.prbAvg == null ? '—' : `${r.prbAvg.toFixed(0)}%`}</td>
-                    <td>
-                      <button
-                        className="btn btn-sm"
-                        title="Open in Investigation Workspace"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openInvestigation(r)
+                    <td style={{ padding: '12px 14px' }}>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          textTransform: 'uppercase',
+                          background: row.priorityBand === 'Critical' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                          color: row.priorityBand === 'Critical' ? '#f87171' : '#fbbf24',
+                          border: '1px solid rgba(239, 68, 68, 0.3)'
                         }}
                       >
-                        →
+                        {row.priorityBand || 'Normal'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ flex: 1, height: '6px', background: 'var(--bg-3)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div
+                            style={{
+                              width: `${Math.min(100, row.priorityScore ?? 0)}%`,
+                              height: '100%',
+                              background: (row.priorityScore ?? 0) > 75 ? '#f87171' : '#fbbf24'
+                            }}
+                          />
+                        </div>
+                        <span style={{ fontWeight: 800, fontSize: '12px', color: '#f8fafc' }}>{Math.round(row.priorityScore ?? 0)}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-dim)' }}>
+                      {row.status || 'Unreviewed'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-dim)' }}>
+                      {row.owner || '—'} {row.externalTicket ? `(${row.externalTicket})` : ''}
+                    </td>
+                    <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                      <button
+                        onClick={() => handleInvestigate(row)}
+                        style={{
+                          padding: '4px 12px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          background: 'rgba(56, 189, 248, 0.15)',
+                          color: '#38bdf8',
+                          border: '1px solid rgba(56, 189, 248, 0.3)',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🔬 Investigate
                       </button>
                     </td>
                   </tr>
-                )
-              })}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="pc-empty">
-                    No entities match the current filters.
-                  </td>
-                </tr>
+                ))
               )}
             </tbody>
           </table>
-        </div>
-        <div className="pc-footer">
-          <span>
-            Showing {rows.length > 0 ? offset + 1 : 0}–{offset + rows.length} of {total.toLocaleString()}
-          </span>
-          {offset + rows.length < total && (
-            <button className="btn btn-sm" onClick={() => void load(offset + rows.length)}>
-              Show more
-            </button>
-          )}
         </div>
       </div>
     </div>

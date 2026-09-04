@@ -331,7 +331,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 0,
             yAxisIndex: 0,
-            data: detail.weeks.map((w) => w.prbAvg),
+            data: detail.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -341,9 +341,9 @@ export function cellDetailOption(
             markLine: {
               silent: true,
               symbol: 'none',
-              label: { formatter: `threshold {c}%`, color: PALETTE.danger, fontSize: 10 },
+              label: { formatter: `target 2.0%`, color: PALETTE.danger, fontSize: 10 },
               lineStyle: { type: 'dashed', color: PALETTE.danger, width: 1 },
-              data: [{ yAxis: prbThreshold }]
+              data: [{ yAxis: 2.0 }]
             }
           },
           {

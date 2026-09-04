@@ -107,6 +107,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setTechnologyId: (technologyId) => {
     const techName: Technology = technologyId === 2 ? '2G' : technologyId === 3 ? '3G' : '4G'
     set({ technologyId, selectedTech: techName, primaryKpiId: null })
+    try {
+      void window.api?.workspace?.setTechnology?.(techName)
+    } catch {}
   },
   setPrimaryKpiId: (primaryKpiId) => set({ primaryKpiId }),
   setSupportingKpiIds: (supportingKpiIds) => set({ supportingKpiIds }),
@@ -124,6 +127,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSelectedTech: (selectedTech) => {
     const techId = selectedTech === '2G' ? 2 : selectedTech === '3G' ? 3 : 4
     set({ selectedTech, technologyId: techId })
+    try {
+      void window.api?.workspace?.setTechnology?.(selectedTech)
+    } catch {}
   },
   setSummary: (summary) => set({ summary }),
   setRecent: (recent) => set({ recent }),

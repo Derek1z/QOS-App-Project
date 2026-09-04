@@ -801,6 +801,7 @@ export interface CellIntelligenceResult {
 export interface CellWeekPoint {
   weekStart: string
   prbAvg: number | null
+  tchCong?: number | null
   throughputKbps: number | null
   users: number | null
   volumeMb: number | null
@@ -1667,8 +1668,9 @@ export interface Api {
       minPriority?: number
       limit?: number
       offset?: number
+      technology?: Technology
     }): Promise<CellIntelligenceResult>
-    cellDetail(cellId: number, grain?: Grain): Promise<CellDetail | null>
+    cellDetail(cellId: number, grain?: Grain, technology?: Technology): Promise<CellDetail | null>
     performance(opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }): Promise<PerformanceResult>
     comparison(opts?: {
       type?: ComparisonType
@@ -1676,6 +1678,7 @@ export interface Api {
       metric?: CompareMetric
       grain?: Grain
       period?: PeriodId
+      technology?: Technology
     }): Promise<ComparisonResult>
     explorer(
       level: ExplorerLevel,

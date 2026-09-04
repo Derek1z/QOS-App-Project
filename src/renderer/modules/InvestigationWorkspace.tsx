@@ -97,18 +97,14 @@ export default function InvestigationWorkspace(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<'evidence' | 'rca' | 'peers' | 'workflow'>('evidence')
   const [rcaModalOpen, setRcaModalOpen] = useState(false)
   const [telemetryMode, setTelemetryMode] = useState<'hero' | 'grid' | 'correlation'>('hero')
-  const [selectedMetricId, setSelectedMetricId] = useState('prb')
+  const [selectedMetricId, setSelectedMetricId] = useState(
+    (selectedTech || '4G') === '2G' ? 'tch_cong' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
+  )
 
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    if (selectedTech && selectedTech !== tech) {
-      setTech(selectedTech)
-    }
-  }, [selectedTech])
 
   const load = useCallback(
     async (ent: EntityOption | null, iv: string, scopeOverride?: InvestigationScope, techOverride?: Technology): Promise<void> => {
@@ -145,6 +141,38 @@ export default function InvestigationWorkspace(): React.JSX.Element {
     },
     [scope, grain, period, tech]
   )
+
+  const handleTechChange = useCallback(
+    (newTech: Technology) => {
+      setSelectedTech(newTech)
+      setTech(newTech)
+      const defaultMetric = newTech === '2G' ? 'tch_cong' : newTech === '3G' ? 'cssr_3g' : 'prb'
+      setSelectedMetricId(defaultMetric)
+      void (async () => {
+        try {
+          const opts = await window.api.investigation.search(scope, query.trim() || undefined, newTech)
+          setOptions(opts)
+          const targetEnt = opts.length > 0 ? opts[0] : null
+          setSelected(targetEnt)
+          if (targetEnt) {
+            void load(targetEnt, '', scope, newTech)
+          } else {
+            setResult(null)
+          }
+        } catch {
+          setOptions([])
+          setResult(null)
+        }
+      })()
+    },
+    [setSelectedTech, scope, query, load]
+  )
+
+  useEffect(() => {
+    if (selectedTech && selectedTech !== tech) {
+      handleTechChange(selectedTech)
+    }
+  }, [selectedTech, tech, handleTechChange])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -284,6 +312,49 @@ export default function InvestigationWorkspace(): React.JSX.Element {
 
   const topHypothesis = result?.hypotheses && result.hypotheses.length > 0 ? result.hypotheses[0] : null
 
+  const primaryKpiInfo = useMemo(() => {
+    if (!result || result.weeks.length === 0) {
+      return {
+        label: tech === '2G' ? '2G TCH Congestion (%)' : tech === '3G' ? '3G Voice CSSR (%)' : '4G DL PRB Utilization (%)',
+        worstVal: null,
+        unit: '%',
+        targetStr: tech === '2G' ? '≤ 2.0%' : tech === '3G' ? '≥ 95.0%' : `≤ ${prbThreshold}%`,
+        gaugeStr: '—'
+      }
+    }
+    if (tech === '2G') {
+      const vals = result.weeks.map((w) => w.tchCong).filter((v): v is number => v != null)
+      const worst = vals.length > 0 ? Math.max(...vals) : null
+      return {
+        label: '2G TCH Congestion (%)',
+        worstVal: worst,
+        unit: '%',
+        targetStr: '≤ 2.0%',
+        gaugeStr: worst != null ? `${worst.toFixed(1)}%` : '—'
+      }
+    }
+    if (tech === '3G') {
+      const cssrVals = result.weeks.map((w) => w.cssr).filter((v): v is number => v != null)
+      const worstCssr = cssrVals.length > 0 ? Math.min(...cssrVals) : null
+      return {
+        label: '3G Voice CSSR (%)',
+        worstVal: worstCssr,
+        unit: '%',
+        targetStr: '≥ 95.0%',
+        gaugeStr: worstCssr != null ? `${worstCssr.toFixed(1)}%` : '—'
+      }
+    }
+    const prbVals = result.weeks.map((w) => w.prbAvg).filter((v): v is number => v != null)
+    const worst = prbVals.length > 0 ? Math.max(...prbVals) : null
+    return {
+      label: '4G DL PRB Utilization (%)',
+      worstVal: worst,
+      unit: '%',
+      targetStr: `≤ ${prbThreshold}%`,
+      gaugeStr: worst != null ? `${worst.toFixed(0)}%` : '—'
+    }
+  }, [result, tech, prbThreshold])
+
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
       {/* Executive Control Bar: Technology, Granularity, Scope & Target Controls */}
@@ -311,7 +382,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
               {(['2G', '3G', '4G'] as Technology[]).map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  onClick={() => handleTechChange(t)}
                   style={{
                     padding: '5px 16px',
                     fontSize: '12px',
@@ -536,7 +607,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
               />
             </svg>
             <span style={{ position: 'absolute', fontSize: '16px', fontWeight: 800, color: '#f8fafc' }}>
-              {result?.weeks ? `${Math.max(0, ...result.weeks.map((w) => w.prbAvg ?? 0)).toFixed(0)}%` : '—'}
+              {primaryKpiInfo.gaugeStr}
             </span>
           </div>
 
@@ -577,7 +648,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
               {selected?.path ? `Path: ${Array.isArray(selected.path) ? selected.path.join(' > ') : selected.path} · ` : ''}
-              Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · Primary KPI: <strong style={{ color: '#38bdf8' }}>DL PRB Utilization (%)</strong>
+              Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · Primary KPI: <strong style={{ color: '#38bdf8' }}>{primaryKpiInfo.label}</strong>
             </p>
           </div>
         </div>
@@ -621,7 +692,6 @@ export default function InvestigationWorkspace(): React.JSX.Element {
       {result && (() => {
         const breachWeeks = result.weeks.filter((w) => w.isNc).length
         const breachRatioPct = result.weeks.length > 0 ? (breachWeeks / result.weeks.length) * 100 : 0
-        const worstVal = Math.max(0, ...result.weeks.map((w) => w.prbAvg ?? 0))
         let consec = 0
         for (let i = result.weeks.length - 1; i >= 0; i--) {
           if (result.weeks[i].isNc) consec++
@@ -632,9 +702,9 @@ export default function InvestigationWorkspace(): React.JSX.Element {
             <div style={{ background: 'var(--bg-card)', padding: '16px 20px', borderRadius: '12px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>Worst Period Value</div>
               <div style={{ fontSize: '24px', fontWeight: 800, color: '#f87171', margin: '4px 0' }}>
-                {worstVal > 0 ? `${worstVal.toFixed(1)}%` : '—'}
+                {primaryKpiInfo.worstVal != null ? `${primaryKpiInfo.worstVal.toFixed(1)}${primaryKpiInfo.unit}` : '—'}
               </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Target: ≤ {prbThreshold}%</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Target: {primaryKpiInfo.targetStr}</div>
             </div>
 
             <div style={{ background: 'var(--bg-card)', padding: '16px 20px', borderRadius: '12px', border: '1px solid var(--border)' }}>
@@ -714,7 +784,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
                 {tech} Primary Telemetry Timeline ({grain === 'daily' ? 'Daily Dates' : 'ISO Weeks'})
               </h3>
               <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '2px 0 0 0' }}>
-                Spacious timeline with zero crowded axes · Threshold benchmark: {prbThreshold}%
+                Spacious timeline with zero crowded axes · Benchmark: {primaryKpiInfo.targetStr}
               </p>
             </div>
 
@@ -884,7 +954,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
               <div key={i} style={{ background: 'var(--bg-3)', padding: '14px 16px', borderRadius: '10px', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>{peer.name}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
-                  PRB Avg: {peer.prbAvg !== null ? `${peer.prbAvg.toFixed(1)}%` : '—'} | Health: {peer.healthScore ?? '—'}
+                  {peer.primaryKpi ? peer.primaryKpi : peer.prbAvg !== null ? `${tech === '2G' ? 'TCH Cong' : tech === '3G' ? '3G Util' : 'PRB Avg'}: ${peer.prbAvg.toFixed(1)}%` : '—'} | Health: {peer.healthScore ?? '—'}
                 </div>
               </div>
             ))}

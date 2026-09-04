@@ -17,7 +17,7 @@ export const congestionRule: DiagnosticRule = {
     const usersKpi = ctx.evidence.find((e) => e.metric === 'users')
     const volKpi = ctx.evidence.find((e) => e.metric === 'volume')
 
-    if (ctx.technology === '4G' || prbVal != null) {
+    if (ctx.technology === '4G') {
       if (prbVal != null && prbVal >= ctx.thresholds.prb) {
         support += 30
         sup.push(`PRB utilization is ${prbVal.toFixed(1)}% (at or above the ${ctx.thresholds.prb}% threshold).`)
@@ -25,16 +25,31 @@ export const congestionRule: DiagnosticRule = {
         contra += 25
         con.push(`PRB utilization is ${prbVal.toFixed(1)}% (well below the ${ctx.thresholds.prb}% threshold).`)
       }
-    }
-
-    if (ctx.technology === '2G') {
+    } else if (ctx.technology === '2G') {
       if (tchCongVal != null && tchCongVal >= ctx.thresholds.tchCongestion) {
         support += 30
         sup.push(`2G TCH Congestion is ${tchCongVal.toFixed(2)}% (exceeds ${ctx.thresholds.tchCongestion}% threshold).`)
+      } else if (tchCongVal != null && tchCongVal < ctx.thresholds.tchCongestion * 0.5) {
+        contra += 20
+        con.push(`2G TCH Congestion is low at ${tchCongVal.toFixed(2)}% (below ${ctx.thresholds.tchCongestion}% threshold).`)
       }
       if (sdcchCongVal != null && sdcchCongVal >= ctx.thresholds.sdcchCongestion) {
         support += 25
         sup.push(`2G SDCCH Congestion is ${sdcchCongVal.toFixed(2)}% (exceeds ${ctx.thresholds.sdcchCongestion}% threshold).`)
+      }
+    } else if (ctx.technology === '3G') {
+      const trafficUtil3g = ctx.kpiMap.get('traffic_utilization_3g') ?? ctx.kpiMap.get('peak_hour_traffic_utilization_3g') ?? ctx.latestWeek?.trafficUtil ?? null
+      const ceUtilVal = ctx.kpiMap.get('ce_utilization') ?? ctx.kpiMap.get('cong_3g') ?? null
+      if (trafficUtil3g != null && trafficUtil3g >= 75) {
+        support += 30
+        sup.push(`3G Peak Traffic Utilization is ${trafficUtil3g.toFixed(1)}% (exceeds 75% capacity threshold).`)
+      } else if (trafficUtil3g != null && trafficUtil3g < 60) {
+        contra += 20
+        con.push(`3G Traffic Utilization is healthy at ${trafficUtil3g.toFixed(1)}% (below 75% threshold).`)
+      }
+      if (ceUtilVal != null && ceUtilVal >= 70) {
+        support += 25
+        sup.push(`3G Channel Element (CE) Utilization is ${ceUtilVal.toFixed(1)}% (approaching saturation).`)
       }
     }
 

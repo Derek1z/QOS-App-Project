@@ -35,6 +35,7 @@ export default function CellIntelligence(): React.JSX.Element {
       const res = await window.api.analytics.cellIntelligence({
         search: search.trim() || undefined,
         severity: fSeverity !== 'all' ? (fSeverity as any) : undefined,
+        technology: tech,
         limit: 50,
         offset: 0
       })
@@ -44,7 +45,7 @@ export default function CellIntelligence(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [search, fSeverity])
+  }, [search, fSeverity, tech])
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current)
@@ -60,7 +61,7 @@ export default function CellIntelligence(): React.JSX.Element {
     setDetailOpen(true)
     setDetailLoading(true)
     try {
-      const det = await window.api.analytics.cellDetail(row.cellId)
+      const det = await window.api.analytics.cellDetail(row.cellId, grain, tech)
       setDetail(det)
     } catch {
       setDetail(null)
@@ -79,7 +80,7 @@ export default function CellIntelligence(): React.JSX.Element {
     setModule('investigation')
   }
 
-  const chartOption = detail ? cellDetailOption(detail, 80) : null
+  const chartOption = detail ? cellDetailOption(detail, 80, grain, tech) : null
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -232,7 +233,9 @@ export default function CellIntelligence(): React.JSX.Element {
                 </div>
 
                 <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Site: {cell.site || '—'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>PRB Utilization: <strong style={{ color: '#f87171' }}>{cell.prbAvg != null ? `${cell.prbAvg.toFixed(1)}%` : '—'}</strong></div>
+                <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
+                  {tech === '2G' ? 'TCH Congestion' : tech === '3G' ? 'Peak Traffic Util' : 'PRB Utilization'}: <strong style={{ color: '#f87171' }}>{cell.prbAvg != null ? `${cell.prbAvg.toFixed(1)}%` : '—'}</strong>
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '8px' }}>

@@ -75,7 +75,9 @@ export default function Forecasting(): React.JSX.Element {
   const [entity, setEntity] = useState<EntityOption | null>(null)
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<EntityOption[]>([])
-  const [metric, setMetric] = useState<ForecastMetric>('prb')
+  const [metric, setMetric] = useState<ForecastMetric>(
+    (selectedTech || '4G') === '2G' ? 'tch_cong' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
+  )
   const [horizon, setHorizon] = useState<ForecastHorizon>('4w')
   const [result, setResult] = useState<ForecastResult | null>(null)
   const [loading, setLoading] = useState(true)

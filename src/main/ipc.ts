@@ -159,13 +159,16 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       minPriority?: number
       limit?: number
       offset?: number
+      technology?: Technology
     }) => getCellIntelligence(opts)
   )
-  ipcMain.handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain) => getCellDetail(cellId, grain))
+  ipcMain.handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain, technology?: Technology) =>
+    getCellDetail(cellId, grain, technology)
+  )
   ipcMain.handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) => getPerformance(opts))
   ipcMain.handle(
     'analytics:comparison',
-    (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric; grain?: Grain; period?: PeriodId }) =>
+    (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric; grain?: Grain; period?: PeriodId; technology?: Technology }) =>
       getComparison(opts)
   )
   ipcMain.handle(

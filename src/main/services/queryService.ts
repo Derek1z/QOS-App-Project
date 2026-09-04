@@ -644,7 +644,7 @@ async function cellKpiValues(
 }
 
 /** Time-series history for one cell — the drawer's aligned time-series source. */
-export async function getCellDetail(cellId: number, grain: Grain = 'weekly'): Promise<CellDetail | null> {
+export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _technology?: Technology): Promise<CellDetail | null> {
   const conn = ws().connection
   const numCellId = Number(cellId)
   const g: Grain = grain === 'daily' || grain === 'monthly' ? grain : 'weekly'

@@ -58,7 +58,9 @@ export default function ComparisonLab(): React.JSX.Element {
   const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [type, setType] = useState<ComparisonType>('period')
   const [scope, setScope] = useState<CompareScope>('cell')
-  const [metric, setMetric] = useState<CompareMetric>('prb')
+  const [metric, setMetric] = useState<CompareMetric>(
+    (selectedTech || '4G') === '2G' ? 'tch_congestion' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
+  )
   const [view, setView] = useState<CompareView>('actual')
   const [sort, setSort] = useState<CompareSort>('worst')
   const [result, setResult] = useState<ComparisonResult | null>(null)
@@ -87,7 +89,8 @@ export default function ComparisonLab(): React.JSX.Element {
           type,
           scope,
           metric,
-          grain
+          grain,
+          technology: tech
         })
         if (alive) setResult(r)
       } catch {
@@ -132,7 +135,12 @@ export default function ComparisonLab(): React.JSX.Element {
               {(['2G', '3G', '4G'] as Technology[]).map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  onClick={() => {
+                    setSelectedTech(t)
+                    setTech(t)
+                    const mList = TECH_METRICS[t] ?? TECH_METRICS['4G']
+                    setMetric(mList[0].id)
+                  }}
                   style={{
                     padding: '5px 16px',
                     fontSize: '12px',

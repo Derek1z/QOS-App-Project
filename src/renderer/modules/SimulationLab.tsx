@@ -26,7 +26,9 @@ export default function SimulationLab(): React.JSX.Element {
   const [search, setSearch] = useState('')
 
   // Active chart KPI projection view
-  const [selectedKpiKey, setSelectedKpiKey] = useState<string>('prb')
+  const [selectedKpiKey, setSelectedKpiKey] = useState<string>(
+    (selectedTech || '4G') === '2G' ? 'tch_cong' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
+  )
 
   // --- 4G LTE Simulation Parameters ---
   const [baseBwMHz, setBaseBwMHz] = useState<number>(10)
@@ -65,10 +67,10 @@ export default function SimulationLab(): React.JSX.Element {
     let alive = true
     void (async () => {
       try {
-        const res = await window.api.analytics.cellIntelligence({ limit: 100 })
+        const res = await window.api.analytics.cellIntelligence({ limit: 100, technology: tech })
         if (alive && res.rows) {
           setCells(res.rows)
-          if (res.rows.length > 0 && selectedCellId == null) {
+          if (res.rows.length > 0) {
             const worst = res.rows.find((c) => c.isNc) ?? res.rows[0]
             setSelectedCellId(worst.cellId)
           }
@@ -80,7 +82,7 @@ export default function SimulationLab(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [workspace?.path])
+  }, [workspace?.path, tech])
 
   // Load selected cell detail
   useEffect(() => {
@@ -89,7 +91,7 @@ export default function SimulationLab(): React.JSX.Element {
     setLoading(true)
     void (async () => {
       try {
-        const d = await window.api.analytics.cellDetail(selectedCellId, grain)
+        const d = await window.api.analytics.cellDetail(selectedCellId, grain, tech)
         if (alive) {
           setDetail(d)
         }
@@ -102,7 +104,7 @@ export default function SimulationLab(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [selectedCellId, grain])
+  }, [selectedCellId, grain, tech])
 
   // Filtered cells for list
   const filteredCells = useMemo(() => {
@@ -429,7 +431,9 @@ export default function SimulationLab(): React.JSX.Element {
       const offloadFactor = (100 - offloadPct2G) / 100
 
       // 1. 2G TCH Congestion (%) (Target < 2.0%)
-      const baseTchCong = basePrbRaw.map((prb) => {
+      const baseTchCong = basePrbRaw.map((prb, idx) => {
+        const direct = detail?.weeks[idx]?.tchCong
+        if (direct != null) return direct
         const breach = Math.max(0, prb - 65)
         return Math.max(0.2, Math.round((0.5 + breach * 0.12) * 100) / 100)
       })

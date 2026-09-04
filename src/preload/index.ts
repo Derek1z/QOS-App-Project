@@ -72,7 +72,8 @@ const api: Api = {
     ) => ipcRenderer.invoke('analytics:healthMatrix', scope, opts),
     cellIntelligence: (opts) => ipcRenderer.invoke('analytics:cellIntelligence', opts),
     cellDetail: (cellId: number, grain?: Grain) => ipcRenderer.invoke('analytics:cellDetail', cellId, grain),
-    performance: (opts?: { grain?: Grain; period?: PeriodId }) => ipcRenderer.invoke('analytics:performance', opts),
+    performance: (opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) =>
+      ipcRenderer.invoke('analytics:performance', opts),
     comparison: (opts?: {
       type?: ComparisonType
       scope?: CompareScope

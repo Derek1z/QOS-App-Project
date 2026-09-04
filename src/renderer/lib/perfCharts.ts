@@ -138,9 +138,31 @@ export function configurableScatterOption(
   // Extract values
   const getVal = (c: ScatterPoint, m: MetricMeta): number | null => {
     if (c.kpis && c.kpis[m.id] !== undefined) return c.kpis[m.id]
-    if (m.id === 'prb' || m.id === 'prb_utilization') return c.prb
-    if (m.id === 'throughput' || m.id === 'dl_throughput') return c.throughputKbps
-    if (m.id === 'users' || m.id === 'connected_users') return c.users
+    if (
+      m.id === 'prb' ||
+      m.id === 'prb_utilization' ||
+      m.id === 'tch_congestion' ||
+      m.id === 'peak_hour_traffic_utilization_3g' ||
+      m.id === 'ce_utilization'
+    ) {
+      return c.prb
+    }
+    if (
+      m.id === 'throughput' ||
+      m.id === 'dl_throughput' ||
+      m.id === 'gprs_throughput' ||
+      m.id === 'hsdpa_throughput'
+    ) {
+      return c.throughputKbps
+    }
+    if (
+      m.id === 'users' ||
+      m.id === 'connected_users' ||
+      m.id === 'voice_traffic_erl' ||
+      m.id === 'data_volume'
+    ) {
+      return c.users
+    }
     return null
   }
 

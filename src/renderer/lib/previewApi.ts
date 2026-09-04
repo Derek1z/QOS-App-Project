@@ -376,20 +376,43 @@ const KPI_LABELS: Array<{ field: CanonicalField; label: string }> = [
 function parseDateOk(raw: string | null | undefined): boolean {
   const s = (raw ?? '').trim()
   if (!s) return false
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return !Number.isNaN(Date.parse(s.slice(0, 10)))
-  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)
-  if (mdy) {
-    const m = Number(mdy[2])
-    const d = Number(mdy[1])
-    return m >= 1 && m <= 12 && d >= 1 && d <= 31
+  // ISO 8601 with optional time / timezone
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(s)) {
+    const parts = s.split(/[-/T\s]/)
+    const y = Number(parts[0])
+    const m = Number(parts[1])
+    const d = Number(parts[2])
+    return y >= 1990 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= 31
   }
-  const ymd = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s)
-  if (ymd) {
-    const m = Number(ymd[2])
-    const d = Number(ymd[3])
-    return m >= 1 && m <= 12 && d >= 1 && d <= 31
+  // DD/MM/YYYY, DD-MM-YYYY, or DD.MM.YYYY with optional time (24h or 12h AM/PM, optional milliseconds)
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:\s+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*(?:AM|PM|am|pm))?)?$/.exec(s)
+  if (dmy) {
+    const d = Number(dmy[1])
+    const m = Number(dmy[2])
+    const y = Number(dmy[3])
+    const yearOk = dmy[3].length === 2 || (y >= 1990 && y <= 2099)
+    return d >= 1 && d <= 31 && m >= 1 && m <= 12 && yearOk
   }
   return false
+}
+
+function toIsoDate(raw: string): string {
+  const s = raw.trim()
+  const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(s)
+  if (iso) {
+    const y = iso[1]
+    const m = iso[2].padStart(2, '0')
+    const d = iso[3].padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/.exec(s)
+  if (dmy) {
+    const d = dmy[1].padStart(2, '0')
+    const m = dmy[2].padStart(2, '0')
+    const y = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3]
+    return `${y}-${m}-${d}`
+  }
+  return s.slice(0, 10)
 }
 
 function isNumeric(s: string | null | undefined): boolean {
@@ -466,7 +489,7 @@ function mapRow(header: string[], row: string[], columns: Record<string, Canonic
     return t === '' ? null : t
   }
   return {
-    date: dateRaw.slice(0, 10),
+    date: toIsoDate(dateRaw),
     cell: cellRaw,
     district: pick(idx('district')),
     region: pick(idx('region')),
@@ -839,17 +862,55 @@ function demoPoints(min: number, max: number): PercentilePoint[] {
   return pts
 }
 
-function demoPerformance(): PerformanceResult {
+function demoPerformance(tech: Technology = '4G'): PerformanceResult {
   const cells = demoNcLifecycle().cells
   const weekStart = '2026-07-27'
-  const prbThreshold = 80
-  const METRICS: Array<{ metric: PerfMetric; label: string; unit: string; min: number; max: number }> = [
-    { metric: 'prb', label: 'PRB utilization', unit: '%', min: 38, max: 97 },
-    { metric: 'throughput', label: 'DL throughput', unit: 'kbps', min: 14_000, max: 26_000 },
-    { metric: 'users', label: 'Connected users', unit: '', min: 120, max: 1_020 },
-    { metric: 'volume', label: 'Data volume', unit: 'MB', min: 8_000, max: 68_000 },
-    { metric: 'availability', label: 'Availability', unit: '%', min: 99.0, max: 99.9 }
-  ]
+  const is2G = tech === '2G'
+  const is3G = tech === '3G'
+
+  type MetricConfig = {
+    metric: PerfMetric
+    label: string
+    unit: string
+    target?: number
+    worseIsHigher: boolean
+    isCore: boolean
+    min: number
+    max: number
+  }
+
+  const METRICS: MetricConfig[] = is2G
+    ? [
+        { metric: 'tch_congestion', label: 'TCH Congestion', unit: '%', target: 2.0, worseIsHigher: true, isCore: true, min: 0.2, max: 7.8 },
+        { metric: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', target: 1.5, worseIsHigher: true, isCore: true, min: 0.1, max: 5.4 },
+        { metric: 'call_drop_rate_2g', label: '2G Call Drop Rate', unit: '%', target: 1.5, worseIsHigher: true, isCore: true, min: 0.2, max: 4.8 },
+        { metric: 'call_setup_success_2g', label: '2G Voice CSSR', unit: '%', target: 98.0, worseIsHigher: false, isCore: true, min: 92.5, max: 99.8 },
+        { metric: 'gprs_throughput', label: 'EDGE / GPRS Speed', unit: 'kbps', target: 120, worseIsHigher: false, isCore: false, min: 45, max: 240 },
+        { metric: 'voice_traffic_erl', label: 'Voice Traffic Load', unit: 'Erl', worseIsHigher: false, isCore: false, min: 12, max: 190 },
+        { metric: 'tch_availability', label: 'TCH Availability', unit: '%', target: 98.0, worseIsHigher: false, isCore: true, min: 95.5, max: 100.0 }
+      ]
+    : is3G
+    ? [
+        { metric: 'call_drop_rate_3g', label: '3G Call Drop Rate', unit: '%', target: 1.2, worseIsHigher: true, isCore: true, min: 0.1, max: 4.5 },
+        { metric: 'call_setup_success_3g', label: '3G Voice CSSR', unit: '%', target: 98.0, worseIsHigher: false, isCore: true, min: 93.0, max: 99.9 },
+        { metric: 'data_access_success_3g', label: '3G DASR', unit: '%', target: 97.0, worseIsHigher: false, isCore: true, min: 91.5, max: 99.8 },
+        { metric: 'peak_hour_traffic_utilization_3g', label: 'Peak Traffic Util', unit: '%', target: 75.0, worseIsHigher: true, isCore: false, min: 32, max: 94 },
+        { metric: 'ce_utilization', label: 'CE Utilization', unit: '%', target: 80.0, worseIsHigher: true, isCore: false, min: 25, max: 92 },
+        { metric: 'hsdpa_throughput', label: 'HSDPA Speed', unit: 'kbps', target: 2000, worseIsHigher: false, isCore: false, min: 800, max: 7500 },
+        { metric: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, isCore: false, min: 2000, max: 35000 },
+        { metric: 'availability_3g', label: '3G Availability', unit: '%', target: 98.0, worseIsHigher: false, isCore: true, min: 96.0, max: 100.0 }
+      ]
+    : [
+        { metric: 'prb_utilization', label: '4G PRB Utilization', unit: '%', target: 80.0, worseIsHigher: true, isCore: true, min: 38, max: 97 },
+        { metric: 'call_drop_rate_4g', label: '4G Call Drop Rate', unit: '%', target: 1.0, worseIsHigher: true, isCore: true, min: 0.05, max: 3.5 },
+        { metric: 'call_setup_success_4g', label: '4G CSSR', unit: '%', target: 98.5, worseIsHigher: false, isCore: true, min: 94.0, max: 100.0 },
+        { metric: 'data_service_failure_4g', label: '4G DSAF', unit: '%', target: 1.5, worseIsHigher: true, isCore: true, min: 0.1, max: 4.2 },
+        { metric: 'dl_throughput', label: 'DL User Speed', unit: 'kbps', target: 20000, worseIsHigher: false, isCore: false, min: 14000, max: 55000 },
+        { metric: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, isCore: false, min: 120, max: 1200 },
+        { metric: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, isCore: false, min: 8000, max: 88000 },
+        { metric: 'availability', label: '4G Availability', unit: '%', target: 99.0, worseIsHigher: false, isCore: true, min: 98.0, max: 100.0 }
+      ]
+
   const distributions: MetricDistribution[] = METRICS.map((m) => {
     const points = demoPoints(m.min, m.max)
     const mean = points.reduce((s, p) => s + (p.value ?? 0), 0) / points.length
@@ -857,6 +918,9 @@ function demoPerformance(): PerformanceResult {
       metric: m.metric,
       label: m.label,
       unit: m.unit,
+      target: m.target,
+      worseIsHigher: m.worseIsHigher,
+      isCore: m.isCore,
       points,
       mean: Math.round(mean * 10) / 10,
       min: points[0].value,
@@ -866,12 +930,18 @@ function demoPerformance(): PerformanceResult {
       n: cells.length
     }
   })
+
+  const primaryThreshold = is2G ? 2.0 : is3G ? 75.0 : 80.0
+
   const scatter: ScatterPoint[] = cells.map((c, i) => {
-    const prb = c.prbAvg
-    // index-squared spread so the first (NC) cells land on both sides of the
-    // median speed — a realistic congested/busy mix instead of one degenerate quadrant
-    const throughputKbps = 14_000 + ((i * i * 977) % 12_000)
-    const users = 120 + ((c.cellId * 53) % 900)
+    const kpis: Record<string, number | null> = {}
+    for (const m of METRICS) {
+      const spread = m.min + ((i * 17 + m.label.length * 29) % (m.max - m.min || 1))
+      kpis[m.metric] = Math.round(spread * 10) / 10
+    }
+    const prb = is2G ? kpis['tch_congestion'] : is3G ? kpis['peak_hour_traffic_utilization_3g'] : kpis['prb_utilization']
+    const throughputKbps = is2G ? (kpis['gprs_throughput'] ?? 100) : is3G ? (kpis['hsdpa_throughput'] ?? 2500) : (kpis['dl_throughput'] ?? 24000)
+    const users = is2G ? (kpis['voice_traffic_erl'] ?? 40) : is3G ? (kpis['data_volume'] ?? 12000) : (kpis['connected_users'] ?? 450)
     return {
       cellId: c.cellId,
       cellName: c.cellName,
@@ -881,33 +951,56 @@ function demoPerformance(): PerformanceResult {
       throughputKbps,
       users,
       isNc: c.isNc,
-      quadrant: 'healthy'
+      quadrant: 'healthy',
+      kpis
     }
   })
+
   const sorted = scatter.map((s) => s.throughputKbps ?? 0).sort((a, b) => a - b)
   const med = sorted[Math.floor(sorted.length / 2)]
   for (const s of scatter) {
-    const prb = s.prb ?? 0
-    const thr = s.throughputKbps ?? 0
-    if (prb > prbThreshold) s.quadrant = thr < med ? 'congested' : 'busy'
-    else s.quadrant = thr < med ? 'quiet' : 'healthy'
+    const load = s.prb ?? 0
+    const speed = s.throughputKbps ?? 0
+    if (load > primaryThreshold) s.quadrant = speed < med ? 'congested' : 'busy'
+    else s.quadrant = speed < med ? 'quiet' : 'healthy'
   }
-  const pairs: Array<[PerfMetric, PerfMetric, number]> = [
-    ['prb', 'throughput', -0.61],
-    ['prb', 'users', 0.52],
-    ['prb', 'volume', 0.47],
-    ['prb', 'availability', -0.38],
-    ['throughput', 'users', 0.18],
-    ['throughput', 'volume', 0.42],
-    ['throughput', 'availability', 0.15],
-    ['users', 'volume', 0.71],
-    ['users', 'availability', -0.05],
-    ['volume', 'availability', -0.12]
-  ]
+
+  const pairs: Array<[PerfMetric, PerfMetric, number]> = is2G
+    ? [
+        ['tch_congestion', 'call_drop_rate_2g', 0.68],
+        ['sdcch_congestion', 'call_setup_success_2g', -0.64],
+        ['voice_traffic_erl', 'tch_congestion', 0.58],
+        ['gprs_throughput', 'tch_congestion', -0.42],
+        ['tch_availability', 'call_setup_success_2g', 0.48],
+        ['voice_traffic_erl', 'call_drop_rate_2g', 0.45],
+        ['sdcch_congestion', 'tch_congestion', 0.52]
+      ]
+    : is3G
+    ? [
+        ['peak_hour_traffic_utilization_3g', 'call_drop_rate_3g', 0.62],
+        ['ce_utilization', 'call_drop_rate_3g', 0.59],
+        ['hsdpa_throughput', 'data_access_success_3g', 0.51],
+        ['ce_utilization', 'call_setup_success_3g', -0.55],
+        ['peak_hour_traffic_utilization_3g', 'hsdpa_throughput', -0.58],
+        ['data_volume', 'ce_utilization', 0.65],
+        ['availability_3g', 'call_setup_success_3g', 0.42]
+      ]
+    : [
+        ['prb_utilization', 'dl_throughput', -0.65],
+        ['prb_utilization', 'connected_users', 0.68],
+        ['prb_utilization', 'data_service_failure_4g', 0.54],
+        ['connected_users', 'call_drop_rate_4g', 0.49],
+        ['prb_utilization', 'data_volume', 0.58],
+        ['dl_throughput', 'connected_users', -0.42],
+        ['availability', 'call_setup_success_4g', 0.44],
+        ['connected_users', 'data_volume', 0.76]
+      ]
+
   return {
     weekStart,
+    technology: tech,
     totalCells: scatter.length,
-    prbThreshold,
+    prbThreshold: primaryThreshold,
     throughputMedianKbps: med,
     distributions,
     scatter,
@@ -2905,7 +2998,8 @@ export const previewApi: Api & { demo: true } = {
       offset?: number
     }): Promise<CellIntelligenceResult> => demoCellIntelligence(opts),
     cellDetail: async (cellId: number, _grain?: Grain): Promise<CellDetail | null> => demoCellDetail(cellId),
-    performance: async (_opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }): Promise<PerformanceResult> => demoPerformance(),
+    performance: async (opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }): Promise<PerformanceResult> =>
+      demoPerformance(opts?.technology),
     comparison: async (opts?: {
       type?: ComparisonType
       scope?: CompareScope

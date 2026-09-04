@@ -9,39 +9,33 @@ const KPI_COLS: Array<{ col: string; label: string }> = [
   { col: 'thrpt_raw', label: 'DL throughput' }
 ]
 
-function dmValid(a: number, b: number): boolean {
-  // a date is valid if (day, month) or (month, day) makes sense — mirrors the
-  // staging coalesce which tries day-first then month-first formats
-  return (a >= 1 && a <= 31 && b >= 1 && b <= 12) || (b >= 1 && b <= 31 && a >= 1 && a <= 12)
+function dmValid(d: number, m: number): boolean {
+  // Telecom datasets primarily process day-first DD/MM/YYYY (spec §19).
+  // Day: 1-31, Month: 1-12. Fallback to month-first only if second number exceeds 12.
+  if (d >= 1 && d <= 31 && m >= 1 && m <= 12) return true
+  if (m >= 1 && m <= 31 && d >= 1 && d <= 12) return true
+  return false
 }
 
 export function parseDateOk(raw: string | null | undefined): boolean {
   const s = (raw ?? '').trim()
   if (!s) return false
-  // ISO 8601 with optional time / timezone (e.g. 2026-08-14T10:30:00+00:00)
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return !Number.isNaN(Date.parse(s.slice(0, 10)))
-  // slash-separated day-first or month-first, 2- or 4-digit year, optionally
-  // with a time-of-day component (NCA exports write DD/MM/YY HH:MM)
-  const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
-  if (slash) {
-    return dmValid(Number(slash[1]), Number(slash[2]))
+  // ISO 8601 with optional time / timezone (e.g. 2026-08-14T10:30:00+00:00 or 2026-08-14 14:30:00)
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(s)) {
+    const parts = s.split(/[-/T\s]/)
+    const y = Number(parts[0])
+    const m = Number(parts[1])
+    const d = Number(parts[2])
+    return y >= 1990 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= 31
   }
-  // dash-separated day-first (e.g. 05-07-26)
-  const dash = /^(\d{1,2})-(\d{1,2})-(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
-  if (dash) {
-    return dmValid(Number(dash[1]), Number(dash[2]))
-  }
-  // dot-separated (e.g. 14.08.2026)
-  const dot = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})(\s+\d{1,2}:\d{2}(:\d{2})?)?$/.exec(s)
-  if (dot) {
-    return dmValid(Number(dot[1]), Number(dot[2]))
-  }
-  // year-first slash (e.g. 2026/08/14)
-  const ymd = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s)
-  if (ymd) {
-    const m = Number(ymd[2])
-    const d = Number(ymd[3])
-    return m >= 1 && m <= 12 && d >= 1 && d <= 31
+  // DD/MM/YYYY, DD-MM-YYYY, or DD.MM.YYYY with optional time (24h or 12h AM/PM, optional milliseconds)
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:\s+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*(?:AM|PM|am|pm))?)?$/.exec(s)
+  if (dmy) {
+    const d = Number(dmy[1])
+    const m = Number(dmy[2])
+    const y = Number(dmy[3])
+    const yearOk = dmy[3].length === 2 || (y >= 1990 && y <= 2099)
+    return dmValid(d, m) && yearOk
   }
   return false
 }

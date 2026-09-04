@@ -19,8 +19,9 @@ export const FIELDS: FieldDef[] = [
       'datetime', 'date', 'day', 'time', 'timestamp', 'date/time', 'date_time',
       'report date', 'reporting date', 'day (date)', 'measurement date', 'start time',
       'start_time', 'period start time', 'period_start_time', 'interval start time',
+      'date (dd/mm/yyyy)', 'date(dd/mm/yyyy)', 'date (dd-mm-yyyy)', 'date_dd_mm_yyyy',
       'date (yyyy-mm-dd)', 'date(yyyy-mm-dd)', 'time stamp', 'dt', 'report_date',
-      'measurement time'
+      'day date', 'event date', 'record date', 'collection date', 'measurement time'
     ]
   },
   {

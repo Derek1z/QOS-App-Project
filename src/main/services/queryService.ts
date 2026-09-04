@@ -996,15 +996,32 @@ export async function getPerformance(opts?: {
     }
   }
 
-  // Also include native metrics if not already present
-  if (!distributions.some((d) => d.metric === 'prb')) {
-    const NATIVE: Array<{ metric: PerfMetric; label: string; unit: string; col: string; target?: number; worseIsHigher: boolean; isCore: boolean }> = [
-      { metric: 'prb', label: 'PRB utilization', unit: '%', col: 'prb_avg', target: 80, worseIsHigher: true, isCore: true },
-      { metric: 'throughput', label: 'DL throughput', unit: 'kbps', col: 'dl_throughput_kbps_avg', worseIsHigher: false, isCore: false },
-      { metric: 'users', label: 'Connected users', unit: '', col: 'connected_users_sum', worseIsHigher: false, isCore: false },
-      { metric: 'volume', label: 'Data volume', unit: 'MB', col: 'data_volume_mb_sum', worseIsHigher: false, isCore: false },
-      { metric: 'availability', label: 'Availability', unit: '%', col: 'availability_pct_avg', target: 99, worseIsHigher: false, isCore: false }
+  // Also include native metrics if not already present, tailored to the active technology
+  const NATIVE_BY_TECH: Record<Technology, Array<{ metric: PerfMetric; label: string; unit: string; col: string; target?: number; worseIsHigher: boolean; isCore: boolean }>> = {
+    '2G': [
+      { metric: 'tch_congestion', label: 'TCH Congestion', unit: '%', col: 'prb_avg', target: 2.0, worseIsHigher: true, isCore: true },
+      { metric: 'throughput', label: 'EDGE/GPRS Throughput', unit: 'kbps', col: 'dl_throughput_kbps_avg', worseIsHigher: false, isCore: false },
+      { metric: 'users', label: 'Voice Erlang Traffic', unit: 'Erl', col: 'connected_users_sum', worseIsHigher: false, isCore: false },
+      { metric: 'volume', label: 'Data Volume', unit: 'MB', col: 'data_volume_mb_sum', worseIsHigher: false, isCore: false },
+      { metric: 'availability', label: 'TCH Availability', unit: '%', col: 'availability_pct_avg', target: 98.0, worseIsHigher: false, isCore: true }
+    ],
+    '3G': [
+      { metric: 'peak_hour_traffic_utilization_3g', label: 'Peak Traffic Utilization', unit: '%', col: 'prb_avg', target: 75.0, worseIsHigher: true, isCore: true },
+      { metric: 'throughput', label: 'HSDPA Throughput', unit: 'kbps', col: 'dl_throughput_kbps_avg', worseIsHigher: false, isCore: false },
+      { metric: 'users', label: 'Connected Users', unit: '', col: 'connected_users_sum', worseIsHigher: false, isCore: false },
+      { metric: 'volume', label: 'Data Volume', unit: 'MB', col: 'data_volume_mb_sum', worseIsHigher: false, isCore: false },
+      { metric: 'availability', label: '3G Availability', unit: '%', col: 'availability_pct_avg', target: 98.0, worseIsHigher: false, isCore: true }
+    ],
+    '4G': [
+      { metric: 'prb', label: 'PRB Utilization', unit: '%', col: 'prb_avg', target: 80.0, worseIsHigher: true, isCore: true },
+      { metric: 'throughput', label: 'DL Throughput', unit: 'kbps', col: 'dl_throughput_kbps_avg', worseIsHigher: false, isCore: false },
+      { metric: 'users', label: 'Connected Users', unit: '', col: 'connected_users_sum', worseIsHigher: false, isCore: false },
+      { metric: 'volume', label: 'Data Volume', unit: 'MB', col: 'data_volume_mb_sum', worseIsHigher: false, isCore: false },
+      { metric: 'availability', label: '4G Availability', unit: '%', col: 'availability_pct_avg', target: 99.0, worseIsHigher: false, isCore: true }
     ]
+  }
+  const NATIVE = NATIVE_BY_TECH[tech] || NATIVE_BY_TECH['4G']
+  if (!distributions.some((d) => NATIVE.some((n) => n.metric === d.metric))) {
     for (const m of NATIVE) {
       if (distributions.some((d) => d.metric === m.metric)) continue
       const r = await conn.runAndReadAll(

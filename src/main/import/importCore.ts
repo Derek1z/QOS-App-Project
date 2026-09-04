@@ -120,10 +120,25 @@ async function stageCsv(
 }
 
 const CANDIDATE_DATE_PATTERNS = [
-  '%Y-%m-%dT%H:%M:%S%z',
-  '%Y-%m-%dT%H:%M:%S',
+  // Primary DD/MM/YYYY standards (Ghana telecom & international day-first format)
+  '%d/%m/%Y %H:%M:%S',
+  '%d/%m/%Y %I:%M:%S %p',
+  '%d/%m/%Y %H:%M',
+  '%d/%m/%Y %I:%M %p',
+  '%d/%m/%Y',
+  '%d-%m-%Y %H:%M:%S',
+  '%d-%m-%Y %I:%M:%S %p',
+  '%d-%m-%Y %H:%M',
+  '%d-%m-%Y %I:%M %p',
+  '%d-%m-%Y',
+  '%d.%m.%Y %H:%M:%S',
+  '%d.%m.%Y %H:%M',
+  '%d.%m.%Y',
+  // 2-digit year DD/MM/YY
   '%d/%m/%y %H:%M:%S',
+  '%d/%m/%y %I:%M:%S %p',
   '%d/%m/%y %H:%M',
+  '%d/%m/%y %I:%M %p',
   '%d/%m/%y',
   '%d-%m-%y %H:%M:%S',
   '%d-%m-%y %H:%M',
@@ -131,23 +146,22 @@ const CANDIDATE_DATE_PATTERNS = [
   '%d.%m.%y %H:%M:%S',
   '%d.%m.%y %H:%M',
   '%d.%m.%y',
-  '%d-%b-%y',
-  '%m/%d/%y',
-  '%Y-%m-%d %H:%M:%S',
-  '%Y-%m-%d',
-  '%d/%m/%Y %H:%M:%S',
-  '%d/%m/%Y %H:%M',
-  '%d/%m/%Y',
-  '%d-%m-%Y %H:%M:%S',
-  '%d-%m-%Y %H:%M',
-  '%d-%m-%Y',
-  '%d.%m.%Y %H:%M:%S',
-  '%d.%m.%Y %H:%M',
-  '%d.%m.%Y',
   '%d-%b-%Y',
-  '%m/%d/%Y',
+  '%d-%b-%y',
+  // ISO formats
+  '%Y-%m-%d %H:%M:%S',
+  '%Y-%m-%d %H:%M',
+  '%Y-%m-%d',
+  '%Y-%m-%dT%H:%M:%S%z',
+  '%Y-%m-%dT%H:%M:%S',
+  '%Y/%m/%d %H:%M:%S',
   '%Y/%m/%d',
-  '%Y%m%d'
+  '%Y%m%d',
+  // Fallback Month-first only if not matching any day-first
+  '%m/%d/%Y %H:%M:%S',
+  '%m/%d/%Y %H:%M',
+  '%m/%d/%Y',
+  '%m/%d/%y'
 ]
 
 /** Fast date pattern detector: probes the first sample date strings from staging
@@ -165,7 +179,7 @@ async function detectOptimalDateCoalesce(conn: DuckDBConnection): Promise<string
     if (samples.length > 0) {
       for (const pattern of CANDIDATE_DATE_PATTERNS) {
         const testRes = await conn.runAndReadAll(
-          `SELECT try_strptime(?, '${pattern}') AS p WHERE year(try_strptime(?, '${pattern}')) BETWEEN 2000 AND 2050`,
+          `SELECT try_strptime(?, '${pattern}') AS p WHERE year(try_strptime(?, '${pattern}')) BETWEEN 1990 AND 2099`,
           [samples[0], samples[0]]
         )
         const parsed = testRes.getRowObjects()[0]?.p
@@ -223,6 +237,13 @@ async function buildClean(conn: DuckDBConnection): Promise<void> {
       row_number() OVER (PARTITION BY d.date_id, trim(p.cell_raw) ORDER BY 1) AS rn
     FROM (
       SELECT *, coalesce(
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[/](\\\\d{1,2})[/](\\\\d{4})'), '%d/%m/%Y'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[-](\\\\d{1,2})[-](\\\\d{4})'), '%d-%m-%Y'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[.](\\\\d{1,2})[.](\\\\d{4})'), '%d.%m.%Y'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[/](\\\\d{1,2})[/](\\\\d{2})'), '%d/%m/%y'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[-](\\\\d{1,2})[-](\\\\d{2})'), '%d-%m-%y'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{4})[-](\\\\d{1,2})[-](\\\\d{1,2})'), '%Y-%m-%d'),
+        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{4})[/](\\\\d{1,2})[/](\\\\d{1,2})'), '%Y/%m/%d'),
         ${dateCoalesceExpr}
       ) AS parsed_date
       FROM stg_import

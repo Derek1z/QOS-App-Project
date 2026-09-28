@@ -78,6 +78,10 @@ export const FIELDS: FieldDef[] = [
       'power utilization', 'power utilization (%)', 'dl power utilization',
       'carrier power utilization', '3g congestion', 'traffic utilization',
       'traffic utilization (%)', 'traffic utilization_std(%)',
+      '2g tch congestion rate (bh)_cell_h2g', '2g tch congestion rate (bh)', '2g tch congestion_cell_h2g',
+      'tch congestion rate (bh)', 'tch congestion (bh)',
+      '2g sdcch congestion rate (bh)_cell_h2g', '2g sdcch congestion rate (bh)', '2g sdcch congestion_cell_h2g',
+      'sdcch congestion rate (bh)', 'sdcch congestion (bh)',
       '2g tch congestion', '2g tch congestion (%)', 'tch congestion', 'tch congestion (%)',
       'tch congestion_std(%)', 'tch congestion rate', 'sdcch congestion',
       'sdcch congestion (%)', '2g sdcch congestion', '2g congestion', '2g congestion (%)',
@@ -98,7 +102,8 @@ export const FIELDS: FieldDef[] = [
       'subscribers', 'simultaneous users', 'average users', 'avg connected users',
       'rrc connected users (3g)', 'total active users',
       '2g users', '2g connected users', 'erlang', 'erlangs', 'carried traffic (erl)',
-      'voice traffic (erl)', 'traffic (erl)'
+      'voice traffic (erl)', 'traffic (erl)',
+      '2g erlang (tch)_cell_h2g', '2g erlang (tch hr)_cell_h2g', '2g erlang (sdcch)_cell_h2g'
     ]
   },
   {
@@ -129,6 +134,7 @@ export const FIELDS: FieldDef[] = [
       '3g cell availability_std(%)', '3g cell availability', '3g cell availability (%)',
       '3g availability', '3g cell availability std', 'utran cell availability',
       'utran cell availability (%)',
+      'availability rate (tch_pdch channel)_cell_h2g', 'availability rate (tch_pdch channel)',
       '2g availability', '2g cell availability', '2g cell availability (%)',
       '2g cell availability_std(%)', '2g tch availability', 'tch availability',
       'tch availability (%)', 'tch available rate', 'tch availability_std(%)',
@@ -192,15 +198,15 @@ export function detectTechnology(
   let score3G = 0
   let score4G = 0
 
-  if (/\b(tch|sdcch|gprs|bts|cell id cgi|tch congestion|sdcch congestion)\b/.test(allHeadersStr)) score2G += 3
+  if (/\b(tch|sdcch|gprs|bts|cell id cgi|tch congestion|sdcch congestion|h2g|cm33|cm36|a3030)\b/.test(allHeadersStr)) score2G += 3
   if (/2g\s+(call|drop|cssr|cdr|congestion)/.test(allHeadersStr)) score2G += 4
 
-  if (/\b(hsdpa|hsupa|nodeb|wcdma|umts|ce utilization|channel element|dasr)\b/.test(allHeadersStr)) score3G += 3
+  if (/\b(hsdpa|hsupa|nodeb|wcdma|umts|ce utilization|channel element|dasr|h3g)\b/.test(allHeadersStr)) score3G += 3
   if (/3g\s+(call|drop|cssr|cdr|data access)/.test(allHeadersStr)) score3G += 4
   if (/rrc\s+(connection|setup|success)/.test(allHeadersStr)) score3G += 2
 
-  if (/\b(enodeb|enb|lte|e utran|prb utilization|prb utilisation|volte|mos|vqi|rtp jitter|ims|erab|e rab)\b/.test(allHeadersStr)) score4G += 3
-  if (/4g\s+(call|drop|cssr|cdr|prb|data service|traffic utilization)/.test(allHeadersStr)) score4G += 4
+  if (/\b(enodeb|enb|lte|e utran|prb utilization|prb utilisation|volte|mos|vqi|rtp jitter|ims|erab|e rab|hwi_4g|hwi 4g|l rrc|l e rab|l ra|s1 signalling|s1 signaling)\b/.test(allHeadersStr)) score4G += 3
+  if (/4g\s+(call|drop|cssr|cdr|prb|data service|traffic utilization|cell)/.test(allHeadersStr)) score4G += 4
 
   if (score2G > score3G && score2G > score4G) return '2G'
   if (score3G > score2G && score3G > score4G) return '3G'

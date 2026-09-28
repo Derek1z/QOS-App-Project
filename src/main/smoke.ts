@@ -925,7 +925,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   writeFileSync(extraCsv, [
     'Date/Time,Cell,District,Region,Site,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps),TCH Congestion (%)',
     '2026-07-28 00:00,EXTRA_001_A,Accra Metro,Greater Accra,EXTRA_001,60.0,300,10000,99.8,20000,3.5',
-    '2026-07-28 00:00,EXTRA_002_A,Accra Metro,Greater Accra,EXTRA_002,75.0,350,12000,99.7,18000,1.2'
+    '2026-07-28 00:00,EXTRA_002_A,Accra Metro,Greater Accra,EXTRA_002,75.0,350,12000,99.7,18000,0.6'
   ].join('\n'))
   const kpiAnalysis = await analyzeFiles([extraCsv])
   const kpiRec = kpiAnalysis[0]
@@ -943,8 +943,8 @@ export async function runSmokeTest(dir: string): Promise<void> {
   const tch = extraRow.kpis.find((k) => k.key === 'tch_congestion')
   if (!tch || tch.value == null) throw new Error('tch_congestion value missing: ' + JSON.stringify(extraRow.kpis))
   if (tch.value !== 3.5) throw new Error('tch_congestion value wrong: ' + tch.value)
-  if (tch.breached !== true) throw new Error('tch_congestion should breach target 2: ' + JSON.stringify(tch))
-  // 27d3. tech-aware NC: under 2G the cell breaching TCH Congestion (3.5 > 2)
+  if (tch.breached !== true) throw new Error('tch_congestion should breach target 1.0: ' + JSON.stringify(tch))
+  // 27d3. tech-aware NC: under 2G the cell breaching TCH Congestion (3.5 > 1.0)
   // every day must be classified NC from its imported KPI — not the PRB rule
   const kpiNc = await getCellIntelligence({ limit: 500 })
   const ncRow = kpiNc.rows.find((r) => r.cellName === 'EXTRA_001_A')
@@ -972,7 +972,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')
 
   // 27e. technology switching (spec §54a): the workspace is now 2G from 27d2;
-  // the imported TCH congestion (3.5 vs target 2) must feed the priority score
+  // the imported TCH congestion (3.5 vs target 1.0) must feed the priority score
   const infoNow = await ws.getCurrentInfo()
   if (infoNow?.technology !== '2G') throw new Error('expected 2G after switch: ' + infoNow?.technology)
   const twoGDefs = await listKpiDefs(ws.getCurrent()!.connection, '2G')
@@ -1372,7 +1372,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
     throw new Error(`kpi registry incomplete: 2G=${kpis2G.length}, 3G=${kpis3G.length}, 4G=${kpis4G.length}`)
   }
   const tchDef = kpis2G.find((k) => k.key === 'tch_congestion')
-  if (!tchDef || tchDef.betterDirection !== 'lower_is_better' || !tchDef.isCore || tchDef.target !== 2.0) {
+  if (!tchDef || tchDef.betterDirection !== 'lower_is_better' || !tchDef.isCore || tchDef.target !== 1.0) {
     throw new Error('2G tch_congestion definition mismatch: ' + JSON.stringify(tchDef))
   }
   const cssr3G = kpis3G.find((k) => k.key === 'call_setup_success_3g' || k.key === 'cssr_3g')

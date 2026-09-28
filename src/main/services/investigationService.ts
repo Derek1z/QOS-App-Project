@@ -560,11 +560,11 @@ export async function getInvestigation(
     kpiMap,
     thresholds: {
       prb: rules?.prbThresholdPct ?? 80,
-      tchCongestion: rules?.tchCongestionThresholdPct ?? 2.0,
-      sdcchCongestion: rules?.sdcchCongestionThresholdPct ?? 2.0,
-      cssr: rules?.cssrThresholdPct ?? 98.5,
-      callDrop: rules?.callDropThresholdPct ?? 1.5,
-      dataAccess: rules?.dataAccessThresholdPct ?? 98.0,
+      tchCongestion: rules?.tchCongestionThresholdPct ?? 1.0,
+      sdcchCongestion: rules?.sdcchCongestionThresholdPct ?? 1.0,
+      cssr: rules?.cssrThresholdPct ?? 95.0,
+      callDrop: rules?.callDropThresholdPct ?? 1.0,
+      dataAccess: rules?.dataAccessThresholdPct ?? 95.0,
       dataFailure: rules?.dataServiceFailureThresholdPct ?? 1.0,
       persistentWeeks: rules?.persistentWeeks ?? 3,
       chronicWeeks: rules?.chronicWeeks ?? 7

@@ -164,6 +164,16 @@ const CANDIDATE_DATE_PATTERNS = [
   '%m/%d/%y'
 ]
 
+// Plausible reporting years. DuckDB's %Y also accepts a 2-digit year ("05/07/26" parses
+// as 0026-07-05), so every alternative is bounded: an out-of-range parse falls through
+// to the next pattern (here the %y twin) instead of winning the coalesce.
+const MIN_YEAR = 1990
+const MAX_YEAR = 2099
+
+function inYearRange(expr: string): string {
+  return `CASE WHEN year(${expr}) BETWEEN ${MIN_YEAR} AND ${MAX_YEAR} THEN ${expr} END`
+}
+
 /** Fast date pattern detector: probes the first sample date strings from staging
  *  to find the exact matching strptime pattern. Placing the winning format at index 0
  *  of coalesce() short-circuits DuckDB's vectorized kernel, avoiding up to 120M+ failed
@@ -179,16 +189,16 @@ async function detectOptimalDateCoalesce(conn: DuckDBConnection): Promise<string
     if (samples.length > 0) {
       for (const pattern of CANDIDATE_DATE_PATTERNS) {
         const testRes = await conn.runAndReadAll(
-          `SELECT try_strptime(?, '${pattern}') AS p WHERE year(try_strptime(?, '${pattern}')) BETWEEN 1990 AND 2099`,
+          `SELECT try_strptime(?, '${pattern}') AS p WHERE year(try_strptime(?, '${pattern}')) BETWEEN ${MIN_YEAR} AND ${MAX_YEAR}`,
           [samples[0], samples[0]]
         )
         const parsed = testRes.getRowObjects()[0]?.p
         if (parsed != null) {
           const others = CANDIDATE_DATE_PATTERNS.filter((p) => p !== pattern)
           const exprs = [
-            `try_strptime(date_raw, '${pattern}')`,
-            ...others.map((p) => `try_strptime(date_raw, '${p}')`),
-            `try_cast(date_raw AS DATE)`
+            inYearRange(`try_strptime(date_raw, '${pattern}')`),
+            ...others.map((p) => inYearRange(`try_strptime(date_raw, '${p}')`)),
+            inYearRange(`try_cast(date_raw AS DATE)`)
           ]
           return exprs.join(',\n        ')
         }
@@ -197,7 +207,9 @@ async function detectOptimalDateCoalesce(conn: DuckDBConnection): Promise<string
   } catch {
     /* fallback to default order */
   }
-  return CANDIDATE_DATE_PATTERNS.map((p) => `try_strptime(date_raw, '${p}')`).concat(['try_cast(date_raw AS DATE)']).join(',\n        ')
+  return CANDIDATE_DATE_PATTERNS.map((p) => inYearRange(`try_strptime(date_raw, '${p}')`))
+    .concat([inYearRange(`try_cast(date_raw AS DATE)`)])
+    .join(',\n        ')
 }
 
 async function buildClean(conn: DuckDBConnection): Promise<void> {

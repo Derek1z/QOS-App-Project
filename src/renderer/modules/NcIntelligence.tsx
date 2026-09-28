@@ -1,8 +1,176 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useAppStore } from '../store'
 import type {
-  NcLifecycleResult, PriorityRow, HealthResult, PriorityMode, Grain, Technology
+  NcLifecycleResult, NcLifecycleRow, PriorityRow, HealthResult, PriorityMode, Grain, Technology,
+  CellIntelligenceResult, CellIntelligenceRow, CellKpiValue
 } from '../../../shared/api'
+
+function renderBreachedKpis(kpis: CellKpiValue[] | undefined, fallbackScore: number, tech: Technology): React.JSX.Element {
+  const breached = (kpis ?? []).filter((k) => k.breached)
+  if (breached.length > 0) {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+        {breached.slice(0, 3).map((k) => {
+          const valStr = k.value != null ? (Math.abs(k.value) >= 100 ? Math.round(k.value).toLocaleString() : k.value.toFixed(1)) : '—'
+          const tgtStr = k.target != null ? (Math.abs(k.target) >= 100 ? Math.round(k.target).toLocaleString() : k.target.toString()) : '—'
+          const sign = k.worseIsHigher ? '>' : '<'
+          const shortLabel = k.label
+            .replace('Congestion Rate (BH)', 'Cong (BH)')
+            .replace('Call Connection Success Rate', 'CSSR')
+            .replace('Call Setup Success Rate', 'CSSR')
+            .replace('Call Drop Rate', 'CDR')
+            .replace('Data Access Success Rate', 'DASR')
+            .replace('Average Timing Advance', 'Avg TA')
+          return (
+            <span
+              key={k.key}
+              title={`${k.label}: ${valStr}${k.unit} (${sign} target ${tgtStr}${k.unit})`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 600,
+                background: 'rgba(239, 68, 68, 0.12)',
+                color: '#fca5a5',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <strong style={{ color: '#f87171' }}>{shortLabel}:</strong>
+              <span>{valStr}{k.unit}</span>
+              <span style={{ color: 'var(--text-dim)', fontSize: '10px' }}>({sign}{tgtStr}{k.unit})</span>
+            </span>
+          )
+        })}
+        {breached.length > 3 && (
+          <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>
+            +{breached.length - 3} more
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+      <span
+        style={{
+          padding: '2px 8px',
+          borderRadius: '6px',
+          fontSize: '11px',
+          fontWeight: 600,
+          background: fallbackScore > 75 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+          color: fallbackScore > 75 ? '#fca5a5' : '#fde68a',
+          border: '1px solid rgba(239, 68, 68, 0.25)'
+        }}
+      >
+        {tech} Target Breach · Score {Math.round(fallbackScore)}
+      </span>
+    </div>
+  )
+}
+
+function renderLifecycleBadge(lifecycle?: string, breachDays?: number): React.JSX.Element {
+  const lc = lifecycle || 'Persistent NC'
+  let bg = 'rgba(239, 68, 68, 0.15)'
+  let color = '#f87171'
+  let border = 'rgba(239, 68, 68, 0.3)'
+
+  if (lc === 'Recurring NC') {
+    bg = 'rgba(245, 158, 11, 0.15)'
+    color = '#fbbf24'
+    border = 'rgba(245, 158, 11, 0.3)'
+  } else if (lc === 'New NC') {
+    bg = 'rgba(234, 179, 8, 0.15)'
+    color = '#facc15'
+    border = 'rgba(234, 179, 8, 0.3)'
+  } else if (lc === 'Recovering') {
+    bg = 'rgba(6, 182, 212, 0.15)'
+    color = '#38bdf8'
+    border = 'rgba(6, 182, 212, 0.3)'
+  } else if (lc === 'Healthy') {
+    bg = 'rgba(16, 185, 129, 0.15)'
+    color = '#34d399'
+    border = 'rgba(16, 185, 129, 0.3)'
+  }
+
+  const streakStr = breachDays != null && breachDays > 0
+    ? `${breachDays}d streak`
+    : lc === 'Persistent NC'
+    ? '≥ 3w streak'
+    : lc === 'Recurring NC'
+    ? 'Intermittent'
+    : 'Active'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
+      <span
+        style={{
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '10px',
+          fontWeight: 800,
+          textTransform: 'uppercase',
+          background: bg,
+          color,
+          border: `1px solid ${border}`
+        }}
+      >
+        {lc}
+      </span>
+      <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>
+        ⏱ {streakStr}
+      </span>
+    </div>
+  )
+}
+
+function renderSeverityBand(band: string, score: number, severity?: string): React.JSX.Element {
+  const isCrit = band === 'Critical' || severity === 'Critical'
+  const isHigh = band === 'High' || severity === 'High'
+  const badgeBg = isCrit ? 'rgba(239, 68, 68, 0.2)' : isHigh ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)'
+  const badgeColor = isCrit ? '#f87171' : isHigh ? '#fbbf24' : '#38bdf8'
+  const badgeBorder = isCrit ? 'rgba(239, 68, 68, 0.35)' : isHigh ? 'rgba(245, 158, 11, 0.35)' : 'rgba(56, 189, 248, 0.35)'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span
+          style={{
+            padding: '2px 8px',
+            borderRadius: '4px',
+            fontSize: '10px',
+            fontWeight: 800,
+            textTransform: 'uppercase',
+            background: badgeBg,
+            color: badgeColor,
+            border: `1px solid ${badgeBorder}`
+          }}
+        >
+          {severity || band}
+        </span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: '#f8fafc' }}>
+          {band}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '90px' }}>
+        <div style={{ flex: 1, height: '5px', background: 'var(--bg-3)', borderRadius: '3px', overflow: 'hidden' }}>
+          <div
+            style={{
+              width: `${Math.min(100, score)}%`,
+              height: '100%',
+              background: score > 75 ? '#f87171' : score > 50 ? '#fbbf24' : '#38bdf8'
+            }}
+          />
+        </div>
+        <span style={{ fontWeight: 800, fontSize: '11px', color: 'var(--text)' }}>{Math.round(score)}</span>
+      </div>
+    </div>
+  )
+}
 
 export default function NcIntelligence(): React.JSX.Element {
   const storeGrain = useAppStore((s) => s.grain)
@@ -16,6 +184,7 @@ export default function NcIntelligence(): React.JSX.Element {
   const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [nc, setNc] = useState<NcLifecycleResult | null>(null)
   const [priority, setPriority] = useState<PriorityRow[]>([])
+  const [cellIntel, setCellIntel] = useState<CellIntelligenceResult | null>(null)
   const [, setHealth] = useState<HealthResult | null>(null)
   const [mode, setMode] = useState<PriorityMode>('balanced')
   const [fBand, setFBand] = useState<string>('all')
@@ -42,15 +211,17 @@ export default function NcIntelligence(): React.JSX.Element {
     let alive = true
     void (async () => {
       try {
-        const [ncRes, prioRes, healthRes] = await Promise.all([
+        const [ncRes, prioRes, healthRes, intelRes] = await Promise.all([
           window.api.analytics.ncLifecycle(grain),
-          window.api.analytics.priorityQueue(mode, 15),
-          window.api.analytics.health()
+          window.api.analytics.priorityQueue(mode, 50),
+          window.api.analytics.health(),
+          window.api.analytics.cellIntelligence({ limit: 150, technology: tech })
         ])
         if (!alive) return
         setNc(ncRes)
         setPriority(prioRes)
         setHealth(healthRes)
+        setCellIntel(intelRes)
       } catch {
         /* workspace closed mid-flight */
       }
@@ -58,20 +229,55 @@ export default function NcIntelligence(): React.JSX.Element {
     return () => { alive = false }
   }, [grain, mode, tech])
 
+  const intelMap = useMemo(() => {
+    const m = new Map<number, CellIntelligenceRow>()
+    if (cellIntel?.rows) {
+      for (const r of cellIntel.rows) m.set(r.cellId, r)
+    }
+    return m
+  }, [cellIntel])
+
+  const ncMap = useMemo(() => {
+    const m = new Map<number, NcLifecycleRow>()
+    if (nc?.cells) {
+      for (const c of nc.cells) m.set(c.cellId, c)
+    }
+    return m
+  }, [nc])
+
   const filteredPriority = useMemo(() => {
     return priority.filter((p) => {
       if (fBand !== 'all' && p.band.toLowerCase() !== fBand.toLowerCase()) return false
-      if (fQ && !p.cellName.toLowerCase().includes(fQ.toLowerCase()) && !p.site?.toLowerCase().includes(fQ.toLowerCase())) return false
+      const intel = intelMap.get(p.cellId)
+      const site = p.site || intel?.site || ''
+      const district = p.district || intel?.district || ''
+      const region = p.region || intel?.region || ''
+      if (fQ) {
+        const q = fQ.toLowerCase()
+        if (
+          !p.cellName.toLowerCase().includes(q) &&
+          !site.toLowerCase().includes(q) &&
+          !district.toLowerCase().includes(q) &&
+          !region.toLowerCase().includes(q)
+        ) {
+          return false
+        }
+      }
       return true
     })
-  }, [priority, fBand, fQ])
+  }, [priority, fBand, fQ, intelMap])
 
   const handleInvestigate = (p: PriorityRow) => {
+    const intel = intelMap.get(p.cellId)
+    const ncCell = ncMap.get(p.cellId)
+    const region = p.region || intel?.region || ncCell?.region || ''
+    const district = p.district || intel?.district || ncCell?.district || ''
+    const site = p.site || intel?.site || ncCell?.site || ''
     setInvestigationTarget({
       id: p.cellId,
       name: p.cellName,
       scope: 'cell',
-      path: [p.cellName]
+      path: [region, district, site, p.cellName].filter(Boolean)
     })
     setModule('investigation')
   }
@@ -386,77 +592,113 @@ export default function NcIntelligence(): React.JSX.Element {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
             <thead>
               <tr style={{ background: 'var(--bg-3)', borderBottom: '1px solid var(--border)', color: 'var(--text-dim)', textTransform: 'uppercase', fontSize: '11px' }}>
-                <th style={{ padding: '10px 14px' }}>Rank / Cell Name</th>
-                <th style={{ padding: '10px 14px' }}>Site</th>
-                <th style={{ padding: '10px 14px' }}>Priority Band</th>
-                <th style={{ padding: '10px 14px' }}>Risk Score</th>
-                <th style={{ padding: '10px 14px', textAlign: 'right' }}>Action</th>
+                <th style={{ padding: '12px 14px' }}>Rank & Cell Name</th>
+                <th style={{ padding: '12px 14px' }}>Site / District / Region</th>
+                <th style={{ padding: '12px 14px' }}>NC Lifecycle & Streak</th>
+                <th style={{ padding: '12px 14px' }}>Severity & Risk Score</th>
+                <th style={{ padding: '12px 14px' }}>Breaching KPIs vs Targets</th>
+                <th style={{ padding: '12px 14px', textAlign: 'right' }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {filteredPriority.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)' }}>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-dim)' }}>
                     No non-compliant cells matching active filters.
                   </td>
                 </tr>
               ) : (
-                filteredPriority.map((p, idx) => (
-                  <tr key={p.cellId} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.15s ease' }}>
-                    <td style={{ padding: '12px 14px', fontWeight: 700, color: '#f8fafc' }}>
-                      <span style={{ color: 'var(--text-dim)', fontSize: '11px', marginRight: '8px' }}>#{idx + 1}</span>
-                      {p.cellName}
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-dim)' }}>{p.site || '—'}</td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          fontSize: '10px',
-                          fontWeight: 800,
-                          textTransform: 'uppercase',
-                          background: p.band === 'Critical' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                          color: p.band === 'Critical' ? '#f87171' : '#fbbf24',
-                          border: '1px solid rgba(239, 68, 68, 0.3)'
-                        }}
-                      >
-                        {p.band}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ flex: 1, height: '6px', background: 'var(--bg-3)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div
-                            style={{
-                              width: `${Math.min(100, p.score)}%`,
-                              height: '100%',
-                              background: p.score > 75 ? '#f87171' : '#fbbf24'
-                            }}
-                          />
+                filteredPriority.map((p, idx) => {
+                  const intel = intelMap.get(p.cellId)
+                  const ncCell = ncMap.get(p.cellId)
+                  const siteName = p.site || intel?.site || ncCell?.site || '—'
+                  const districtName = p.district || intel?.district || ncCell?.district || '—'
+                  const regionName = p.region || intel?.region || ncCell?.region || '—'
+
+                  return (
+                    <tr key={p.cellId} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.15s ease' }}>
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ color: 'var(--text-dim)', fontSize: '11px', fontWeight: 700, minWidth: '22px' }}>
+                            #{idx + 1}
+                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <span style={{ fontWeight: 800, color: '#f8fafc', fontSize: '13px' }}>
+                              {p.cellName}
+                            </span>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                width: 'fit-content',
+                                padding: '1px 6px',
+                                fontSize: '10px',
+                                fontWeight: 800,
+                                borderRadius: '4px',
+                                background: 'var(--bg-3)',
+                                color: 'var(--text-dim)',
+                                border: '1px solid var(--border)'
+                              }}
+                            >
+                              {tech}
+                            </span>
+                          </div>
                         </div>
-                        <span style={{ fontWeight: 800, fontSize: '12px', color: '#f8fafc' }}>{Math.round(p.score)}</span>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                      <button
-                        onClick={() => handleInvestigate(p)}
-                        style={{
-                          padding: '4px 12px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          background: 'rgba(56, 189, 248, 0.15)',
-                          color: '#38bdf8',
-                          border: '1px solid rgba(56, 189, 248, 0.3)',
-                          borderRadius: '6px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        🔬 Investigate
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontWeight: 700, color: '#f8fafc' }}>{siteName}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                            {districtName} · {regionName}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}>
+                        {renderLifecycleBadge(intel?.lifecycle || ncCell?.lifecycle, intel?.breachDays ?? ncCell?.breachDays)}
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}>
+                        {renderSeverityBand(p.band, p.score, intel?.severity || ncCell?.severity)}
+                      </td>
+
+                      <td style={{ padding: '12px 14px', maxWidth: '340px' }}>
+                        {renderBreachedKpis(intel?.kpis, p.components.kpiBreach || p.score, tech)}
+                      </td>
+
+                      <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                        <button
+                          onClick={() => handleInvestigate(p)}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.3))',
+                            color: '#34d399',
+                            border: '1px solid rgba(16, 185, 129, 0.4)',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 6px rgba(16, 185, 129, 0.15)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(16, 185, 129, 0.35), rgba(5, 150, 105, 0.5))'
+                            e.currentTarget.style.transform = 'translateY(-1px)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.3))'
+                            e.currentTarget.style.transform = 'translateY(0)'
+                          }}
+                        >
+                          🎯 Investigate
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>

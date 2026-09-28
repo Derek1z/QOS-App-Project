@@ -37,6 +37,28 @@ export const transportRule: DiagnosticRule = {
       sup.push(`Throughput is choked despite low radio PRB load (${prbVal.toFixed(1)}%), strongly indicating backhaul bandwidth limits.`)
     }
 
+    if (ctx.technology === '4G') {
+      const failTnl = ctx.kpiMap.get('l_erab_failest_tnl') ?? 0
+      const relTnl = ctx.kpiMap.get('l_erab_abnormrel_tnl') ?? 0
+      const totalTnl = failTnl + relTnl
+      if (totalTnl > 0) {
+        support += 35
+        sup.push(`Transport Network Layer (TNL) degradation confirmed: ${failTnl} E-RAB setup failures and ${relTnl} abnormal drops caused by backhaul transport issues.`)
+        recs.push('Audit S1-U transmission link, router interface packet loss, and IP backhaul QoS DSCP mapping.')
+      }
+    }
+
+    if (ctx.technology === '2G') {
+      const cm333 = ctx.kpiMap.get('cm333_tch_drops_abis_link_failure') ?? 0
+      const cm363 = ctx.kpiMap.get('cm363_sdcch_drops_abis_link_failure') ?? 0
+      const abisDrops = cm333 + cm363
+      if (abisDrops > 0) {
+        support += 40
+        sup.push(`Abis terrestrial link failure confirmed: ${abisDrops} drops occurred due to transmission link degradation (CM333/CM363).`)
+        recs.push('Audit microwave link fade margins, E1/T1 framing slips, and IP transmission jitter on the Abis interface.')
+      }
+    }
+
     const score = Math.max(5, Math.min(95, 30 + support - contra))
     const verdict = score >= 65 ? 'consistent' : score >= 45 ? 'suggests' : 'not supported'
 

@@ -85,12 +85,15 @@ const DEMO_KPI_SEEDS: Array<{
   { technology: '3G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'dropped call rate (%)'] },
   { technology: '3G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', 'volume'] },
   { technology: '3G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'active users', 'rrc connected ues'] },
-  { technology: '4G', key: 'prb_utilization', label: 'PRB Utilization', unit: '%', worseIsHigher: true, target: 80, agg: 'avg', aliases: ['prb utilization', 'prb', 'prb util', 'prb utilization (%)', '4g prb', 'peak hour traffic utilization'] },
-  { technology: '4G', key: 'dl_throughput', label: 'DL Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['dl throughput', 'throughput', 'dl throughput (kbps)', 'e-utran ip throughput ue dl', 'e-utran ip throughput ue dl (kbps)'] },
-  { technology: '4G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'users', 'rrc connected ues', 'rrc connected ues (avg)', 'active users'] },
-  { technology: '4G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', 'data volume (mb)', 'traffic (mb)', '4g data volume', 'volume'] },
-  { technology: '4G', key: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.5, agg: 'avg', aliases: ['availability', 'cell availability', 'availability (%)', '4g cell availability'] },
-  { technology: '4G', key: 'drop_call_rate', label: 'Drop Call Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['drop call rate', 'call drop rate', 'erab drop rate'] }
+  { technology: '4G', key: 'call_setup_success_4g', label: '4G Call Connection Success Rate', unit: '%', worseIsHigher: false, target: 95.0, agg: 'avg', aliases: ['4g call connection success rate_nca(%)', '4g call connection success rate', '4g cssr'] },
+  { technology: '4G', key: 'call_drop_rate_4g', label: '4G Call Drop Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['4g call drop rate_nca(%)', '4g call drop rate', '4g cdr'] },
+  { technology: '4G', key: 'data_service_failure_4g', label: '4G Data Service Access Failure Rate', unit: '%', worseIsHigher: true, target: 1.0, agg: 'avg', aliases: ['4g data service access failure rate_nca', '4g dsaf'] },
+  { technology: '4G', key: 's1_signalling_success_rate', label: 'S1 Signalling Connection Establishment Success Rate', unit: '%', worseIsHigher: false, target: 99.0, agg: 'avg', aliases: ['s1 signalling connection establishment success rate_std(%)', 's1 signalling success rate'] },
+  { technology: '4G', key: 'prb_utilization', label: '4G Peak Hour PRB Utilization', unit: '%', worseIsHigher: true, target: 80.0, agg: 'avg', aliases: ['4g peak hour traffic utilization_nca(%)', 'prb utilization', 'prb', 'prb util'] },
+  { technology: '4G', key: 'dl_throughput', label: 'DL Throughput', unit: 'kbps', worseIsHigher: false, target: null, agg: 'avg', aliases: ['dl throughput', 'e-utran ip throughput ue dl_std(kbps)'] },
+  { technology: '4G', key: 'connected_users', label: 'Connected Users', unit: '', worseIsHigher: false, target: null, agg: 'avg', aliases: ['connected users', 'rrc connected ues (avg)_std(#)'] },
+  { technology: '4G', key: 'data_volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false, target: null, agg: 'sum', aliases: ['data volume', '4g data volume_std(mb)'] },
+  { technology: '4G', key: 'availability', label: '4G Cell Availability', unit: '%', worseIsHigher: false, target: 99.0, agg: 'avg', aliases: ['4g cell availability_std(%)', 'availability', 'cell availability'] }
 ]
 
 let demoKpiDefs: KpiDefinition[] = seedDemoKpiDefs()
@@ -2377,19 +2380,19 @@ function invMetricValue(w: InvestigationWeek | undefined, m: PerfMetric | 'nc' |
 
 const TECH_INV_METRICS: Record<Technology, Array<{ metric: PerfMetric | 'nc'; label: string; unit: string; worseIsHigher: boolean; target?: number }>> = {
   '2G': [
-    { metric: 'tch_cong' as PerfMetric, label: '2G TCH Congestion', unit: '%', worseIsHigher: true, target: 2.0 },
-    { metric: 'sdcch_cong' as PerfMetric, label: '2G SDCCH Congestion', unit: '%', worseIsHigher: true, target: 1.5 },
-    { metric: 'cssr_2g' as PerfMetric, label: '2G Voice CSSR', unit: '%', worseIsHigher: false, target: 98.0 },
+    { metric: 'tch_cong' as PerfMetric, label: 'TCH Congestion Rate (BH)', unit: '%', worseIsHigher: true, target: 1.0 },
+    { metric: 'sdcch_cong' as PerfMetric, label: 'SDCCH Congestion Rate (BH)', unit: '%', worseIsHigher: true, target: 1.0 },
+    { metric: 'cssr_2g' as PerfMetric, label: '2G Call Setup Success', unit: '%', worseIsHigher: false, target: 95.0 },
     { metric: 'call_drop_2g' as PerfMetric, label: '2G Call Drop Rate', unit: '%', worseIsHigher: true, target: 1.0 },
-    { metric: 'voice_traffic' as PerfMetric, label: 'Voice Traffic', unit: 'Erl', worseIsHigher: false },
-    { metric: 'availability', label: 'TCH Availability', unit: '%', worseIsHigher: false, target: 98.0 },
+    { metric: 'voice_traffic' as PerfMetric, label: 'Voice Traffic (Erl)', unit: 'Erl', worseIsHigher: false },
+    { metric: 'availability', label: 'TCH Availability', unit: '%', worseIsHigher: false, target: 95.0 },
     { metric: 'nc', label: 'NC Status', unit: '', worseIsHigher: true }
   ],
   '3G': [
     { metric: 'traffic_util_3g' as PerfMetric, label: '3G Peak Traffic Util', unit: '%', worseIsHigher: true, target: 75.0 },
     { metric: 'cssr_3g' as PerfMetric, label: '3G Voice CSSR', unit: '%', worseIsHigher: false, target: 98.0 },
     { metric: 'call_drop_3g' as PerfMetric, label: '3G Call Drop Rate', unit: '%', worseIsHigher: true, target: 1.0 },
-    { metric: 'data_access_3g' as PerfMetric, label: '3G Data Access (DASR)', unit: '%', worseIsHigher: false, target: 97.0 },
+    { metric: 'data_access_3g' as PerfMetric, label: '3G Data Access (DASR)', unit: '%', worseIsHigher: false, target: 95.0 },
     { metric: 'throughput_3g' as PerfMetric, label: '3G HSDPA Speed', unit: 'Mbps', worseIsHigher: false, target: 2.0 },
     { metric: 'volume_3g' as PerfMetric, label: '3G Data Volume', unit: 'MB', worseIsHigher: false },
     { metric: 'availability', label: '3G Availability', unit: '%', worseIsHigher: false, target: 98.0 },
@@ -2398,9 +2401,9 @@ const TECH_INV_METRICS: Record<Technology, Array<{ metric: PerfMetric | 'nc'; la
   '4G': [
     { metric: 'prb', label: '4G DL PRB Util', unit: '%', worseIsHigher: true, target: 80.0 },
     { metric: 'throughput', label: '4G DL Throughput', unit: 'kbps', worseIsHigher: false, target: 10000 },
-    { metric: 'cssr_4g' as PerfMetric, label: '4G CSSR', unit: '%', worseIsHigher: false, target: 98.5 },
+    { metric: 'cssr_4g' as PerfMetric, label: '4G CSSR', unit: '%', worseIsHigher: false, target: 95.0 },
     { metric: 'call_drop_4g' as PerfMetric, label: '4G Call Drop Rate', unit: '%', worseIsHigher: true, target: 1.0 },
-    { metric: 'data_failure_4g' as PerfMetric, label: '4G Data Access Failure', unit: '%', worseIsHigher: true, target: 1.5 },
+    { metric: 'data_failure_4g' as PerfMetric, label: '4G Data Access Failure', unit: '%', worseIsHigher: true, target: 1.0 },
     { metric: 'users', label: 'Connected Users', unit: '', worseIsHigher: false },
     { metric: 'volume', label: 'Data Volume', unit: 'MB', worseIsHigher: false },
     { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false, target: 99.0 },
@@ -2645,14 +2648,14 @@ function demoInvestigation(
     const dropK = kpi('call_drop_2g')
     const voiceK = kpi('voice_traffic')
 
-    if (tchK?.current != null && tchK.current >= 2.0) {
-      f('tch_high', 'evidence', 'consistent with', `2G TCH Congestion of ${invFmt(tchK.current, '%')} exceeds the 2.0% regulatory threshold.`)
+    if (tchK?.current != null && tchK.current >= 1.0) {
+      f('tch_high', 'evidence', 'consistent with', `2G TCH Congestion (BH) of ${invFmt(tchK.current, '%')} exceeds the 1.0% regulatory threshold.`)
     }
-    if (sdcchK?.current != null && sdcchK.current >= 1.5) {
-      f('sdcch_high', 'evidence', 'consistent with', `2G SDCCH Congestion of ${invFmt(sdcchK.current, '%')} indicates signalling channel bottleneck during call setup.`)
+    if (sdcchK?.current != null && sdcchK.current >= 1.0) {
+      f('sdcch_high', 'evidence', 'consistent with', `2G SDCCH Congestion (BH) of ${invFmt(sdcchK.current, '%')} indicates signalling channel bottleneck during call setup (exceeds 1.0% limit).`)
     }
-    if (cssrK?.current != null && cssrK.current < 98.0) {
-      f('cssr_low', 'evidence', 'consistent with', `2G Call Setup Success Rate (${invFmt(cssrK.current, '%')}) is below the 98.0% target.`)
+    if (cssrK?.current != null && cssrK.current < 95.0) {
+      f('cssr_low', 'evidence', 'consistent with', `2G Call Setup Success Rate (${invFmt(cssrK.current, '%')}) is below the 95.0% target.`)
     }
     if (dropK?.current != null && dropK.current > 1.0) {
       f('drop_high', 'evidence', 'consistent with', `2G Call Drop Rate (${invFmt(dropK.current, '%')}) exceeds the 1.0% regulatory limit.`)
@@ -2661,50 +2664,60 @@ function demoInvestigation(
       f('voice_growth', 'evidence', 'consistent with', `Voice traffic grew ${Math.round(voiceK.deltaPct * 10) / 10}% period-over-period — voice erlang surge.`)
     }
 
-    const tchHigh = (tchK?.current ?? 0) >= 2.0
-    const sdcchHigh = (sdcchK?.current ?? 0) >= 1.5
+    const tchHigh = (tchK?.current ?? 0) >= 1.0
+    const sdcchHigh = (sdcchK?.current ?? 0) >= 1.0
     const dropHigh = (dropK?.current ?? 0) > 1.0
+    const cssrLow = (cssrK?.current ?? 100) < 95.0
     const voiceUp = (voiceK?.deltaPct ?? 0) >= 10
 
     H = [
       {
         id: '2g_capacity',
         title: '2G Radio Capacity & TCH Exhaustion',
-        support: (tchHigh ? 30 : 0) + (voiceUp ? 20 : 0) + (ncStreak >= 2 ? 15 : 0),
+        support: (tchHigh ? 35 : 0) + (voiceUp ? 20 : 0) + (ncStreak >= 2 ? 15 : 0),
         contra: !tchHigh ? 25 : 0,
         sup: [
-          ...(tchHigh ? [`TCH congestion (${invFmt(tchK?.current ?? null, '%')}) exceeds 2.0% threshold`] : []),
+          ...(tchHigh ? [`TCH Congestion (BH) (${invFmt(tchK?.current ?? null, '%')}) exceeds 1.0% threshold`] : []),
           ...(voiceUp ? [`Voice traffic increased ${voiceK?.deltaPct?.toFixed(1)}% period-over-period`] : [])
         ],
-        con: !tchHigh ? ['TCH congestion is below 2.0% regulatory threshold'] : [],
-        recs: ['Add TRX transceiver capacity to sector', 'Optimize half-rate (HR) speech AMR codec allocation', 'Tune handover margins with co-located cells']
+        con: !tchHigh ? ['TCH Congestion (BH) is within 1.0% regulatory threshold'] : [],
+        recs: ['Audit AMR Half-Rate (HR) traffic ratio and optimize full-rate to half-rate switching', 'Add TRX transceiver board to sector for additional timeslots', 'Tune handover traffic-sharing margins with co-located cells']
       },
       {
         id: '2g_signalling',
-        title: 'Signalling Channel & Abis Bottleneck',
+        title: 'Signalling Channel Congestion & Abis Bottleneck',
         support: (sdcchHigh ? 35 : 0) + (tchHigh ? 15 : 0),
         contra: !sdcchHigh ? 25 : 0,
-        sup: sdcchHigh ? [`SDCCH congestion (${invFmt(sdcchK?.current ?? null, '%')}) exceeds 1.5% limit`] : [],
-        con: !sdcchHigh ? ['SDCCH congestion is within normal engineering bounds'] : [],
-        recs: ['Reallocate TCH timeslot to dedicated SDCCH/8', 'Audit Abis over IP timeslots and transmission link quality']
+        sup: sdcchHigh ? [`SDCCH Congestion (BH) (${invFmt(sdcchK?.current ?? null, '%')}) exceeds 1.0% limit`] : [],
+        con: !sdcchHigh ? ['SDCCH congestion is within 1.0% threshold'] : [],
+        recs: ['Audit SDCCH setup indications (A3030F Location Updating vs A3030B SMS vs A3030A MOC)', 'Convert dynamic TCH timeslot to dedicated SDCCH/8', 'Verify Abis terrestrial link transmission quality to prevent CM333/CM363 drops']
       },
       {
         id: '2g_interference',
-        title: 'RF Co-Channel / Adjacent Channel Interference',
+        title: 'RF Interference & Timing Advance Overshoot',
         support: (dropHigh ? 30 : 0) + (!tchHigh && dropHigh ? 20 : 0),
         contra: !dropHigh ? 20 : 0,
-        sup: dropHigh ? [`2G Call Drop Rate (${invFmt(dropK?.current ?? null, '%')}) exceeds 1.0% limit while load is manageable`] : [],
+        sup: dropHigh ? [`2G Call Drop Rate (${invFmt(dropK?.current ?? null, '%')}) exceeds 1.0% limit with potential T200 expirations (M3100A)`] : [],
         con: !dropHigh ? ['Call drop rate is within compliant regulatory range'] : [],
-        recs: ['Perform frequency retune (BCCH/TCH reuse plan)', 'Audit MAIO / HSN hopping sequences', 'Inspect antenna VSWR and jumper sweep']
+        recs: ['Audit BCCH/TCH frequency reuse plan and MAIO/HSN hopping sequences', 'Check Average Timing Advance (TA) and increase antenna downtilt to eliminate overshooting', 'Perform external RF interference and PIM sweep on jumpers/antennas']
       },
       {
-        id: '2g_handover',
-        title: 'Handover & Core A-Interface Signalling Constraint',
-        support: (cssrK?.current != null && cssrK.current < 98.0 ? 25 : 0),
-        contra: (cssrK?.current != null && cssrK.current >= 98.0 ? 20 : 0),
-        sup: cssrK?.current != null && cssrK.current < 98.0 ? [`Voice CSSR (${invFmt(cssrK.current, '%')}) degraded`] : [],
-        con: cssrK?.current != null && cssrK.current >= 98.0 ? ['Call setup success rate meets 98.0% benchmark'] : [],
-        recs: ['Audit neighbor cell list definitions', 'Verify BSC/MSC BSSAP route links and paging capacity']
+        id: '2g_accessibility',
+        title: 'Accessibility & Immediate Assignment Bottleneck',
+        support: (cssrLow ? 30 : 0) + (sdcchHigh ? 15 : 0),
+        contra: !cssrLow ? 20 : 0,
+        sup: cssrLow ? [`Voice Call Setup Success Rate (${invFmt(cssrK?.current ?? null, '%')}) below 95.0% target; check CA300J/CA301J conversion`] : [],
+        con: !cssrLow ? ['Call setup success rate meets 95.0% target'] : [],
+        recs: ['Verify CCCH (PCH/AGCH) block reservation (BS-AG-BLKS-RES) and check for ghost RACH preambles', 'Audit TCH Assignment Success Rate and dynamic channel allocation', 'Inspect BSC/MSC A-interface signalling links and LAC boundary paging load']
+      },
+      {
+        id: '2g_hardware',
+        title: 'Transceiver Hardware & Equipment Faults',
+        support: (dropHigh ? 25 : 0) + (ncStreak >= 3 ? 15 : 0),
+        contra: 0,
+        sup: dropHigh ? ['Inspect BTS equipment drops (CM334 TCH / CM364 SDCCH equipment failure)'] : [],
+        con: [],
+        recs: ['Dispatch field technician to inspect/replace faulty BTS TRX transceiver board and power amplifier', 'Inspect antenna VSWR alarms and RF feeder connections']
       }
     ]
   } else if (is3G) {
@@ -2723,13 +2736,13 @@ function demoInvestigation(
     if (dropK?.current != null && dropK.current > 1.0) {
       f('drop_high', 'evidence', 'consistent with', `3G Call Drop Rate of ${invFmt(dropK.current, '%')} exceeds 1.0% regulatory target.`)
     }
-    if (dasrK?.current != null && dasrK.current < 97.0) {
-      f('dasr_low', 'evidence', 'consistent with', `3G Data Access Success Rate of ${invFmt(dasrK.current, '%')} is below 97.0% benchmark.`)
+    if (dasrK?.current != null && dasrK.current < 95.0) {
+      f('dasr_low', 'evidence', 'consistent with', `3G Data Access Success Rate of ${invFmt(dasrK.current, '%')} is below 95.0% benchmark.`)
     }
 
     const utilHigh = (utilK?.current ?? 0) >= 75.0
     const dropHigh = (dropK?.current ?? 0) > 1.0
-    const dasrLow = (dasrK?.current ?? 100) < 97.0
+    const dasrLow = (dasrK?.current ?? 100) < 95.0
 
     H = [
       {
@@ -2778,8 +2791,21 @@ function demoInvestigation(
     const avK = kpi('availability')
     const threshold = 80
 
+    const cssrK = kpi('cssr_4g')
+    const dropK = kpi('call_drop_4g')
+    const dataFailK = kpi('data_failure_4g')
+
     if (prbK?.current != null && prbK.current >= threshold) {
       f('prb_high', 'evidence', 'consistent with', `PRB utilization of ${invFmt(prbK.current, '%')} is at or above the ${threshold}% ruleset threshold.`)
+    }
+    if (cssrK?.current != null && cssrK.current < 95.0) {
+      f('cssr_low', 'evidence', 'consistent with', `4G Call Connection Success Rate of ${invFmt(cssrK.current, '%')} is below the 95.0% regulatory target.`)
+    }
+    if (dropK?.current != null && dropK.current > 1.0) {
+      f('drop_high', 'evidence', 'consistent with', `4G Call Drop Rate of ${invFmt(dropK.current, '%')} exceeds the 1.0% regulatory threshold.`)
+    }
+    if (dataFailK?.current != null && dataFailK.current > 1.0) {
+      f('dsaf_high', 'evidence', 'consistent with', `4G Data Service Access Failure Rate of ${invFmt(dataFailK.current, '%')} exceeds the 1.0% limit.`)
     }
     if (prbK?.delta != null && prbK.delta >= 3) {
       f('prb_rising', 'suggestion', 'suggests', `PRB rose ${invFmt(prbK.delta, 'pp')} period-over-period — demand is building.`)
@@ -2793,15 +2819,18 @@ function demoInvestigation(
     if (volK?.deltaPct != null && volK.deltaPct >= 10) {
       f('volume_growth', 'evidence', 'consistent with', `Data volume grew ${Math.round(volK.deltaPct * 10) / 10}% period-over-period.`)
     }
-    if (avK?.current != null && avK.current < 99.5) {
-      f('avail_low', 'suggestion', 'suggests', `Availability of ${invFmt(avK.current, '%')} is below the 99.5% engineering expectation.`)
+    if (avK?.current != null && avK.current < 99.0) {
+      f('avail_low', 'suggestion', 'suggests', `Availability of ${invFmt(avK.current, '%')} is below the 99.0% engineering expectation.`)
     }
 
     const prbHigh = (prbK?.current ?? 0) >= threshold
     const thrDrop = (thrK?.deltaPct ?? 0) <= -10
     const usersUp = (usrK?.deltaPct ?? 0) >= 10
     const volUp = (volK?.deltaPct ?? 0) >= 10
-    const availLow = (avK?.current ?? 100) < 99.5
+    const availLow = (avK?.current ?? 100) < 99.0
+    const cssrLow = (cssrK?.current ?? 100) < 95.0
+    const dropHigh = (dropK?.current ?? 0) > 1.0
+    const dataFailHigh = (dataFailK?.current ?? 0) > 1.0
 
     H = [
       {
@@ -2812,6 +2841,27 @@ function demoInvestigation(
         sup: prbHigh ? [`PRB utilization (${invFmt(prbK?.current ?? null, '%')}) at/above ${threshold}% threshold`] : [],
         con: !prbHigh ? [`PRB utilization is below ${threshold}% threshold`] : [],
         recs: ['Evaluate carrier aggregation (e.g. Band 3 + Band 20)', 'Activate PRB inter-frequency load balancing']
+      },
+      {
+        id: '4g_accessibility',
+        title: 'Accessibility & E-RAB Setup Failures',
+        support: (cssrLow ? 30 : 0) + (dataFailHigh ? 25 : 0),
+        contra: !cssrLow && !dataFailHigh ? 20 : 0,
+        sup: [
+          ...(cssrLow ? [`4G CSSR (${invFmt(cssrK?.current ?? null, '%')}) below 95.0% target; inspect L.E-RAB.FailEst causes`] : []),
+          ...(dataFailHigh ? [`Data Service Access Failure (${invFmt(dataFailK?.current ?? null, '%')}) exceeds 1.0%`] : [])
+        ],
+        con: !cssrLow ? ['4G CSSR meets 95.0% target'] : [],
+        recs: ['Audit E-RAB setup failures (NoRadioRes vs TNL vs RNL vs MME)', 'Check PRACH preamble detection and root sequence index']
+      },
+      {
+        id: '4g_retainability',
+        title: 'Retainability & Abnormal E-RAB Drops',
+        support: (dropHigh ? 35 : 0),
+        contra: !dropHigh ? 20 : 0,
+        sup: dropHigh ? [`4G Call Drop Rate (${invFmt(dropK?.current ?? null, '%')}) exceeds 1.0% target; check L.E-RAB.AbnormRel causes`] : [],
+        con: !dropHigh ? ['4G Call Drop Rate is within 1.0% regulatory limit'] : [],
+        recs: ['Audit abnormal release breakdown (UL Out-of-Sync vs SRB/DRB resets vs Handover failure)', 'Optimize handover hysteresis and time-to-trigger (TTT) timers']
       },
       {
         id: '4g_interference',

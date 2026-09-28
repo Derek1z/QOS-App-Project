@@ -31,6 +31,22 @@ export const interferenceRule: DiagnosticRule = {
       sup.push(`Cell availability fluctuation (${availKpi.current.toFixed(1)}%) can correlate with antenna feeder or external interference.`)
     }
 
+    if (ctx.technology === '2G') {
+      const t200Drops = ctx.kpiMap.get('m3100a_tchf_drops_err_ind_t200') ?? 0
+      if (t200Drops > 0) {
+        support += 35
+        sup.push(`Layer 2 LAPDm T200 timer expiration drops detected: ${t200Drops} drops on TCHF (M3100A), signature of severe uplink/downlink RF interference or deep fading.`)
+        recs.push('Audit frequency reuse plan (BCCH/TCH) and MAIO/HSN hopping sequences with neighboring sectors to eliminate co-channel/adjacent channel collisions.')
+      }
+
+      const avgTa = ctx.kpiMap.get('avg_timing_advance_m') ?? null
+      if (avgTa != null && avgTa > 3000) {
+        support += 25
+        sup.push(`Excessive cell propagation distance: Average Timing Advance is ${avgTa.toFixed(0)}m (> 3000m target), indicating cell overshooting and pilot pollution.`)
+        recs.push('Increase antenna electrical/mechanical downtilt to eliminate cell overshooting into neighbor clusters.')
+      }
+    }
+
     if (prbVal != null && prbVal >= ctx.thresholds.prb) {
       contra += 20
       con.push('High PRB load suggests capacity saturation is the primary driver rather than pure RF interference.')

@@ -2,7 +2,7 @@
 
 **Date**: 2026-09-29
 **Status**: Draft, awaiting review
-**Scope**: how a cell's non-compliance (NC) period is labelled in the daily, weekly and monthly views
+**Scope**: how a cell's non-compliance (NC) period is labelled in the daily, weekly and monthly views, and one owner for every input behind it (§8)
 
 ---
 
@@ -71,7 +71,7 @@ The roll-up only raises a period that is itself NC, so the `is_nc` flag and the 
 
 ## 5. Editable settings
 
-Stored in `ruleset` (one new version per save, as today). A new **NC Periods** section in the Targets modal replaces the "Consecutive Breach Days for NC" input.
+Stored in `ruleset` (one new version per save, as today). A new **NC Periods** tab in the Targets window (`modules/TargetsModal.tsx`) edits them. The Overview copy of the Targets window, with its "Consecutive Breach Days for NC" input, is deleted (§8, A1).
 
 | Setting | Column | Default | Range | Status |
 |---|---|---|---|---|
@@ -114,7 +114,7 @@ Every save already creates a new ruleset version, recomputes aggregates and inte
 | `services/queryService.ts` | `LIFECYCLES` gains Chronic NC and Intermittent NC; `byLifecycle` and movement counts include both |
 | `services/investigationService.ts` | Sort order follows §3 |
 | `investigation/rules/congestionRules.ts`, `investigation/types.ts` | Unchanged (they use `persistentWeeks`) |
-| Renderer: `NcIntelligence`, `NetworkExplorer`, `Overview`, `overviewCharts`, `comparisonCharts`, `TargetsModal`, `previewApi` | Intermittent colour and filter entry; NC Periods settings section; mock data uses the new labels |
+| Renderer: `NcIntelligence`, `NetworkExplorer`, `Overview`, `overviewCharts`, `comparisonCharts`, `modules/TargetsModal`, `previewApi` | Intermittent colour and filter entry; NC Periods tab; mock data uses the new labels |
 | `smoke.ts` | ACC-001-A (2nd consecutive NC week, no earlier run) becomes New NC; add the Recurring and Intermittent cases |
 
 After upgrading, existing workspaces need **Data Manager → Maintenance → Rebuild Intelligence** once to relabel history.
@@ -138,8 +138,71 @@ Gate: `typecheck && vitest && smoke`, as for every commit on this branch.
 
 ---
 
-## 8. Out of scope
+## 8. Single source of truth
+
+The NC periods only make sense if the inputs behind them have one owner each. Today they do not.
+
+### 8.1 Owners
+
+| Fact | Owner | Edited in |
+|---|---|---|
+| Every KPI target, including 4G Peak Hour Traffic Utilization (PRB), per technology, with warning, critical and direction | `kpi_defs` | Targets window (`modules/TargetsModal.tsx`) |
+| Which KPIs count toward NC | `kpi_defs.is_core` | Fixed to the NCA list (`f79899b`) |
+| NC-period settings (§5) | `ruleset` | Targets → NC Periods |
+| District NC % | `ruleset` | Settings |
+| Priority weights | `ruleset` | Settings |
+| Default values | `DEFAULT_RULES` (ruleset) and the KPI seed list (targets) | — |
+| Label order, scores, colours | `shared/lifecycle.ts` | Fixed |
+
+`kpi_defs` answers "is this a bad day?". `ruleset` answers "how do bad days become NC periods, priorities and district flags?".
+
+### 8.2 Conflicts removed (these change results today)
+
+| # | Conflict | Fix |
+|---|---|---|
+| A1 | Two Targets windows. The Overview one (`components/TargetsModal.tsx`) shows hard-coded targets that are not the real ones and discards edits | Delete it; Overview opens the real window |
+| A2 | The Overview window saves the PRB *warning* value (85) as the PRB threshold and writes 3 into bad days per week | Removed with A1 |
+| A3 | Targets are stored three times: `kpi_defs.target`, six `ruleset` columns (one CSSR for all technologies) and `kpi_thresholds` JSON (never read). Every ruleset save copies the six columns over `kpi_defs`, so a 3G CSSR target of 97 resets to 95 | `kpi_defs` only; the copy step is deleted |
+| A4 | PRB threshold lives in `ruleset.prb_threshold_pct`, apart from the other core KPI targets | Read the 4G `prb_utilization` target from `kpi_defs` |
+| A5 | Investigation checks all technologies against one `ruleset` value, with fallbacks that disagree in the same file (CSSR 98.5 vs 95, TCH 2.0 vs 1.0); 3G utilization is checked against the 4G PRB threshold | Per-technology targets from `kpi_defs` |
+| A6 | Saving a target does not recompute NC; cells stay judged against the old target until Rebuild Intelligence | A target save recomputes aggregates and intelligence, like a ruleset save |
+| A7 | `LIFECYCLES` in `queryService` omits Chronic NC | Use `shared/lifecycle.ts` |
+
+### 8.3 Duplicates removed
+
+| # | Duplicate | Copies today | Replaced by |
+|---|---|---|---|
+| B1 | Score per label | `priority.ts` TS map (unused) + SQL CASE; `health.ts` TS map (unused) + SQL CASE | Tables in `shared/lifecycle.ts`; SQL CASE generated from them |
+| B2 | Severity and trend formulas | Each written twice inside `nc.ts` | Computed once per row, then compared |
+| B3 | Rule defaults (80, 1, 3, 7, 21 …) | `schema.ts`, `manager.ts`, `rules.ts` (×2), `nc.ts`, `aggregates.ts`, `investigationService.ts`, `previewApi.ts` | `DEFAULT_RULES` |
+| B4 | Label colours and order in the UI | `NcIntelligence`, `NetworkExplorer` (×3), `Overview`, `overviewCharts`, `comparisonCharts` | `shared/lifecycle.ts` |
+| B5 | "Target of KPI X for technology T" | Every PRB-threshold reader: `ncRule`, `nc`, `priority`, `queryService` (×4), `investigationService` (×4), `reportingService`, `InvestigationWorkspace`, `NetworkExplorer` | One helper: `kpiTargetSql(tech, key)` in the main process; renderer reads targets from `kpis.list` |
+
+### 8.4 Dead code removed
+
+| # | Dead | Why |
+|---|---|---|
+| C1 | `src/main/kpi/schemaV2.ts` and its test | A second schema the app never creates; every import calls its retention step, which fails on the missing table, and the error is swallowed |
+| C2 | Ruleset columns `prb_threshold_pct`, `tch_congestion_threshold_pct`, `sdcch_congestion_threshold_pct`, `cssr_threshold_pct`, `call_drop_threshold_pct`, `data_access_threshold_pct`, `data_service_failure_threshold_pct`, `kpi_thresholds`, `daily_min_kpi_breaches`, `persistent_days`, `chronic_days` | Superseded by `kpi_defs` or §5. Columns stay so old workspaces open; nothing reads or writes them |
+
+### 8.5 Traceability and upgrade
+
+- Saving targets creates a new ruleset version. The audit note lists each change ("4G PRB 80 → 85"), so NC results and reports stay tied to the version that produced them.
+- One-time migration on open: if a workspace's latest ruleset holds a PRB or KPI threshold that differs from the seed, copy it into the matching `kpi_defs` target (per technology) before the columns are retired. A workspace where someone set PRB to 85 keeps 85.
+
+### 8.6 Tests (added to §7)
+
+9. A 3G CSSR target edit survives a ruleset save (A3).
+10. Changing the 4G PRB target in `kpi_defs` changes NC without touching `ruleset` (A4).
+11. A target save recomputes NC with no manual rebuild (A6).
+12. Migration: a workspace with `prb_threshold_pct = 85` opens with the 4G PRB target at 85 (8.5).
+13. Every label in `shared/lifecycle.ts` has a score in priority and health, and appears in the filter list (A7, B1).
+
+---
+
+## 9. Out of scope
 
 - Which KPIs count as a bad day (settled in `3cc05ee`)
 - Partial-week handling for weekly analytics (separate Phase 1 item)
 - Scaling the recovery window by how severe the cell was (rejected: harder to explain)
+- Redundancy outside NC periods and targets (the 3,000-line `queryService`, forecasting, the preview mock beyond label names). A separate sweep after this lands.

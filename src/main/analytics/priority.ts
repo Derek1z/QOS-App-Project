@@ -25,12 +25,18 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-function bandFor(score: number): PriorityBand {
-  if (score >= 90) return 'Critical'
-  if (score >= 75) return 'High'
-  if (score >= 50) return 'Medium'
-  if (score >= 25) return 'Watch'
-  return 'Low'
+/** Band floors, highest first: a score belongs to the first band whose floor it
+ *  reaches, so fractional scores (89.5) never fall between integer ranges. */
+export const PRIORITY_BAND_FLOORS: Array<{ band: PriorityBand; floor: number }> = [
+  { band: 'Critical', floor: 90 },
+  { band: 'High', floor: 75 },
+  { band: 'Medium', floor: 50 },
+  { band: 'Watch', floor: 25 },
+  { band: 'Low', floor: 0 }
+]
+
+export function bandFor(score: number): PriorityBand {
+  return PRIORITY_BAND_FLOORS.find((b) => score >= b.floor)?.band ?? 'Low'
 }
 
 const PERSISTENCE_BY_LIFECYCLE: Record<Lifecycle, number> = {

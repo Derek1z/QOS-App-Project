@@ -20,6 +20,7 @@ import type {
 } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { computeNetworkHealth } from '../analytics/health'
+import { bandFor, PRIORITY_BAND_FLOORS } from '../analytics/priority'
 import { getRules, updateRules } from '../analytics/rules'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
@@ -2117,14 +2118,6 @@ export async function getPriorityCenter(
   const limit = Math.min(500, Math.max(1, opts.limit ?? 100))
   const offset = Math.max(0, opts.offset ?? 0)
 
-  const BANDS: Array<{ band: PriorityBand; lo: number; hi: number }> = [
-    { band: 'Critical', lo: 90, hi: 100 },
-    { band: 'High', lo: 75, hi: 89 },
-    { band: 'Medium', lo: 50, hi: 74 },
-    { band: 'Watch', lo: 25, hi: 49 },
-    { band: 'Low', lo: 0, hi: 24 }
-  ]
-
   const SCOPE_SQL: Record<InvestigationScope, { from: string; sel: string; eId: string; groupBy: string }> = {
     cell: {
       from: `dim_cell c
@@ -2186,9 +2179,11 @@ export async function getPriorityCenter(
     }
   }
   if (opts.band) {
-    const b = BANDS.find((x) => x.band === opts.band)
-    if (b) {
-      where.push(`p.score >= ${b.lo} AND p.score <= ${b.hi}`)
+    const i = PRIORITY_BAND_FLOORS.findIndex((x) => x.band === opts.band)
+    if (i >= 0) {
+      // half-open [floor, next band's floor) so no score falls between bands
+      const ceiling = i > 0 ? PRIORITY_BAND_FLOORS[i - 1].floor : null
+      where.push(`p.score >= ${PRIORITY_BAND_FLOORS[i].floor}${ceiling == null ? '' : ` AND p.score < ${ceiling}`}`)
     }
   }
   if (opts.overdueOnly) {
@@ -2272,10 +2267,7 @@ export async function getPriorityCenter(
   const today = new Date().toISOString().slice(0, 10)
   const rows: PriorityCenterRow[] = r.getRowObjects().map((x) => {
     const score = x.score == null ? null : Number(x.score)
-    let band: PriorityBand | null = null
-    if (score != null) {
-      band = (BANDS.find((b) => score >= b.lo && score <= b.hi)?.band ?? 'Low') as PriorityBand
-    }
+    const band: PriorityBand | null = score == null ? null : bandFor(score)
     const path = [x.r, x.d, x.s2].filter((v): v is string => v != null && v !== '')
     path.push(String(x.name ?? ''))
     const reviewDate = x.review_date ? String(x.review_date) : null

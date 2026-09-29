@@ -45,7 +45,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       showInExecutiveView: true,
       decimalPrecision: 2,
       aliases: [
-        '2g tch congestion rate (bh)_cell_h2g', '2g tch congestion rate (bh)', '2g tch congestion_cell_h2g',
+        '2g tch congestion rate_nca(%)', '2g tch congestion rate_nca', '2g tch congestion rate (bh)_cell_h2g', '2g tch congestion rate (bh)', '2g tch congestion_cell_h2g',
         'tch congestion rate (bh)', 'tch congestion (bh)', '2g tch congestion', 'tch congestion',
         'tch congestion (%)', 'tch congestion rate', 'congestion', 'tch blocking', 'tch block rate',
         'tch cong', 'traffic channel congestion', '2g congestion', 'tch_congestion_rate', 'tch_blocking_rate',
@@ -69,7 +69,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       showInExecutiveView: true,
       decimalPrecision: 2,
       aliases: [
-        '2g sdcch congestion rate (bh)_cell_h2g', '2g sdcch congestion rate (bh)', '2g sdcch congestion_cell_h2g',
+        '2g sdcch congestion rate_nca(%)', '2g sdcch congestion rate_nca', '2g sdcch congestion rate (bh)_cell_h2g', '2g sdcch congestion rate (bh)', '2g sdcch congestion_cell_h2g',
         'sdcch congestion rate (bh)', 'sdcch congestion (bh)', 'sdcch congestion', '2g sdcch congestion',
         'sdcch congestion (%)', 'sdcch congestion rate', 'sdcch blocking', 'sdcch block rate',
         'sdcch cong', 'signalling congestion', 'sdcch_congestion_rate', 'sdcch_blocking_rate',
@@ -93,7 +93,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       showInExecutiveView: true,
       decimalPrecision: 2,
       aliases: [
-        '2g call setup success rate_cell_h2g', '2g call connection success rate', '2g call connection success',
+        '2g call connection success rate_nca(%)', '2g call connection success rate_nca', '2g call setup success rate_cell_h2g', '2g call connection success rate', '2g call connection success',
         '2g cssr', 'call connection success rate', 'call setup success', 'call setup success rate',
         'cssr', 'call setup success rate (%)', '2g call setup success rate', '2g call setup success',
         'call setup success (%)', 'tch call setup success rate', 'call_setup_success'
@@ -116,7 +116,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       showInExecutiveView: true,
       decimalPrecision: 2,
       aliases: [
-        '2g call drop rate_cell_h2g', '2g call drop rate', '2g drop call rate', 'call drop rate',
+        '2g call drop rate_nca(%)', '2g call drop rate_nca', '2g call drop rate_cell_h2g', '2g call drop rate', '2g drop call rate', 'call drop rate',
         'drop call rate', 'dropped call rate (%)', 'drops (%)', '2g cdr', 'cdr',
         'call drop rate (%)', 'tch drop rate', 'tch drop call rate', 'drop_call_rate'
       ]
@@ -132,7 +132,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       warningThreshold: 96.0,
       criticalThreshold: 90.0,
       agg: 'avg',
-      isCore: true,
+      isCore: false,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,
@@ -207,7 +207,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       warningThreshold: 96.0,
       criticalThreshold: 90.0,
       agg: 'avg',
-      isCore: true,
+      isCore: false,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,
@@ -838,7 +838,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       warningThreshold: 99.2,
       criticalThreshold: 95.0,
       agg: 'avg',
-      isCore: true,
+      isCore: false,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,
@@ -937,7 +937,7 @@ const SEEDS: Record<Technology, SeedDef[]> = {
       warningThreshold: 99.2,
       criticalThreshold: 95.0,
       agg: 'avg',
-      isCore: true,
+      isCore: false,
       supportsCongestionAnalysis: false,
       supportsPersistentNc: true,
       showInExecutiveView: true,

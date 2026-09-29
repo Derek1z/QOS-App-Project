@@ -22,6 +22,34 @@ function aggTable(entity: string, grain: string): string {
   )`
 }
 
+/** Daily cell aggregates straight from fact_cell_daily. Shared by workspace
+ *  creation and the rebuild on every writable open. The PRB threshold is the
+ *  latest ruleset version's (arg_max by version) — max() over all versions
+ *  kept the highest threshold ever set, so lowering it never took effect. */
+export const AGG_CELL_DAILY_SELECT = `
+   SELECT
+     d.date,
+     d.date AS period_start,
+     d.date AS period_end,
+     d.date AS week_start,
+     d.date AS month_start,
+     d.iso_year,
+     d.iso_week,
+     d.month,
+     d.year,
+     f.cell_id,
+     1 AS observed_days,
+     CASE WHEN f.prb_utilization >= (SELECT coalesce(arg_max(prb_threshold_pct, version), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
+     f.prb_utilization AS prb_avg,
+     f.prb_utilization AS prb_peak,
+     f.data_volume_mb AS data_volume_mb_sum,
+     f.connected_users AS connected_users_sum,
+     f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+     f.availability_pct AS availability_pct_avg,
+     (f.prb_utilization >= (SELECT coalesce(arg_max(prb_threshold_pct, version), 80) FROM ruleset)) AS is_nc
+    FROM fact_cell_daily f
+    JOIN dim_date d USING (date_id)`
+
 export const SCHEMA_SQL: string[] = [
   // --- workspace meta ---
   `CREATE TABLE IF NOT EXISTS workspace_meta (key VARCHAR PRIMARY KEY, value VARCHAR)`,
@@ -296,29 +324,7 @@ export const SCHEMA_SQL: string[] = [
    FROM (SELECT unnest(range(DATE '2020-01-01', DATE '2036-01-01', INTERVAL 1 DAY)) AS d)`,
 
   // --- daily cell aggregates view (derived from fact_cell_daily + dim_date + ruleset) ---
-  `CREATE VIEW IF NOT EXISTS agg_cell_daily AS
-   SELECT
-     d.date,
-     d.date AS period_start,
-     d.date AS period_end,
-     d.date AS week_start,
-     d.date AS month_start,
-     d.iso_year,
-     d.iso_week,
-     d.month,
-     d.year,
-     f.cell_id,
-     1 AS observed_days,
-     CASE WHEN f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
-     f.prb_utilization AS prb_avg,
-     f.prb_utilization AS prb_peak,
-     f.data_volume_mb AS data_volume_mb_sum,
-     f.connected_users AS connected_users_sum,
-     f.dl_throughput_kbps AS dl_throughput_kbps_avg,
-     f.availability_pct AS availability_pct_avg,
-     (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
-    FROM fact_cell_daily f
-    JOIN dim_date d USING (date_id)`,
+  `CREATE VIEW IF NOT EXISTS agg_cell_daily AS ${AGG_CELL_DAILY_SELECT}`,
 
   `CREATE VIEW IF NOT EXISTS agg_cell_kpi_daily AS
    SELECT

@@ -2,7 +2,7 @@ import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync } from 
 import { join, basename } from 'node:path'
 import os from 'node:os'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
-import { SCHEMA_SQL } from './schema'
+import { SCHEMA_SQL, AGG_CELL_DAILY_SELECT } from './schema'
 import { acquireLock, releaseLock } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
@@ -161,31 +161,7 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
      ran_at TIMESTAMP DEFAULT now(),
      ok BOOLEAN, actions JSON, summary VARCHAR, duration_ms BIGINT
    )`)
-  await connection.run(`
-    CREATE OR REPLACE VIEW agg_cell_daily AS
-    SELECT
-      d.date,
-      d.date AS period_start,
-      d.date AS period_end,
-      d.date AS week_start,
-      d.date AS month_start,
-      d.iso_year,
-      d.iso_week,
-      d.month,
-      d.year,
-      f.cell_id,
-      1 AS observed_days,
-      CASE WHEN f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
-      f.prb_utilization AS prb_avg,
-      f.prb_utilization AS prb_peak,
-      f.data_volume_mb AS data_volume_mb_sum,
-      f.connected_users AS connected_users_sum,
-      f.dl_throughput_kbps AS dl_throughput_kbps_avg,
-      f.availability_pct AS availability_pct_avg,
-      (f.prb_utilization >= (SELECT coalesce(max(prb_threshold_pct), 80) FROM ruleset)) AS is_nc
-    FROM fact_cell_daily f
-    JOIN dim_date d USING (date_id)
-  `)
+  await connection.run(`CREATE OR REPLACE VIEW agg_cell_daily AS ${AGG_CELL_DAILY_SELECT}`)
   await connection.run(`
     CREATE OR REPLACE VIEW agg_cell_kpi_daily AS
     SELECT

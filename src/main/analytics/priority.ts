@@ -122,7 +122,8 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
         COALESCE(l.trend, 'Stable') AS trend,
         p.avg_users, p.avg_volume, p.avg_throughput,
-        COALESCE(kb.kpi_breach_score, 0.0) AS kpi_breach
+        COALESCE(kb.kpi_breach_score, 0.0) AS kpi_breach,
+        kb.kpi_breach_score IS NOT NULL AS has_kpi
       FROM latest lw
       JOIN agg_cell_weekly w ON w.cell_id = lw.cell_id AND w.week_start = lw.week_start
       JOIN peers p ON p.week_start = lw.week_start
@@ -151,7 +152,8 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
           WHEN 'Stable' THEN 50.0
           ELSE 0.0
         END AS trend_comp,
-        b.kpi_breach AS kpi_breach
+        b.kpi_breach AS kpi_breach,
+        b.has_kpi
       FROM cell_base b
     ),
     modes(mode_name, w_prb, w_pers, w_user, w_vol, w_thrpt, w_trend) AS (
@@ -162,11 +164,21 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         ('persistence', 15, 45, 10, 10, 10, 10),
         ('deterioration', 20, 15, 10, 10, 15, 30)
     ),
+    classical AS (
+      SELECT c.*, m.mode_name,
+        (m.w_prb * c.prb_sev + m.w_pers * c.persistence + m.w_user * c.user_imp +
+         m.w_vol * c.traffic_imp + m.w_thrpt * c.thrpt_deg + m.w_trend * c.trend_comp) / 100.0 AS classical_score
+      FROM comp c CROSS JOIN modes m
+    ),
     scored AS (
-      SELECT c.cell_id, c.week_start, m.mode_name,
+      -- cells with imported KPI data blend in their target breaches; cells
+      -- without it keep the classical score rather than being scaled down
+      SELECT c.cell_id, c.week_start, c.mode_name,
         ROUND(
-          (m.w_prb * c.prb_sev + m.w_pers * c.persistence + m.w_user * c.user_imp +
-           m.w_vol * c.traffic_imp + m.w_thrpt * c.thrpt_deg + m.w_trend * c.trend_comp) / 100.0, 1
+          CASE WHEN c.has_kpi
+            THEN ${1 - KPI_BREACH_WEIGHT} * c.classical_score + ${KPI_BREACH_WEIGHT} * c.kpi_breach
+            ELSE c.classical_score
+          END, 1
         ) AS final_score,
         json_object(
           'prbSeverity', c.prb_sev,
@@ -177,7 +189,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
           'worseningTrend', c.trend_comp,
           'kpiBreach', c.kpi_breach
         ) AS weights_json
-      FROM comp c CROSS JOIN modes m
+      FROM classical c
     )
     INSERT INTO cell_priority_history
       (cell_id, as_of, score, band, mode, weights, ruleset_version)

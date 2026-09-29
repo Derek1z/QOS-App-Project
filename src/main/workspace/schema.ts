@@ -1,3 +1,5 @@
+import { coreBreachDaysSql } from '../analytics/ncRule'
+
 /** DuckDB schema for one .qosdb workspace (spec §60-§63).
  *  Raw facts are immutable; all derived intelligence lives in separate tables. */
 
@@ -23,9 +25,8 @@ function aggTable(entity: string, grain: string): string {
 }
 
 /** Daily cell aggregates straight from fact_cell_daily. Shared by workspace
- *  creation and the rebuild on every writable open. The PRB threshold is the
- *  latest ruleset version's (arg_max by version) — max() over all versions
- *  kept the highest threshold ever set, so lowering it never took effect. */
+ *  creation and the rebuild on every writable open. is_nc/breach_days follow
+ *  the shared core-KPI rule (analytics/ncRule), like every other grain. */
 export const AGG_CELL_DAILY_SELECT = `
    SELECT
      d.date,
@@ -39,16 +40,17 @@ export const AGG_CELL_DAILY_SELECT = `
      d.year,
      f.cell_id,
      1 AS observed_days,
-     CASE WHEN f.prb_utilization >= (SELECT coalesce(arg_max(prb_threshold_pct, version), 80) FROM ruleset) THEN 1 ELSE 0 END AS breach_days,
+     CASE WHEN kb.cell_id IS NOT NULL THEN 1 ELSE 0 END AS breach_days,
      f.prb_utilization AS prb_avg,
      f.prb_utilization AS prb_peak,
      f.data_volume_mb AS data_volume_mb_sum,
      f.connected_users AS connected_users_sum,
      f.dl_throughput_kbps AS dl_throughput_kbps_avg,
      f.availability_pct AS availability_pct_avg,
-     (f.prb_utilization >= (SELECT coalesce(arg_max(prb_threshold_pct, version), 80) FROM ruleset)) AS is_nc
+     kb.cell_id IS NOT NULL AS is_nc
     FROM fact_cell_daily f
-    JOIN dim_date d USING (date_id)`
+    JOIN dim_date d USING (date_id)
+    LEFT JOIN (${coreBreachDaysSql()}) kb ON kb.cell_id = f.cell_id AND kb.date_id = f.date_id`
 
 export const SCHEMA_SQL: string[] = [
   // --- workspace meta ---

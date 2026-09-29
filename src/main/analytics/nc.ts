@@ -1,7 +1,7 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
 import type { Lifecycle, Trend, Severity, Rules } from '../../../shared/api'
 import { getRules } from './rules'
-import { workspaceTechnology } from '../services/kpiService'
+import { coreBreachDaysSql } from './ncRule'
 
 /** NC Intelligence (spec §35-§39): every cell-week is classified along three
  *  independent dimensions — Lifecycle, Trend, Severity — and written to
@@ -114,20 +114,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
   const dailyMinKpiBreaches = rules.dailyMinKpiBreaches ?? 1
   const prbThresh = rules.prbThresholdPct ?? 80
 
-  const tech = await workspaceTechnology(conn)
-  const is4G = tech === '4G'
-  const is3G = tech === '3G'
-  const is2G = tech === '2G'
-
-  const dailyIsNcExpr = is4G
-    ? `(f.prb_utilization >= ${prbThresh} OR coalesce(ex.has_breach, false))`
-    : `coalesce(ex.has_breach, false)`
-
-  const kpiKeyFilter = is3G
-    ? "AND k.kpi_key IN ('call_setup_success_3g', 'call_drop_rate_3g', 'data_access_success_3g')"
-    : is2G
-    ? "AND k.kpi_key IN ('call_setup_success_2g', 'call_drop_rate_2g', 'sdcch_congestion', 'tch_congestion', 'gprs_throughput')"
-    : ""
+  // a day is NC when it is a core-KPI breach day (analytics/ncRule)
+  const dailyIsNcExpr = `(ex.cell_id IS NOT NULL)`
 
   const BATCH_SIZE = 2500
   for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
@@ -175,14 +163,7 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
                  f.availability_pct AS availability_pct_avg
           FROM fact_cell_daily f
           JOIN dim_date d USING (date_id)
-          LEFT JOIN (
-            SELECT e.cell_id, e.date_id, true AS has_breach
-            FROM fact_extra_metrics e
-            JOIN kpi_defs k ON k.kpi_id = e.kpi_id
-            WHERE k.technology = '${tech}' AND k.is_core AND k.active AND k.target IS NOT NULL ${kpiKeyFilter}
-              AND ((k.worse_is_higher AND e.value > k.target) OR (NOT k.worse_is_higher AND e.value < k.target))
-            GROUP BY e.cell_id, e.date_id
-          ) ex ON ex.cell_id = f.cell_id AND ex.date_id = f.date_id
+          LEFT JOIN (${coreBreachDaysSql()}) ex ON ex.cell_id = f.cell_id AND ex.date_id = f.date_id
           WHERE f.cell_id IN (${idList})
         `,
         obsDaysSql: '1.0',

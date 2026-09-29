@@ -1,5 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import type { Technology } from '../../../shared/api'
+import { coreBreachDaysSql } from '../analytics/ncRule'
 
 /** Incremental aggregate refresh (spec §66): only affected days/weeks/months are recomputed. */
 
@@ -29,15 +30,7 @@ async function prepareStagedBreaches(conn: DuckDBConnection, idList: string): Pr
   await conn.run(`DROP TABLE IF EXISTS stg_breaches`)
   await conn.run(`
     CREATE TEMP TABLE stg_breaches AS
-    SELECT DISTINCT f2.cell_id, f2.date_id
-    FROM fact_extra_metrics f2
-    JOIN kpi_defs k2 ON k2.kpi_id = f2.kpi_id
-    WHERE f2.date_id IN (${idList})
-      AND k2.active = true
-      AND (k2.is_core = true OR k2.supports_persistent_nc = true)
-      AND k2.target IS NOT NULL
-      AND ((k2.worse_is_higher AND f2.value > k2.target)
-        OR (NOT k2.worse_is_higher AND f2.value < k2.target))
+    ${coreBreachDaysSql(`IN (${idList})`)}
   `)
 }
 
@@ -107,7 +100,7 @@ const MONTHS = (idList: string) =>
 async function recomputeCellWeekly(conn: DuckDBConnection, idList: string): Promise<void> {
   await conn.run(`DELETE FROM agg_cell_weekly WHERE week_start IN ${WEEKS(idList)}`)
   const breachJoin = kpiBreachJoin()
-  const breachDay = `count(*) FILTER (WHERE (f.prb_utilization IS NOT NULL AND f.prb_utilization >= r.prb_threshold_pct) OR kb.cell_id IS NOT NULL)`
+  const breachDay = `count(*) FILTER (WHERE kb.cell_id IS NOT NULL)`
   await conn.run(
     `
     INSERT INTO agg_cell_weekly
@@ -136,7 +129,7 @@ async function recomputeCellWeekly(conn: DuckDBConnection, idList: string): Prom
 async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Promise<void> {
   await conn.run(`DELETE FROM agg_cell_monthly WHERE month_start IN ${MONTHS(idList)}`)
   const breachJoin = kpiBreachJoin()
-  const breachDay = `count(*) FILTER (WHERE (f.prb_utilization IS NOT NULL AND f.prb_utilization >= r.prb_threshold_pct) OR kb.cell_id IS NOT NULL)`
+  const breachDay = `count(*) FILTER (WHERE kb.cell_id IS NOT NULL)`
   await conn.run(
     `
     INSERT INTO agg_cell_monthly
@@ -151,12 +144,7 @@ async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Pro
       avg(f.prb_utilization), max(f.prb_utilization),
       sum(f.data_volume_mb), sum(f.connected_users),
       avg(f.dl_throughput_kbps), avg(f.availability_pct),
-      (${breachDay} >= max(COALESCE(r.monthly_breach_days, 3)))
-      OR EXISTS (
-        SELECT 1 FROM agg_cell_weekly w
-        WHERE w.cell_id = f.cell_id AND w.week_start >= m.month_start
-          AND w.week_start < m.month_start + INTERVAL 1 MONTH AND w.is_nc
-      ) AS is_nc
+      ${breachDay} >= max(COALESCE(r.monthly_breach_days, 3)) AS is_nc
     FROM fact_cell_daily f
     JOIN (SELECT date_id, CAST(date_trunc('month', date) AS DATE) AS month_start FROM dim_date) m
       ON m.date_id = f.date_id
@@ -184,7 +172,7 @@ function entityJoins(entity: string): { idJoin: string; colId: string; selId: st
 async function recomputeEntityDaily(conn: DuckDBConnection, entity: string, idList: string): Promise<void> {
   const { idJoin, colId, selId, groupExtra } = entityJoins(entity)
   await conn.run(`DELETE FROM agg_${entity}_daily WHERE period_start IN (SELECT date FROM dim_date WHERE date_id IN (${idList}))`)
-  const ncCell = `count(DISTINCT f.cell_id) FILTER (WHERE kb.cell_id IS NOT NULL OR (f.prb_utilization IS NOT NULL AND f.prb_utilization >= r.prb_threshold_pct))`
+  const ncCell = `count(DISTINCT f.cell_id) FILTER (WHERE kb.cell_id IS NOT NULL)`
   const breachJoin = kpiBreachJoin()
   await conn.run(
     `

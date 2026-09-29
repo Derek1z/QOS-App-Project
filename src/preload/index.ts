@@ -1,157 +1,119 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type {
-  ActionStatus, Api, CompareMetric, CompareScope, ComparisonType, CreateSnapshotOpts,
-  ExplorerLevel, ForecastOpts, HealthScope, ImportProgress, InvestigationScope, MaintenanceAction,
-  MappingConfig, PriorityMode, PriorityCenterOpts, ReportChartConfig, ReportOpts, ReportSectionId, ReportType, RulesPatch,
-  KpiDefPatch, Technology, Grain, PeriodId
-} from '../../shared/api'
+import type { Api, ImportProgress } from '../../shared/api'
+
+/** Request/response wrapper for one IPC channel. It forwards every argument:
+ *  TypeScript accepts a wrapper that declares fewer parameters than the Api
+ *  contract, which is how the technology/grain arguments of regionMap,
+ *  regionDistricts, cellDetail and ncMovement were silently dropped. */
+const call = (channel: string) => (...args: unknown[]) => ipcRenderer.invoke(channel, ...args)
 
 const api: Api = {
   files: {
     path: (file) => webUtils.getPathForFile(file)
   },
   imports: {
-    analyze: (paths) => ipcRenderer.invoke('import:analyze', paths),
-    preview: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:preview', id, mapping),
-    run: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:run', id, mapping),
-    history: () => ipcRenderer.invoke('import:history'),
-    coverage: () => ipcRenderer.invoke('import:coverage'),
-    quality: () => ipcRenderer.invoke('import:quality'),
+    analyze: call('import:analyze'),
+    preview: call('import:preview'),
+    run: call('import:run'),
+    history: call('import:history'),
+    coverage: call('import:coverage'),
+    quality: call('import:quality'),
     onProgress: (cb: (p: ImportProgress) => void) => {
       const l = (_e: Electron.IpcRendererEvent, p: ImportProgress) => cb(p)
       ipcRenderer.on('import:progress', l)
       return () => ipcRenderer.removeListener('import:progress', l)
     },
-    archive: () => ipcRenderer.invoke('import:archive'),
-    purgeArchive: () => ipcRenderer.invoke('import:purgeArchive'),
-    exportCsv: (sourcePath: string) => ipcRenderer.invoke('import:exportCsv', sourcePath),
-    geoStats: (id: string, mapping: MappingConfig) => ipcRenderer.invoke('import:geoStats', id, mapping),
-    inspectExcel: (filePath: string) => ipcRenderer.invoke('import:inspect-excel', filePath)
+    archive: call('import:archive'),
+    purgeArchive: call('import:purgeArchive'),
+    exportCsv: call('import:exportCsv'),
+    geoStats: call('import:geoStats'),
+    inspectExcel: call('import:inspect-excel')
   },
   workspace: {
-    listRecent: () => ipcRenderer.invoke('workspace:listRecent'),
-    pickOpen: () => ipcRenderer.invoke('workspace:pickOpen'),
-    pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),
-    create: (dir, name, technology) => ipcRenderer.invoke('workspace:create', dir, name, technology),
-    open: (path, opts) => ipcRenderer.invoke('workspace:open', path, opts),
-    isLocked: (path: string) => ipcRenderer.invoke('workspace:isLocked', path),
-    close: () => ipcRenderer.invoke('workspace:close'),
-    info: () => ipcRenderer.invoke('workspace:info'),
-    setTechnology: (technology) => ipcRenderer.invoke('workspace:setTechnology', technology),
+    listRecent: call('workspace:listRecent'),
+    pickOpen: call('workspace:pickOpen'),
+    pickDirectory: call('workspace:pickDirectory'),
+    create: call('workspace:create'),
+    open: call('workspace:open'),
+    isLocked: call('workspace:isLocked'),
+    close: call('workspace:close'),
+    info: call('workspace:info'),
+    setTechnology: call('workspace:setTechnology'),
     onChanged: (cb) => {
       const listener = () => cb()
       ipcRenderer.on('workspace:changed', listener)
       return () => ipcRenderer.removeListener('workspace:changed', listener)
     },
-    snapshots: () => ipcRenderer.invoke('workspace:snapshots'),
-    createSnapshot: (name: string, opts?: CreateSnapshotOpts) =>
-      ipcRenderer.invoke('workspace:snapshotCreate', name, opts),
-    restoreSnapshot: (id: number) => ipcRenderer.invoke('workspace:snapshotRestore', id),
-    removeSnapshot: (id: number) => ipcRenderer.invoke('workspace:snapshotRemove', id),
-    compareSnapshots: (aId: number, bId: number) =>
-      ipcRenderer.invoke('workspace:snapshotCompare', aId, bId)
+    snapshots: call('workspace:snapshots'),
+    createSnapshot: call('workspace:snapshotCreate'),
+    restoreSnapshot: call('workspace:snapshotRestore'),
+    removeSnapshot: call('workspace:snapshotRemove'),
+    compareSnapshots: call('workspace:snapshotCompare')
   },
   maintenance: {
-    run: (action: MaintenanceAction) => ipcRenderer.invoke('maintenance:run', action),
-    getSchedule: () => ipcRenderer.invoke('maintenance:getSchedule'),
-    setSchedule: (patch) => ipcRenderer.invoke('maintenance:setSchedule', patch),
-    runScheduled: () => ipcRenderer.invoke('maintenance:runScheduled'),
-    scheduleHistory: (limit?: number) => ipcRenderer.invoke('maintenance:scheduleHistory', limit)
+    run: call('maintenance:run'),
+    getSchedule: call('maintenance:getSchedule'),
+    setSchedule: call('maintenance:setSchedule'),
+    runScheduled: call('maintenance:runScheduled'),
+    scheduleHistory: call('maintenance:scheduleHistory')
   },
   analytics: {
-    summary: (opts) => ipcRenderer.invoke('analytics:summary', opts),
-    ncLifecycle: (grain) => ipcRenderer.invoke('analytics:ncLifecycle', grain),
-    ncMovement: (limit?: number, grain?: Grain) => ipcRenderer.invoke('analytics:ncMovement', limit, grain),
-    priorityQueue: (mode: PriorityMode, limit?: number) =>
-      ipcRenderer.invoke('analytics:priorityQueue', mode, limit),
-    health: (grain) => ipcRenderer.invoke('analytics:health', grain),
-    kpiOverview: (limit?: number, grain?: Grain) => ipcRenderer.invoke('analytics:kpiOverview', limit, grain),
-    healthMatrix: (
-      scope: HealthScope,
-      opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }
-    ) => ipcRenderer.invoke('analytics:healthMatrix', scope, opts),
-    cellIntelligence: (opts) => ipcRenderer.invoke('analytics:cellIntelligence', opts),
-    cellDetail: (cellId: number, grain?: Grain) => ipcRenderer.invoke('analytics:cellDetail', cellId, grain),
-    performance: (opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) =>
-      ipcRenderer.invoke('analytics:performance', opts),
-    comparison: (opts?: {
-      type?: ComparisonType
-      scope?: CompareScope
-      metric?: CompareMetric
-      grain?: Grain
-      period?: PeriodId
-    }) => ipcRenderer.invoke('analytics:comparison', opts),
-    explorer: (level: ExplorerLevel, parentId?: number | null, opts?: { q?: string }) =>
-      ipcRenderer.invoke('analytics:explorer', level, parentId, opts),
-    priorityCenter: (opts?: PriorityCenterOpts) =>
-      ipcRenderer.invoke('analytics:priorityCenter', opts),
-    forecast: (opts?: ForecastOpts) => ipcRenderer.invoke('analytics:forecast', opts),
-    executiveOverview: (opts?: { period?: PeriodId; grain?: Grain }) => ipcRenderer.invoke('analytics:executiveOverview', opts),
-    regionMap: () => ipcRenderer.invoke('analytics:regionMap'),
-    regionDistricts: (regionId: number) => ipcRenderer.invoke('analytics:regionDistricts', regionId)
+    summary: call('analytics:summary'),
+    ncLifecycle: call('analytics:ncLifecycle'),
+    ncMovement: call('analytics:ncMovement'),
+    priorityQueue: call('analytics:priorityQueue'),
+    health: call('analytics:health'),
+    kpiOverview: call('analytics:kpiOverview'),
+    healthMatrix: call('analytics:healthMatrix'),
+    cellIntelligence: call('analytics:cellIntelligence'),
+    cellDetail: call('analytics:cellDetail'),
+    performance: call('analytics:performance'),
+    comparison: call('analytics:comparison'),
+    explorer: call('analytics:explorer'),
+    priorityCenter: call('analytics:priorityCenter'),
+    forecast: call('analytics:forecast'),
+    executiveOverview: call('analytics:executiveOverview'),
+    regionMap: call('analytics:regionMap'),
+    regionDistricts: call('analytics:regionDistricts')
   },
   synthetic: {
-    generate: (config) => ipcRenderer.invoke('synthetic:generate', config)
+    generate: call('synthetic:generate')
   },
   rules: {
-    get: () => ipcRenderer.invoke('rules:get'),
-    update: (patch: RulesPatch) => ipcRenderer.invoke('rules:update', patch)
+    get: call('rules:get'),
+    update: call('rules:update')
   },
   kpis: {
-    list: (technology?: Technology) => ipcRenderer.invoke('kpis:list', technology),
-    save: (patch: KpiDefPatch) => ipcRenderer.invoke('kpis:save', patch),
-    remove: (kpiId: number) => ipcRenderer.invoke('kpis:remove', kpiId),
-    discover: (headers: string[], technology?: Technology) =>
-      ipcRenderer.invoke('kpis:discover', headers, technology),
-    seed: (technology?: Technology) => ipcRenderer.invoke('kpis:seed', technology),
-    resetDefaults: (technology?: Technology) => ipcRenderer.invoke('kpis:resetDefaults', technology)
+    list: call('kpis:list'),
+    save: call('kpis:save'),
+    remove: call('kpis:remove'),
+    discover: call('kpis:discover'),
+    seed: call('kpis:seed'),
+    resetDefaults: call('kpis:resetDefaults')
   },
   derived: {
-    list: (technology?: Technology) => ipcRenderer.invoke('derived:list', technology),
-    save: (def) => ipcRenderer.invoke('derived:save', def),
-    detect: (headers: string[], technology?: Technology) =>
-      ipcRenderer.invoke('derived:detect', headers, technology)
+    list: call('derived:list'),
+    save: call('derived:save'),
+    detect: call('derived:detect')
   },
   investigation: {
-    search: (scope: InvestigationScope, q?: string, technology?: Technology) =>
-      ipcRenderer.invoke('investigation:search', scope, q, technology),
-    get: (
-      scope: InvestigationScope,
-      entityId: number,
-      opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology }
-    ) => ipcRenderer.invoke('investigation:get', scope, entityId, opts),
-    setStatus: (
-      scope: InvestigationScope,
-      entityId: number,
-      patch: {
-        status?: ActionStatus | null
-        owner?: string | null
-        externalTicket?: string | null
-        targetReviewDate?: string | null
-      }
-    ) => ipcRenderer.invoke('investigation:setStatus', scope, entityId, patch),
-    addNote: (scope: InvestigationScope, entityId: number, note: string) =>
-      ipcRenderer.invoke('investigation:addNote', scope, entityId, note),
-    exportReport: (scope: InvestigationScope, entityId: number) =>
-      ipcRenderer.invoke('investigation:exportReport', scope, entityId)
+    search: call('investigation:search'),
+    get: call('investigation:get'),
+    setStatus: call('investigation:setStatus'),
+    addNote: call('investigation:addNote'),
+    exportReport: call('investigation:exportReport')
   },
   reports: {
-    generate: (opts?: ReportOpts) => ipcRenderer.invoke('reports:generate', opts),
-    definitions: () => ipcRenderer.invoke('reports:definitions'),
-    saveDefinition: (
-      name: string,
-      type: ReportType,
-      sections: ReportSectionId[],
-      schedule?: string | null,
-      charts?: ReportChartConfig
-    ) => ipcRenderer.invoke('reports:saveDefinition', name, type, sections, schedule ?? null, charts),
-    due: () => ipcRenderer.invoke('reports:due'),
-    history: () => ipcRenderer.invoke('reports:history'),
-    reveal: (path: string) => ipcRenderer.invoke('reports:reveal', path)
+    generate: call('reports:generate'),
+    definitions: call('reports:definitions'),
+    saveDefinition: call('reports:saveDefinition'),
+    due: call('reports:due'),
+    history: call('reports:history'),
+    reveal: call('reports:reveal')
   },
   appState: {
-    get: () => ipcRenderer.invoke('appState:get'),
-    set: (patch) => ipcRenderer.invoke('appState:set', patch)
+    get: call('appState:get'),
+    set: call('appState:set')
   }
 }
 

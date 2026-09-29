@@ -101,8 +101,9 @@ async function stageCsv(
   // value-level geo remaps (spec §13): an unmatched value the user pointed at
   // an existing dimension is rewritten before cleaning/upserts, so no new
   // (misspelled) dimension row is created and references resolve to the
-  // intended one. Keys are normalized values; the WHEN clause normalizes the
-  // staged column the same way (trim + lowercase + collapse whitespace).
+  // intended one. Keys are normalizeGeoValue() output; the WHEN clause
+  // normalizes the staged column the same way (every whitespace run,
+  // including the non-breaking spaces Excel exports carry, becomes one space).
   const aliasCols: Record<string, string> = {
     region: 'region_raw', district: 'district_raw', site: 'site_raw', cell: 'cell_raw'
   }
@@ -111,7 +112,7 @@ async function stageCsv(
     const map = aliases[field as CanonicalField]
     if (!map || Object.keys(map).length === 0) continue
     const cases = Object.entries(map)
-      .map(([k, v]) => `WHEN lower(trim(regexp_replace(${col}, '\s+', ' '))) = '${esc(k)}' THEN '${esc(v)}'`)
+      .map(([k, v]) => `WHEN lower(trim(regexp_replace(${col}, '[\\s\\x{00A0}]+', ' ', 'g'))) = '${esc(k)}' THEN '${esc(v)}'`)
       .join(' ')
     await conn.run(
       `UPDATE stg_import SET ${col} = CASE ${cases} ELSE ${col} END WHERE ${col} IS NOT NULL`

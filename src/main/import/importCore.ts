@@ -171,8 +171,11 @@ const CANDIDATE_DATE_PATTERNS = [
 const MIN_YEAR = 1990
 const MAX_YEAR = 2099
 
+// list_filter parses once per pattern and keeps coalesce() short-circuiting; a
+// CASE WHEN year(x) ... THEN x wrapper parsed twice and made DuckDB evaluate
+// every pattern for every row (2M rows: 318 ms -> 21 s).
 function inYearRange(expr: string): string {
-  return `CASE WHEN year(${expr}) BETWEEN ${MIN_YEAR} AND ${MAX_YEAR} THEN ${expr} END`
+  return `list_filter([${expr}], lambda x: year(x) BETWEEN ${MIN_YEAR} AND ${MAX_YEAR})[1]`
 }
 
 /** Fast date pattern detector: probes the first sample date strings from staging

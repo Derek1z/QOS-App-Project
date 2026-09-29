@@ -1722,6 +1722,7 @@ export async function getRegionMap(
 ): Promise<RegionMapRow[]> {
   const conn = ws().connection
   const tech: Technology = technology || await workspaceTechnology(conn)
+  const prbThreshold = (await getRules(conn))?.prbThresholdPct ?? 80
 
   const r = await conn.runAndReadAll(`
     SELECT r.region_id AS id, r.name AS name,
@@ -1732,7 +1733,9 @@ export async function getRegionMap(
       round(COALESCE(avg(w.dl_throughput_kbps_avg), avg(f.dl_throughput_kbps)), 1) AS thr,
       sum(COALESCE(w.connected_users_sum, f.connected_users, 0)) AS usr,
       sum(COALESCE(w.data_volume_mb_sum, f.data_volume_mb, 0)) AS vol,
-      round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail
+      round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail,
+      count(DISTINCT c.cell_id) FILTER (WHERE w.prb_avg >= ${prbThreshold}) AS prb_nc,
+      count(DISTINCT c.cell_id) FILTER (WHERE w.prb_avg IS NOT NULL) AS prb_observed
     FROM dim_region r
     LEFT JOIN dim_cell c ON c.region_id = r.region_id
     LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
@@ -1820,8 +1823,11 @@ export async function getRegionMap(
           label: '4G Peak Hour PRB Utilization',
           unit: '%',
           avg: prbVal,
-          ncCells: prbVal > 80 ? Math.round(cells * 0.1) : 0,
-          ncRate: prbVal > 80 ? 10 : 0,
+          // cells whose latest weekly PRB is at/above the ruleset threshold
+          ncCells: Number(x.prb_nc ?? 0),
+          ncRate: Number(x.prb_observed ?? 0) > 0
+            ? Math.round((Number(x.prb_nc ?? 0) / Number(x.prb_observed)) * 1000) / 10
+            : 0,
           worseIsHigher: true,
           isCore: true
         }
@@ -1890,6 +1896,7 @@ export async function getRegionDistricts(
   const conn = ws().connection
   const numRegionId = Number(regionId)
   const tech: Technology = technology || await workspaceTechnology(conn)
+  const prbThreshold = (await getRules(conn))?.prbThresholdPct ?? 80
 
   const r = await conn.runAndReadAll(
     `SELECT d.district_id AS id, d.name AS name, rg.name AS region,
@@ -1900,7 +1907,9 @@ export async function getRegionDistricts(
        round(COALESCE(avg(w.dl_throughput_kbps_avg), avg(f.dl_throughput_kbps)), 1) AS thr,
        sum(COALESCE(w.connected_users_sum, f.connected_users, 0)) AS usr,
        sum(COALESCE(w.data_volume_mb_sum, f.data_volume_mb, 0)) AS vol,
-       round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail
+       round(COALESCE(avg(w.availability_pct_avg), avg(f.availability_pct)), 1) AS avail,
+       count(DISTINCT c.cell_id) FILTER (WHERE w.prb_avg >= ${prbThreshold}) AS prb_nc,
+       count(DISTINCT c.cell_id) FILTER (WHERE w.prb_avg IS NOT NULL) AS prb_observed
      FROM dim_district d
      JOIN dim_region rg ON rg.region_id = d.region_id
      LEFT JOIN dim_cell c ON c.district_id = d.district_id
@@ -1990,8 +1999,11 @@ export async function getRegionDistricts(
           label: '4G Peak Hour PRB Utilization',
           unit: '%',
           avg: prbVal,
-          ncCells: prbVal > 80 ? Math.round(cells * 0.1) : 0,
-          ncRate: prbVal > 80 ? 10 : 0,
+          // cells whose latest weekly PRB is at/above the ruleset threshold
+          ncCells: Number(x.prb_nc ?? 0),
+          ncRate: Number(x.prb_observed ?? 0) > 0
+            ? Math.round((Number(x.prb_nc ?? 0) / Number(x.prb_observed)) * 1000) / 10
+            : 0,
           worseIsHigher: true,
           isCore: true
         }

@@ -1,4 +1,5 @@
 import React from 'react'
+import { trendArrow } from '../lib/overviewData'
 
 export interface KpiCardProps {
   name: string
@@ -8,6 +9,8 @@ export interface KpiCardProps {
   targetStr?: string
   status: 'compliant' | 'warning' | 'breach' | 'unavailable'
   trend: 'improving' | 'worsening' | 'stable'
+  /** KPI direction, so the arrow shows which way the value moved */
+  worseIsHigher: boolean
   ncCount?: number
   ncPct?: number
   persistentNcCount?: number
@@ -21,6 +24,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   targetStr,
   status,
   trend,
+  worseIsHigher,
   ncCount,
   ncPct
 }) => {
@@ -99,7 +103,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
         }}
       >
         <span style={{ color: trendColor, fontWeight: 600 }}>
-          {trend === 'improving' ? '↓ Improving' : trend === 'worsening' ? '↑ Worsening' : '→ Stable'}
+          {trendArrow(trend, worseIsHigher)} {trend === 'improving' ? 'Improving' : trend === 'worsening' ? 'Worsening' : 'Stable'}
         </span>
         {ncCount !== undefined && (
           <span style={{ color: 'var(--text-dim)' }}>

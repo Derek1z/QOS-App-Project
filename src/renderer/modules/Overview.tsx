@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { KpiCard } from '../components/KpiCard'
 import TargetsModal from '../components/TargetsModal'
+import type { ExecutiveOverviewResult, NcMovementRow } from '../../../shared/api'
+import {
+  TOTALITY, toKpiCardProps, movementSeries, breachSeries, kpiFilterOptions, bannerSummary
+} from '../lib/overviewData'
 import {
   AreaChart,
   Area,
@@ -17,167 +21,84 @@ import {
 
 export default function Overview(): React.JSX.Element {
   const {
+    workspace,
     technologyId,
     setTechnologyId,
     grain,
     setGrain,
     period,
     setPeriod,
-    reportingRange,
     setModule,
     setTargetsModalOpen
   } = useAppStore()
 
+  const [overview, setOverview] = useState<ExecutiveOverviewResult | null>(null)
+  const [movement, setMovement] = useState<NcMovementRow[]>([])
   const [loading, setLoading] = useState(false)
-  const [hasData] = useState(true)
-  const [selectedKpiKey, setSelectedKpiKey] = useState<string>('totality')
+  const [error, setError] = useState<string | null>(null)
+  const [selectedKpiKey, setSelectedKpiKey] = useState<string>(TOTALITY.key)
 
   const techCode = technologyId === 2 ? '2G' : technologyId === 3 ? '3G' : '4G'
 
   // Reset KPI filter to 'totality' when technology changes
   useEffect(() => {
-    setSelectedKpiKey('totality')
+    setSelectedKpiKey(TOTALITY.key)
   }, [technologyId])
 
-  // Core KPIs per technology for filtering
-  const getCoreKpisForTech = () => {
-    if (technologyId === 2) {
-      return [
-        { key: 'totality', label: '🌐 All Core KPIs (Totality)' },
-        { key: '2g_cssr', label: '2G CSSR' },
-        { key: '2g_cdr', label: '2G Call Drop Rate' },
-        { key: 'tch_congestion', label: 'TCH Congestion' },
-        { key: 'sdcch_congestion', label: 'SDCCH Congestion' }
-      ]
-    } else if (technologyId === 3) {
-      return [
-        { key: 'totality', label: '🌐 All Core KPIs (Totality)' },
-        { key: '3g_cssr', label: '3G CSSR' },
-        { key: '3g_cdr', label: '3G Call Drop Rate' },
-        { key: '3g_dasr', label: '3G DASR' },
-        { key: '3g_dl_power_congestion', label: 'DL Power Congestion' },
-        { key: '3g_ul_ce_congestion', label: 'UL CE Congestion' }
-      ]
-    } else {
-      return [
-        { key: 'totality', label: '🌐 All Core KPIs (Totality)' },
-        { key: '4g_cssr', label: '4G CSSR' },
-        { key: '4g_cdr', label: '4G Call Drop Rate' },
-        { key: '4g_dsaf', label: '4G DSAF' },
-        { key: '4g_prb_util', label: '4G PRB Utilization' }
-      ]
-    }
-  }
-
-  const coreKpis = getCoreKpisForTech()
-
-  const getNcMovementData = () => {
-    // Multiplier/offset to simulate individual KPI vs totality
-    const mult = selectedKpiKey === 'totality' ? 1.0 : 0.35
-    if (grain === 'daily') {
-      return [
-        { label: 'Aug 01', newNc: Math.round(3 * mult), recurring: Math.round(2 * mult), persistent: Math.round(4 * mult), recovering: Math.round(2 * mult) },
-        { label: 'Aug 02', newNc: Math.round(2 * mult), recurring: Math.round(3 * mult), persistent: Math.round(4 * mult), recovering: Math.round(1 * mult) },
-        { label: 'Aug 03', newNc: Math.round(5 * mult), recurring: Math.round(2 * mult), persistent: Math.round(5 * mult), recovering: Math.round(2 * mult) },
-        { label: 'Aug 04', newNc: Math.round(1 * mult), recurring: Math.round(2 * mult), persistent: Math.round(4 * mult), recovering: Math.round(3 * mult) },
-        { label: 'Aug 05', newNc: Math.round(4 * mult), recurring: Math.round(1 * mult), persistent: Math.round(4 * mult), recovering: Math.round(2 * mult) },
-        { label: 'Aug 06', newNc: Math.round(1 * mult), recurring: Math.round(1 * mult), persistent: Math.round(3 * mult), recovering: Math.round(3 * mult) },
-        { label: 'Aug 07', newNc: Math.round(2 * mult), recurring: Math.round(2 * mult), persistent: Math.round(3 * mult), recovering: Math.round(2 * mult) }
-      ]
-    } else if (grain === 'weekly') {
-      return [
-        { label: 'Week 28', newNc: Math.round(12 * mult), recurring: Math.round(8 * mult), persistent: Math.round(14 * mult), recovering: Math.round(6 * mult) },
-        { label: 'Week 29', newNc: Math.round(9 * mult), recurring: Math.round(7 * mult), persistent: Math.round(12 * mult), recovering: Math.round(8 * mult) },
-        { label: 'Week 30', newNc: Math.round(7 * mult), recurring: Math.round(5 * mult), persistent: Math.round(10 * mult), recovering: Math.round(9 * mult) },
-        { label: 'Week 31', newNc: Math.round(5 * mult), recurring: Math.round(4 * mult), persistent: Math.round(8 * mult), recovering: Math.round(7 * mult) },
-        { label: 'Week 32', newNc: Math.round(3 * mult), recurring: Math.round(3 * mult), persistent: Math.round(6 * mult), recovering: Math.round(8 * mult) }
-      ]
-    } else {
-      return [
-        { label: 'May 2026', newNc: Math.round(38 * mult), recurring: Math.round(24 * mult), persistent: Math.round(45 * mult), recovering: Math.round(22 * mult) },
-        { label: 'Jun 2026', newNc: Math.round(28 * mult), recurring: Math.round(18 * mult), persistent: Math.round(36 * mult), recovering: Math.round(26 * mult) },
-        { label: 'Jul 2026', newNc: Math.round(20 * mult), recurring: Math.round(14 * mult), persistent: Math.round(26 * mult), recovering: Math.round(24 * mult) },
-        { label: 'Aug 2026', newNc: Math.round(14 * mult), recurring: Math.round(10 * mult), persistent: Math.round(18 * mult), recovering: Math.round(20 * mult) }
-      ]
-    }
-  }
-
-  const getKpiBreachData = () => {
-    const mult = selectedKpiKey === 'totality' ? 1.0 : 0.28
-    if (grain === 'daily') {
-      return [
-        { label: 'Aug 01', totalBreaches: Math.round(24 * mult) },
-        { label: 'Aug 02', totalBreaches: Math.round(18 * mult) },
-        { label: 'Aug 03', totalBreaches: Math.round(31 * mult) },
-        { label: 'Aug 04', totalBreaches: Math.round(14 * mult) },
-        { label: 'Aug 05', totalBreaches: Math.round(22 * mult) },
-        { label: 'Aug 06', totalBreaches: Math.round(12 * mult) },
-        { label: 'Aug 07', totalBreaches: Math.round(16 * mult) }
-      ]
-    } else if (grain === 'weekly') {
-      return [
-        { label: 'Week 28', totalBreaches: Math.round(84 * mult) },
-        { label: 'Week 29', totalBreaches: Math.round(71 * mult) },
-        { label: 'Week 30', totalBreaches: Math.round(56 * mult) },
-        { label: 'Week 31', totalBreaches: Math.round(42 * mult) },
-        { label: 'Week 32', totalBreaches: Math.round(31 * mult) }
-      ]
-    } else {
-      return [
-        { label: 'May 2026', totalBreaches: Math.round(290 * mult) },
-        { label: 'Jun 2026', totalBreaches: Math.round(224 * mult) },
-        { label: 'Jul 2026', totalBreaches: Math.round(168 * mult) },
-        { label: 'Aug 2026', totalBreaches: Math.round(118 * mult) }
-      ]
-    }
-  }
-
-  const [ncMovementData, setNcMovementData] = useState(getNcMovementData())
-  const [kpiBreachData, setKpiBreachData] = useState(getKpiBreachData())
-
+  // KPI cards and health come from getExecutiveOverview (all technologies);
+  // lifecycle movement and per-KPI breaches from getNcMovement for this one
   useEffect(() => {
+    if (!workspace) return
+    let alive = true
     setLoading(true)
-    const timer = setTimeout(() => {
-      setNcMovementData(getNcMovementData())
-      setKpiBreachData(getKpiBreachData())
-      setLoading(false)
-    }, 250)
-    return () => clearTimeout(timer)
-  }, [grain, technologyId, reportingRange, selectedKpiKey])
-
-  const getDynamicKpis = () => {
-    if (technologyId === 2) {
-      return [
-        { name: '2G Call Connection Success Rate', isDerived: false, value: 98.4, unit: '%', targetStr: '≥ 98.0%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 4, ncPct: 1.2 },
-        { name: '2G Call Drop Rate', isDerived: false, value: 1.2, unit: '%', targetStr: '≤ 1.5%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 3, ncPct: 0.9 },
-        { name: 'TCH Congestion', isDerived: false, value: 1.8, unit: '%', targetStr: '≤ 1.0%', status: 'warning' as const, trend: 'worsening' as const, ncCount: 12, ncPct: 3.5 },
-        { name: 'SDCCH Congestion', isDerived: false, value: 0.4, unit: '%', targetStr: '≤ 0.5%', status: 'compliant' as const, trend: 'stable' as const, ncCount: 2, ncPct: 0.6 }
-      ]
-    } else if (technologyId === 3) {
-      return [
-        { name: '3G Call Connection Success Rate', isDerived: false, value: 98.7, unit: '%', targetStr: '≥ 98.0%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 2, ncPct: 0.8 },
-        { name: '3G Call Drop Rate', isDerived: false, value: 1.4, unit: '%', targetStr: '≤ 2.0%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 3, ncPct: 1.1 },
-        { name: '3G Data Access Success Rate', isDerived: false, value: 97.9, unit: '%', targetStr: '≥ 97.0%', status: 'compliant' as const, trend: 'stable' as const, ncCount: 5, ncPct: 1.8 },
-        { name: 'DL Power Congestion', isDerived: true, value: 142, unit: '', targetStr: '≤ 50', status: 'breach' as const, trend: 'improving' as const, ncCount: 14, ncPct: 5.2 },
-        { name: 'UL CE Congestion', isDerived: true, value: 63, unit: '', targetStr: '≤ 30', status: 'warning' as const, trend: 'worsening' as const, ncCount: 8, ncPct: 3.0 },
-        { name: 'PhyCh Failures', isDerived: true, value: null, unit: '', targetStr: '≤ 20', status: 'unavailable' as const, trend: 'stable' as const, ncCount: 0, ncPct: 0 }
-      ]
-    } else {
-      return [
-        { name: '4G Call Connection Success Rate', isDerived: false, value: 99.1, unit: '%', targetStr: '≥ 98.5%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 2, ncPct: 0.5 },
-        { name: '4G Call Drop Rate', isDerived: false, value: 0.8, unit: '%', targetStr: '≤ 1.0%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 3, ncPct: 0.8 },
-        { name: '4G Data Service Access Failure Rate', isDerived: false, value: 1.1, unit: '%', targetStr: '≤ 1.5%', status: 'compliant' as const, trend: 'stable' as const, ncCount: 4, ncPct: 1.0 },
-        { name: '4G Peak Hour PRB Utilization', isDerived: false, value: 74.2, unit: '%', targetStr: '≤ 80.0%', status: 'compliant' as const, trend: 'improving' as const, ncCount: 11, ncPct: 2.8 }
-      ]
+    setError(null)
+    Promise.all([
+      window.api.analytics.executiveOverview({ period, grain }),
+      window.api.analytics.ncMovement(8, grain, techCode)
+    ])
+      .then(([ov, mv]) => {
+        if (!alive) return
+        setOverview(ov)
+        setMovement(mv)
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
     }
-  }
+  }, [workspace, techCode, grain, period])
 
-  const kpiCards = getDynamicKpis()
+  const techCard = overview?.technologies.find((t) => t.technology === techCode)
+  const kpiCards = (techCard?.availableKpiCards ?? []).map(toKpiCardProps)
+  const banner = bannerSummary(techCard, movement[movement.length - 1])
+  const hasData = banner.cells > 0 || movement.length > 0
+  const coreKpis = kpiFilterOptions(movement)
+  const ncMovementData = movementSeries(movement, grain)
+  const kpiBreachData = breachSeries(movement, selectedKpiKey, grain)
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
+      {error && (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(248, 113, 113, 0.4)',
+            borderRadius: '12px',
+            padding: '12px 16px',
+            fontSize: '12.5px',
+            color: '#fca5a5'
+          }}
+        >
+          Couldn’t load the {techCode} overview: {error}
+        </div>
+      )}
+
       {/* Onboarding CTA Card (if empty workspace) */}
-      {!hasData && (
+      {!hasData && !loading && !error && (
         <div
           style={{
             background: 'linear-gradient(135deg, rgba(30, 27, 75, 0.5), rgba(15, 23, 42, 0.9))',
@@ -370,14 +291,16 @@ export default function Overview(): React.JSX.Element {
                 />
                 <path
                   stroke="#34d399"
-                  strokeDasharray="92, 100"
+                  strokeDasharray={`${banner.healthPct ?? 0}, 100`}
                   strokeWidth="3.5"
                   strokeLinecap="round"
                   fill="none"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                 />
               </svg>
-              <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>92%</span>
+              <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>
+                {banner.healthPct == null ? '—' : `${Math.round(banner.healthPct)}%`}
+              </span>
             </div>
 
             <div>
@@ -400,7 +323,7 @@ export default function Overview(): React.JSX.Element {
                 </h2>
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
-                Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · 380 Total Cells · 12 Non-Compliant (3 New NC, 3 Recurring, 6 Persistent, 8 Recovering)
+                Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · {banner.cells} Total Cells · {banner.ncCells} Non-Compliant ({banner.newNc} New NC, {banner.recurring} Recurring, {banner.persistent} Persistent) · {banner.recovering} Recovering
               </p>
             </div>
           </div>
@@ -444,16 +367,17 @@ export default function Overview(): React.JSX.Element {
               gap: '16px'
             }}
           >
-            {kpiCards.map((card, idx) => (
+            {kpiCards.map((card) => (
               <KpiCard
-                key={idx}
+                key={card.key}
                 name={card.name}
                 isDerived={card.isDerived}
                 value={card.value}
-                displayUnit={card.unit}
+                displayUnit={card.displayUnit}
                 targetStr={card.targetStr}
                 status={card.status}
                 trend={card.trend}
+                worseIsHigher={card.worseIsHigher}
                 ncCount={card.ncCount}
                 ncPct={card.ncPct}
               />
@@ -480,7 +404,7 @@ export default function Overview(): React.JSX.Element {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '14px' }}>🔍</span>
             <span style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>
-              Scope Movement &amp; Breaches By:
+              Scope Breaches By:
             </span>
           </div>
 
@@ -554,7 +478,7 @@ export default function Overview(): React.JSX.Element {
                   <span>🔄</span> {techCode} Non-Compliance (NC) Cell Movement ({grain.toUpperCase()})
                 </h3>
                 <p style={{ fontSize: '11.5px', color: 'var(--text-dim)', margin: '4px 0 0 0' }}>
-                  Scope: <strong style={{ color: '#38bdf8' }}>{coreKpis.find((k) => k.key === selectedKpiKey)?.label}</strong> · Cell transitions (New NC, Recurring, Persistent, Recovering)
+                  Scope: <strong style={{ color: '#38bdf8' }}>{TOTALITY.label}</strong> · Cell transitions (New NC, Recurring, Persistent, Recovering)
                 </p>
               </div>
               <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', background: 'var(--bg)', color: 'var(--text-dim)', border: '1px solid var(--border)' }}>

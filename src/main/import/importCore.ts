@@ -253,13 +253,6 @@ async function buildClean(conn: DuckDBConnection): Promise<void> {
       row_number() OVER (PARTITION BY d.date_id, trim(p.cell_raw) ORDER BY 1) AS rn
     FROM (
       SELECT *, coalesce(
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[/](\\\\d{1,2})[/](\\\\d{4})'), '%d/%m/%Y'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[-](\\\\d{1,2})[-](\\\\d{4})'), '%d-%m-%Y'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[.](\\\\d{1,2})[.](\\\\d{4})'), '%d.%m.%Y'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[/](\\\\d{1,2})[/](\\\\d{2})'), '%d/%m/%y'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{1,2})[-](\\\\d{1,2})[-](\\\\d{2})'), '%d-%m-%y'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{4})[-](\\\\d{1,2})[-](\\\\d{1,2})'), '%Y-%m-%d'),
-        try_strptime(regexp_extract(trim(date_raw), '^(\\\\d{4})[/](\\\\d{1,2})[/](\\\\d{1,2})'), '%Y/%m/%d'),
         ${dateCoalesceExpr}
       ) AS parsed_date
       FROM stg_import

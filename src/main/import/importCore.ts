@@ -679,12 +679,15 @@ async function runImportCoreInner(
     })
     await conn.run(
       `INSERT INTO import_audit
-         (files, source_rows, inserted_rows, duplicates_ignored, rejected_rows,
+         (import_id, files, source_rows, inserted_rows, duplicates_ignored, rejected_rows,
           mapping_profile, schema_version, validation_result, raw_checksum,
           db_size_before, db_size_after, ruleset_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          (SELECT max(version) FROM ruleset))`,
       [
+        // the id reserved by nextAuditId() and stamped on the facts and raw archive;
+        // leaving it to the column default drew a second, different sequence value
+        importId,
         JSON.stringify([basename(path)]),
         staged + csvRejects,
         inserted,

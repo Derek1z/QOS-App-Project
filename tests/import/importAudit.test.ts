@@ -59,4 +59,43 @@ describe('import audit', () => {
       instance.closeSync()
     }
   })
+
+  it('files the audit row under the same import id as the imported facts and raw archive', async () => {
+    dir = mkdtempSync(join(os.tmpdir(), 'qos-audit-test-'))
+    const csvPath = join(dir, 'one-day.csv')
+    writeFileSync(csvPath, [
+      HEADER.join(','),
+      '2026-07-20,Accra Metro,Greater Accra,ACC-001-A,ACC-001,50.0,10,100.0,99.9,20000'
+    ].join('\n'))
+    const wsPath = join(dir, 'ws.qosdb')
+    const instance = await DuckDBInstance.create(wsPath)
+    const conn = await instance.connect()
+    try {
+      for (const sql of SCHEMA_SQL) await conn.run(sql)
+      const res = await runImportCore(conn, {
+        workspacePath: wsPath,
+        workspaceName: 'ws',
+        csvPath,
+        header: HEADER,
+        mapping: { columns: autoMap(HEADER) },
+        fingerprint: makeFingerprint(HEADER),
+        confidence: 1,
+        dbBefore: 0,
+        cellsBefore: 0,
+        checksum: 'test',
+        backupDir: join(dir, 'backups')
+      })
+      const ids = async (sql: string): Promise<number[]> =>
+        (await conn.runAndReadAll(sql)).getRowObjects().map((x) => Number(Object.values(x)[0]))
+
+      expect({
+        audit: await ids(`SELECT import_id FROM import_audit`),
+        facts: await ids(`SELECT DISTINCT source_import_id FROM fact_cell_daily`),
+        archive: await ids(`SELECT import_id FROM raw_archive`)
+      }).toEqual({ audit: [res.importId], facts: [res.importId], archive: [res.importId] })
+    } finally {
+      conn.closeSync()
+      instance.closeSync()
+    }
+  })
 })

@@ -663,7 +663,13 @@ async function runImportCoreInner(
 
     onPhase?.('Archiving source')
     const archive = await archiveRawFile(conn, job, importId)
-    const dbAfter = statSync(path).size
+    // flush the WAL first so the workspace file size includes the merged data
+    try {
+      await conn.run('CHECKPOINT')
+    } catch {
+      /* the size then reflects the last checkpoint */
+    }
+    const dbAfter = statSync(job.workspacePath).size
     onPhase?.('Finalizing')
     const qualityScore = await writeQuality(conn, dateIds, {
       sourceRows: staged + csvRejects,

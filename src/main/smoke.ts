@@ -664,8 +664,10 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (fcSite.entity.name !== 'ACC-001') throw new Error('forecast site entity ' + fcSite.entity.name)
   if (fcSite.totalEntities !== 2) throw new Error('forecast site cells ' + fcSite.totalEntities)
   const fcThr = await getForecast({ metric: 'throughput' })
-  if (fcThr.series.find((s) => s.metric === 'throughput')!.threshold !== 10_000) {
-    throw new Error('forecast throughput threshold')
+  const thrSeries = fcThr.series.find((s) => s.metric === 'throughput')!
+  // the series is in Mbps, so the target must be too (it was 10_000, a kbps figure)
+  if (thrSeries.unit !== 'Mbps' || thrSeries.threshold !== 10) {
+    throw new Error('forecast throughput threshold: ' + thrSeries.threshold + ' ' + thrSeries.unit)
   }
   const fcDaily = await getForecast({ grain: 'daily' })
   if (fcDaily.series.length < 5) throw new Error('forecast daily series count')

@@ -2400,9 +2400,10 @@ function formatTimeLabel(dateStr: string, grain: Grain = 'weekly'): string {
   return weekLabel(dateStr)
 }
 
+// Forecast values are in the metric's display unit (throughput in Mbps: getForecast
+// divides kbps by 1000), so targets come from the metric definition in that unit.
 function forecastThreshold(metric: ForecastMetric, prbThreshold: number, defaultTarget: number | null): number | null {
   if (metric === 'prb') return prbThreshold
-  if (metric === 'throughput') return 10_000
   if (metric === 'availability') return 99.5
   return defaultTarget
 }

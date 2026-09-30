@@ -8,6 +8,7 @@ import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
+import { migrateLegacyTargets } from './migrateTargets'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
 import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
@@ -351,6 +352,7 @@ export async function openWorkspace(
         await seedKpiDefs(connection, '2G')
         await seedKpiDefs(connection, '3G')
         await seedKpiDefs(connection, '4G')
+        await migrateLegacyTargets(connection)
         await ensureDerivedKpiSchema(connection)
         // legacy workspaces may hold duplicate dimension names (pre-import
         // dedupe fix); merge them so lookups/joins stay unambiguous — this is

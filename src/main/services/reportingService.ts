@@ -1011,7 +1011,7 @@ async function buildSnapshot(): Promise<ReportSnapshot> {
     asOf: nc.weekStart ?? '—',
     rulesetVersion: rules?.version ?? null,
     thresholds: {
-      prb: rules?.prbThresholdPct ?? 80,
+      prb: rules?.prbThresholdPct ?? null,
       availability: 99.5,
       throughput: 10_000,
       districtNc: rules?.districtNcThresholdPct ?? 10

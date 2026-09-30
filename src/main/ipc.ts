@@ -36,8 +36,9 @@ import {
   getSchedule, setSchedule, runScheduled, scheduleHistory, maybeRunScheduled
 } from './services/maintenanceScheduler'
 import {
-  seedCurrent, listCurrent, saveCurrent, removeCurrent, discoverCurrent, resetCurrent
+  seedCurrent, listCurrent, removeCurrent, discoverCurrent
 } from './services/kpiService'
+import { saveKpiTargetsCurrent, resetKpiTargetsCurrent } from './services/targetService'
 import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
@@ -110,12 +111,13 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     ws.setWorkspaceTechnology(technology))
 
   ipcMain.handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
-  ipcMain.handle('kpis:save', (_e, patch: KpiDefPatch) => saveCurrent(patch))
+  ipcMain.handle('kpis:save', async (_e, patch: KpiDefPatch) => (await saveKpiTargetsCurrent([patch]))[0])
+  ipcMain.handle('kpis:saveTargets', (_e, patches: KpiDefPatch[]) => saveKpiTargetsCurrent(patches))
   ipcMain.handle('kpis:remove', (_e, kpiId: number) => removeCurrent(kpiId))
   ipcMain.handle('kpis:discover', (_e, headers: string[], technology?: Technology) =>
     discoverCurrent(headers, technology))
   ipcMain.handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
-  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetCurrent(technology))
+  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetKpiTargetsCurrent(technology))
 
   ipcMain.handle('derived:list', (_e, technology?: Technology) => {
     const w = ws.getCurrent()

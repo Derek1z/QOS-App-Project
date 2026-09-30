@@ -23,6 +23,7 @@ import { PRIORITY_MODES } from '../../../shared/api'
 import { computeNetworkHealth } from '../analytics/health'
 import { bandFor, PRIORITY_BAND_FLOORS } from '../analytics/priority'
 import { getRules, updateRules } from '../analytics/rules'
+import { getPrbTarget } from '../analytics/targets'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
 import { listKpiDefs, workspaceTechnology } from './kpiService'
@@ -820,8 +821,7 @@ export async function getPerformance(opts?: {
   technology?: Technology
 }): Promise<PerformanceResult> {
   const conn = ws().connection
-  const rules = await getRulesCurrent()
-  const prbThreshold = rules?.prbThresholdPct ?? 80
+  const prbThreshold = await getPrbTarget(conn)
   const grain: Grain = opts?.grain === 'daily' || opts?.grain === 'monthly' ? opts.grain : 'weekly'
   const tech: Technology = opts?.technology || '4G'
   const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
@@ -1719,7 +1719,7 @@ export async function getRegionMap(
 ): Promise<RegionMapRow[]> {
   const conn = ws().connection
   const tech: Technology = technology || await workspaceTechnology(conn)
-  const prbThreshold = (await getRules(conn))?.prbThresholdPct ?? 80
+  const prbThreshold = await getPrbTarget(conn)
 
   const r = await conn.runAndReadAll(`
     SELECT r.region_id AS id, r.name AS name,
@@ -1893,7 +1893,7 @@ export async function getRegionDistricts(
   const conn = ws().connection
   const numRegionId = Number(regionId)
   const tech: Technology = technology || await workspaceTechnology(conn)
-  const prbThreshold = (await getRules(conn))?.prbThresholdPct ?? 80
+  const prbThreshold = await getPrbTarget(conn)
 
   const r = await conn.runAndReadAll(
     `SELECT d.district_id AS id, d.name AS name, rg.name AS region,
@@ -2499,8 +2499,7 @@ export async function getForecast(opts: {
   }
   const metricDef = techMetrics.find((m) => m.metric === metric) ?? techMetrics[0]
 
-  const rules = await getRules(conn)
-  const prbThreshold = rules?.prbThresholdPct ?? 80
+  const prbThreshold = await getPrbTarget(conn)
   const threshold = forecastThreshold(metric, prbThreshold, metricDef.defaultTarget)
 
   const numId = entityId != null ? Number(entityId) : null

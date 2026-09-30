@@ -36,6 +36,7 @@ import {
   seedKpiDefs, seedCurrent, listKpiDefs, saveKpiDef, removeKpiDef, discoverKpiDefs,
   resetKpiDefsToDefaults
 } from './services/kpiService'
+import { saveKpiTargetsCurrent } from './services/targetService'
 import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
@@ -329,8 +330,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
   console.log('[SMOKE] 15. Testing ruleset update...')
   const rulesBefore = await getRulesCurrent()
   if (!rulesBefore || rulesBefore.version !== 1) throw new Error('ruleset v1 missing')
-  const rules2 = await updateRulesCurrent({ prbThresholdPct: 90, notes: 'smoke bump' })
-  if (rules2.version !== 2 || rules2.prbThresholdPct !== 90) throw new Error('ruleset v2 missing')
+  await saveKpiTargetsCurrent([{ technology: '4G', key: 'prb_utilization', target: 90 }])
+  const rules2 = await getRulesCurrent()
+  if (!rules2 || rules2.version !== 2 || rules2.prbThresholdPct !== 90) throw new Error('ruleset v2 missing')
   const cur4 = ws.getCurrent()!
   const still = await cur4.connection.runAndReadAll(`SELECT count(*) n FROM fact_cell_daily`)
   if (Number(still.getRowObjects()[0].n) !== 12) throw new Error('ruleset change altered raw facts')
@@ -345,7 +347,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (Number(rc.getRowObjects()[0].n) < 1) throw new Error('ruleset change not audited')
   let invalidRejected2 = false
   try {
-    await updateRulesCurrent({ prbThresholdPct: 150 })
+    await updateRulesCurrent({ persistentWeeks: 9 })
   } catch {
     invalidRejected2 = true
   }
@@ -792,7 +794,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (snaps2.length !== 0) throw new Error('snapshot list after remove ' + snaps2.length)
   const snap1 = await createSnapshot('Post-campaign', { reason: 'after' })
   // snapshot comparison: bump the ruleset, snapshot again, diff the two milestones
-  const rules3 = await updateRulesCurrent({ prbThresholdPct: 95 })
+  const rules3 = await updateRulesCurrent({ recoveryWeeks: 4 })
   if (rules3.version !== 3) throw new Error('ruleset v3 missing for snapshot compare')
   const snap2 = await createSnapshot('Post-campaign v3', { reason: 'ruleset v3' })
   const cmp = await compareSnapshots(snap1.snapshotId, snap2.snapshotId)

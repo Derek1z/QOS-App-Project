@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { join } from 'node:path'
 import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
-import { updateRules } from '../../src/main/analytics/rules'
+import { saveKpiTargets } from '../../src/main/services/targetService'
 
 async function dailyFlag(conn: RealWorkspace['conn']): Promise<Record<string, unknown>> {
   const r = await conn.runAndReadAll(`SELECT is_nc, breach_days FROM agg_cell_daily WHERE cell_id = 1`)
@@ -19,7 +19,7 @@ describe('daily NC view after lowering the PRB threshold (80 -> 70)', () => {
          dl_throughput_kbps, availability_pct, source_import_id)
        VALUES (20260720, 1, 75, 100, 10, 20000, 99.9, 1)`
     )
-    await updateRules(ws.conn, { prbThresholdPct: 70 })
+    await saveKpiTargets(ws.conn, [{ technology: '4G', key: 'prb_utilization', target: 70 }])
   })
 
   afterAll(async () => {

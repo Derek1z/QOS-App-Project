@@ -1746,7 +1746,7 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
   const horizon: ForecastHorizon = opts.horizon ?? '4w'
   const weeksAhead = horizon === '1w' ? 1 : horizon === '2w' ? 2 : horizon === '4w' ? 4 : 6
   const cells = demoNcLifecycle().cells
-  const prbThreshold = demoRules?.prbThresholdPct ?? 80
+  const prbThreshold = demoRules.prbThresholdPct
   const threshold = metric === 'prb' ? prbThreshold : metric === 'availability' ? 99.5 : metric === 'throughput' ? 10_000 : null
 
   const nameId = (names: string[]): Map<string, number> => {
@@ -2238,7 +2238,7 @@ async function demoReportPack(opts: ReportOpts = {}): Promise<ReportPack> {
     scope: 'network',
     asOf: nc.weekStart ?? '—',
     rulesetVersion: rules?.version ?? null,
-    thresholds: { prb: rules?.prbThresholdPct ?? 80, availability: 99.5, throughput: 10_000, districtNc: rules?.districtNcThresholdPct ?? 10 },
+    thresholds: { prb: rules?.prbThresholdPct ?? null, availability: 99.5, throughput: 10_000, districtNc: rules?.districtNcThresholdPct ?? 10 },
     kpis: {
       avgPrb: s?.avgPrb ?? null,
       avgThroughputKbps: s?.avgThroughputKbps ?? null,
@@ -3168,12 +3168,6 @@ let demoRules: Rules = {
   version: 12,
   createdAt: '2026-07-01T08:00:00.000Z',
   prbThresholdPct: 80,
-  tchCongestionThresholdPct: 2.0,
-  sdcchCongestionThresholdPct: 2.0,
-  cssrThresholdPct: 98.5,
-  callDropThresholdPct: 1.5,
-  dataAccessThresholdPct: 98.0,
-  dataServiceFailureThresholdPct: 1.0,
   ...DEFAULT_NC_PERIODS,
   districtNcThresholdPct: DEFAULT_DISTRICT_NC_PCT,
   priorityWeights: DEFAULT_PRIORITY_WEIGHTS,
@@ -3181,6 +3175,54 @@ let demoRules: Rules = {
 }
 
 // --- the stub ---------------------------------------------------------------
+
+/** Insert-or-update one KPI definition in the demo store; shared by
+ *  kpis.save and kpis.saveTargets so both go through the same mock logic. */
+async function saveDemoKpiDef(patch: KpiDefPatch): Promise<KpiDefinition> {
+  const tech = patch.technology ?? demoTech
+  const existing = patch.kpiId != null
+    ? demoKpiDefs.find((d) => d.kpiId === patch.kpiId)
+    : demoKpiDefs.find((d) => d.technology === tech && d.key === patch.key)
+  const now = new Date().toISOString()
+  if (existing) {
+    const merged: KpiDefinition = {
+      ...existing,
+      ...patch,
+      technology: tech,
+      updatedAt: now
+    }
+    demoKpiDefs = demoKpiDefs.map((d) => (d.kpiId === existing.kpiId ? merged : d))
+    return merged
+  }
+  const def: KpiDefinition = {
+    kpiId: ++demoKpiSeq,
+    technology: tech,
+    key: patch.key ?? '',
+    label: patch.label ?? '',
+    unit: patch.unit ?? '',
+    category: patch.category ?? 'Congestion',
+    betterDirection: patch.betterDirection ?? (patch.worseIsHigher ? 'lower_is_better' : 'higher_is_better'),
+    worseIsHigher: patch.worseIsHigher ?? true,
+    target: patch.target ?? null,
+    warningThreshold: patch.warningThreshold ?? null,
+    criticalThreshold: patch.criticalThreshold ?? null,
+    agg: patch.agg ?? 'avg',
+    isCore: patch.isCore ?? false,
+    supportsCongestionAnalysis: patch.supportsCongestionAnalysis ?? false,
+    supportsPersistentNc: patch.supportsPersistentNc ?? true,
+    showInExecutiveView: patch.showInExecutiveView ?? true,
+    decimalPrecision: patch.decimalPrecision ?? 1,
+    sourceHeaders: patch.sourceHeaders ?? [],
+    aliases: patch.aliases ?? patch.sourceHeaders ?? [],
+    isCustom: true,
+    active: patch.active ?? true,
+    sortOrder: demoKpisFor(tech).length,
+    createdAt: now,
+    updatedAt: now
+  }
+  demoKpiDefs.push(def)
+  return def
+}
 
 export const previewApi: Api & { demo: true } = {
   demo: true,
@@ -3643,51 +3685,8 @@ export const previewApi: Api & { demo: true } = {
   kpis: {
     list: async (technology?: Technology): Promise<KpiDefinition[]> =>
       technology ? demoKpisFor(technology) : [...demoKpiDefs],
-    save: async (patch: KpiDefPatch): Promise<KpiDefinition> => {
-      const tech = patch.technology ?? demoTech
-      const existing = patch.kpiId != null
-        ? demoKpiDefs.find((d) => d.kpiId === patch.kpiId)
-        : demoKpiDefs.find((d) => d.technology === tech && d.key === patch.key)
-      const now = new Date().toISOString()
-      if (existing) {
-        const merged: KpiDefinition = {
-          ...existing,
-          ...patch,
-          technology: tech,
-          updatedAt: now
-        }
-        demoKpiDefs = demoKpiDefs.map((d) => (d.kpiId === existing.kpiId ? merged : d))
-        return merged
-      }
-      const def: KpiDefinition = {
-        kpiId: ++demoKpiSeq,
-        technology: tech,
-        key: patch.key ?? '',
-        label: patch.label ?? '',
-        unit: patch.unit ?? '',
-        category: patch.category ?? 'Congestion',
-        betterDirection: patch.betterDirection ?? (patch.worseIsHigher ? 'lower_is_better' : 'higher_is_better'),
-        worseIsHigher: patch.worseIsHigher ?? true,
-        target: patch.target ?? null,
-        warningThreshold: patch.warningThreshold ?? null,
-        criticalThreshold: patch.criticalThreshold ?? null,
-        agg: patch.agg ?? 'avg',
-        isCore: patch.isCore ?? false,
-        supportsCongestionAnalysis: patch.supportsCongestionAnalysis ?? false,
-        supportsPersistentNc: patch.supportsPersistentNc ?? true,
-        showInExecutiveView: patch.showInExecutiveView ?? true,
-        decimalPrecision: patch.decimalPrecision ?? 1,
-        sourceHeaders: patch.sourceHeaders ?? [],
-        aliases: patch.aliases ?? patch.sourceHeaders ?? [],
-        isCustom: true,
-        active: patch.active ?? true,
-        sortOrder: demoKpisFor(tech).length,
-        createdAt: now,
-        updatedAt: now
-      }
-      demoKpiDefs.push(def)
-      return def
-    },
+    save: saveDemoKpiDef,
+    saveTargets: async (patches: KpiDefPatch[]): Promise<KpiDefinition[]> => Promise.all(patches.map(saveDemoKpiDef)),
     remove: async (kpiId: number): Promise<void> => {
       const target = demoKpiDefs.find((d) => d.kpiId === kpiId)
       demoKpiDefs = demoKpiDefs.filter((d) => d.kpiId !== kpiId)

@@ -86,6 +86,7 @@ const api: Api = {
   kpis: {
     list: call('kpis:list'),
     save: call('kpis:save'),
+    saveTargets: call('kpis:saveTargets'),
     remove: call('kpis:remove'),
     discover: call('kpis:discover'),
     seed: call('kpis:seed'),

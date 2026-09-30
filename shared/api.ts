@@ -1441,20 +1441,19 @@ export interface PriorityCenterOpts {
 export interface Rules extends NcPeriodSettings {
   version: number
   createdAt: string
+  /** 4G Peak Hour Traffic Utilization target, read from kpi_defs. Change it
+   *  with kpis.saveTargets; the ruleset never stores it. */
   prbThresholdPct: number
-  tchCongestionThresholdPct: number
-  sdcchCongestionThresholdPct: number
-  cssrThresholdPct: number
-  callDropThresholdPct: number
-  dataAccessThresholdPct: number
-  dataServiceFailureThresholdPct: number
   districtNcThresholdPct: number
   priorityWeights: number[]
-  kpiThresholds?: Record<string, number>
   notes: string | null
 }
 
-export type RulesPatch = Partial<Omit<Rules, 'version' | 'createdAt'>>
+export type RulesPatch = Partial<NcPeriodSettings> & {
+  districtNcThresholdPct?: number
+  priorityWeights?: number[]
+  notes?: string
+}
 
 // --- Executive Overview & Cross-Tech Contracts ---
 
@@ -1694,6 +1693,9 @@ export interface Api {
     list(technology?: Technology): Promise<KpiDefinition[]>
     /** insert or update a definition (matched on technology+key) */
     save(def: KpiDefinition | KpiDefPatch): Promise<KpiDefinition>
+    /** save several definitions at once; a change to a target, direction,
+     *  core flag or active flag creates one ruleset version and recomputes NC */
+    saveTargets(patches: KpiDefPatch[]): Promise<KpiDefinition[]>
     remove(kpiId: number): Promise<void>
     /** match source headers to KPI aliases for import auto-mapping */
     discover(headers: string[], technology?: Technology): Promise<KpiDiscovery>

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { dirs, exportsDir } from '../paths'
 import { getCurrent } from '../workspace/manager'
 import { getRules } from '../analytics/rules'
+import { getPrbTarget, getCoreTargets } from '../analytics/targets'
 import type {
   InvestigationScope, InvestigationResult, InvestigationStatus, EvidenceKpi,
   DiagnosisFinding, Hypothesis, DiagnosticHypothesis, InvestigationEvent, BeforeAfterMetric,
@@ -204,7 +205,6 @@ export async function getInvestigation(
 ): Promise<InvestigationResult | null> {
   const conn = ws().connection
   const rules = await getRules(conn)
-  const threshold = rules?.prbThresholdPct ?? 80
   const numEntityId = Number(entityId)
   const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
   const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
@@ -213,6 +213,8 @@ export async function getInvestigation(
   const techR = await conn.runAndReadAll(`SELECT value FROM workspace_meta WHERE key = 'technology'`)
   const wsTech = (String(techR.getRowObjects()[0]?.value ?? '4G') as Technology)
   const technology: Technology = opts.technology ?? wsTech ?? '4G'
+  const threshold = await getPrbTarget(conn)
+  const targets = await getCoreTargets(conn, technology)
 
   // 1. identity + hierarchy path
   const dimSql: Record<InvestigationScope, string> = {
@@ -399,21 +401,21 @@ export async function getInvestigation(
     const dropK = kpi('call_drop_2g')
     const voiceK = kpi('voice_traffic')
 
-    if (tchK?.current != null && tchK.current >= (rules?.tchCongestionThresholdPct ?? 2.0)) {
+    if (tchK?.current != null && tchK.current >= targets.tchCongestion) {
       f('tch_high', 'evidence', 'consistent with',
-        `2G TCH Congestion of ${fmt(tchK.current, '%')} exceeds the ${rules?.tchCongestionThresholdPct ?? 2.0}% regulatory threshold.`)
+        `2G TCH Congestion of ${fmt(tchK.current, '%')} exceeds the ${targets.tchCongestion}% target.`)
     }
-    if (sdcchK?.current != null && sdcchK.current >= (rules?.sdcchCongestionThresholdPct ?? 2.0)) {
+    if (sdcchK?.current != null && sdcchK.current >= targets.sdcchCongestion) {
       f('sdcch_high', 'evidence', 'consistent with',
         `2G SDCCH Congestion of ${fmt(sdcchK.current, '%')} indicates signalling capacity bottleneck during call setup.`)
     }
-    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+    if (cssrK?.current != null && cssrK.current < targets.cssr) {
       f('cssr_low', 'evidence', 'consistent with',
-        `2G Call Setup Success Rate (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% target.`)
+        `2G Call Setup Success Rate (${fmt(cssrK.current, '%')}) is below the ${targets.cssr}% target.`)
     }
-    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+    if (dropK?.current != null && dropK.current > targets.callDrop) {
       f('drop_high', 'evidence', 'consistent with',
-        `2G TCH Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% threshold.`)
+        `2G TCH Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${targets.callDrop}% target.`)
     }
     if (voiceK?.deltaPct != null && voiceK.deltaPct >= 15) {
       f('voice_growth', 'evidence', 'suggests',
@@ -426,21 +428,21 @@ export async function getInvestigation(
     const dasrK = kpi('data_access_3g')
     const spdK = kpi('throughput_3g')
 
-    if (utilK?.current != null && utilK.current >= (rules?.prbThresholdPct ?? 80)) {
+    if (utilK?.current != null && utilK.current >= targets.prb) {
       f('util_high', 'evidence', 'consistent with',
-        `3G Peak Traffic Utilization (${fmt(utilK.current, '%')}) exceeds the ${rules?.prbThresholdPct ?? 80}% capacity threshold.`)
+        `3G Peak Traffic Utilization (${fmt(utilK.current, '%')}) exceeds the ${targets.prb}% capacity target.`)
     }
-    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+    if (cssrK?.current != null && cssrK.current < targets.cssr) {
       f('cssr_low', 'evidence', 'consistent with',
-        `3G CSSR (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% quality threshold.`)
+        `3G CSSR (${fmt(cssrK.current, '%')}) is below the ${targets.cssr}% target.`)
     }
-    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+    if (dropK?.current != null && dropK.current > targets.callDrop) {
       f('drop_high', 'evidence', 'consistent with',
-        `3G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% quality target.`)
+        `3G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${targets.callDrop}% target.`)
     }
-    if (dasrK?.current != null && dasrK.current < (rules?.dataAccessThresholdPct ?? 98.0)) {
+    if (dasrK?.current != null && dasrK.current < targets.dataAccess) {
       f('dasr_low', 'evidence', 'consistent with',
-        `3G Data Access Success Rate (${fmt(dasrK.current, '%')}) is below the ${rules?.dataAccessThresholdPct ?? 98.0}% target.`)
+        `3G Data Access Success Rate (${fmt(dasrK.current, '%')}) is below the ${targets.dataAccess}% target.`)
     }
     if (spdK?.deltaPct != null && spdK.deltaPct <= -10) {
       f('spd_drop', 'suggestion', 'suggests',
@@ -458,7 +460,7 @@ export async function getInvestigation(
 
     if (prbK?.current != null && prbK.current >= threshold) {
       f('prb_high', 'evidence', 'consistent with',
-        `4G DL PRB utilization of ${fmt(prbK.current, '%')} is at or above the ${threshold}% ruleset threshold.`)
+        `4G DL PRB utilization of ${fmt(prbK.current, '%')} is at or above the ${threshold}% target.`)
     }
     if (prbK?.delta != null && prbK.delta >= 3) {
       f('prb_rising', 'suggestion', 'suggests',
@@ -468,17 +470,17 @@ export async function getInvestigation(
       f('thr_drop', 'suggestion', 'suggests',
         `4G DL throughput fell ${Math.abs(round1(thrK.deltaPct))}% period-over-period — user experience impact plausible.`)
     }
-    if (cssrK?.current != null && cssrK.current < (rules?.cssrThresholdPct ?? 98.5)) {
+    if (cssrK?.current != null && cssrK.current < targets.cssr) {
       f('cssr_low', 'evidence', 'consistent with',
-        `4G CSSR (${fmt(cssrK.current, '%')}) is below the ${rules?.cssrThresholdPct ?? 98.5}% target.`)
+        `4G CSSR (${fmt(cssrK.current, '%')}) is below the ${targets.cssr}% target.`)
     }
-    if (dropK?.current != null && dropK.current > (rules?.callDropThresholdPct ?? 1.5)) {
+    if (dropK?.current != null && dropK.current > targets.callDrop) {
       f('drop_high', 'evidence', 'consistent with',
-        `4G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${rules?.callDropThresholdPct ?? 1.5}% target.`)
+        `4G Call Drop Rate (${fmt(dropK.current, '%')}) exceeds the ${targets.callDrop}% target.`)
     }
-    if (dsafK?.current != null && dsafK.current > (rules?.dataServiceFailureThresholdPct ?? 1.0)) {
+    if (dsafK?.current != null && dsafK.current > targets.dataFailure) {
       f('dsaf_high', 'evidence', 'consistent with',
-        `4G Data Access Failure (${fmt(dsafK.current, '%')}) exceeds the ${rules?.dataServiceFailureThresholdPct ?? 1.0}% threshold.`)
+        `4G Data Access Failure (${fmt(dsafK.current, '%')}) exceeds the ${targets.dataFailure}% target.`)
     }
     if (usrK?.deltaPct != null && usrK.deltaPct >= 10) {
       f('users_growth', 'evidence', 'consistent with',
@@ -561,13 +563,13 @@ export async function getInvestigation(
     evidence,
     kpiMap,
     thresholds: {
-      prb: rules?.prbThresholdPct ?? 80,
-      tchCongestion: rules?.tchCongestionThresholdPct ?? 1.0,
-      sdcchCongestion: rules?.sdcchCongestionThresholdPct ?? 1.0,
-      cssr: rules?.cssrThresholdPct ?? 95.0,
-      callDrop: rules?.callDropThresholdPct ?? 1.0,
-      dataAccess: rules?.dataAccessThresholdPct ?? 95.0,
-      dataFailure: rules?.dataServiceFailureThresholdPct ?? 1.0,
+      prb: targets.prb,
+      tchCongestion: targets.tchCongestion,
+      sdcchCongestion: targets.sdcchCongestion,
+      cssr: targets.cssr,
+      callDrop: targets.callDrop,
+      dataAccess: targets.dataAccess,
+      dataFailure: targets.dataFailure,
       persistentWeeks: rules?.persistentWeeks ?? DEFAULT_NC_PERIODS.persistentWeeks,
       chronicWeeks: rules?.chronicWeeks ?? DEFAULT_NC_PERIODS.chronicWeeks
     }

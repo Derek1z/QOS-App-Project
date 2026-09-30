@@ -1,5 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { getRules } from './rules'
+import { getPrbTarget } from './targets'
 import { coreBreachDaysSql } from './ncRule'
 import { SEVERITY_BASE, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { periodsFor } from '../../../shared/ruleDefaults'
@@ -16,7 +17,7 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
     weekly: periodsFor('weekly', rules),
     monthly: periodsFor('monthly', rules)
   }
-  const prbThresh = rules.prbThresholdPct
+  const prbThresh = await getPrbTarget(conn)
 
   // a day is NC when it is a core-KPI breach day (analytics/ncRule)
   const dailyIsNcExpr = `(ex.cell_id IS NOT NULL)`

@@ -3,11 +3,11 @@
  *  its core (regulatory NCA) KPIs misses its target. Diagnostic counters and
  *  other non-core KPIs never count. The wide PRB column is 4G's peak-hour
  *  traffic utilization, so it counts only in a 4G workspace (2G/3G files map
- *  other utilizations into that slot), against the latest ruleset threshold.
+ *  other utilizations into that slot), against the 4G Peak Hour Traffic
+ *  Utilization target in kpi_defs.
  *  Weekly/monthly NC = breach days >= the ruleset's weekly/monthly breach days. */
 
-export const LATEST_PRB_THRESHOLD_SQL =
-  `(SELECT coalesce(arg_max(prb_threshold_pct, version), 80) FROM ruleset)`
+import { PRB_TARGET_SQL } from './targets'
 
 export const WORKSPACE_TECH_SQL =
   `(SELECT coalesce(max(value), '4G') FROM workspace_meta WHERE key = 'technology')`
@@ -27,7 +27,7 @@ export function coreBreachDaysSql(dateIdFilter = ''): string {
       SELECT f.cell_id, f.date_id
       FROM fact_cell_daily f
       WHERE ${WORKSPACE_TECH_SQL} = '4G'
-        AND f.prb_utilization >= ${LATEST_PRB_THRESHOLD_SQL}
+        AND f.prb_utilization >= ${PRB_TARGET_SQL}
         ${onDates('f.date_id')}
     )`
 }

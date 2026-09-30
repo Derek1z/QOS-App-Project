@@ -123,17 +123,9 @@ export const SCHEMA_SQL: string[] = [
   `CREATE TABLE IF NOT EXISTS ruleset (
      version INTEGER PRIMARY KEY,
      created_at TIMESTAMP DEFAULT now(),
-     prb_threshold_pct DOUBLE NOT NULL DEFAULT 80,
-     tch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
-     sdcch_congestion_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
-     cssr_threshold_pct DOUBLE NOT NULL DEFAULT 95.0,
-     call_drop_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
-     data_access_threshold_pct DOUBLE NOT NULL DEFAULT 95.0,
-     data_service_failure_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
      ${NC_PERIOD_KEYS.map((k) => `${NC_PERIOD_FIELDS[k].column} INTEGER NOT NULL DEFAULT ${NC_PERIOD_FIELDS[k].default},`).join('\n     ')}
      district_nc_threshold_pct DOUBLE NOT NULL DEFAULT ${DEFAULT_DISTRICT_NC_PCT},
      priority_weights JSON,
-     kpi_thresholds JSON,
      notes VARCHAR
    )`,
   `INSERT INTO ruleset (version, notes)

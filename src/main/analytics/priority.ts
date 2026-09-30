@@ -3,6 +3,7 @@ import type { PriorityMode, PriorityBand, Trend } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { PRIORITY_PERSISTENCE, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { getRules } from './rules'
+import { getPrbTarget } from './targets'
 import { cellKpiBreachByCell } from './kpiBreach'
 
 /** How much the imported-KPI target-breach component weighs in the score.
@@ -46,7 +47,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
   if (!rules) return
 
   const w = rules.priorityWeights ?? [25, 20, 15, 15, 15, 10]
-  const prbThresh = rules.prbThresholdPct ?? 80
+  const prbThresh = await getPrbTarget(conn)
 
   const BATCH_SIZE = 2500
   for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {

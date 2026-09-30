@@ -1857,6 +1857,10 @@ async function findByKeyOrId(
 
 export async function removeKpiDef(conn: DuckDBConnection, kpiId: number): Promise<void> {
   const numKpiId = Number(kpiId)
+  const core = (await conn.runAndReadAll(`SELECT is_core, label FROM kpi_defs WHERE kpi_id = ${numKpiId}`)).getRowObjects()[0]
+  if (core && Boolean(core.is_core)) {
+    throw new Error(`${String(core.label)} is a core NCA KPI and cannot be removed`)
+  }
   await conn.run(`DELETE FROM kpi_defs WHERE kpi_id = ${numKpiId}`)
   // orphaned values are harmless (left for history/audit), but drop weekly
   // rollups for the definition so analysis stops showing them

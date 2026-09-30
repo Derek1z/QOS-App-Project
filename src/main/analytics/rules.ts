@@ -2,6 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import type { Rules, RulesPatch } from '../../../shared/api'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from './engine'
+import { getPrbTarget } from './targets'
 import {
   NC_PERIOD_FIELDS, NC_PERIOD_KEYS, DEFAULT_PRIORITY_WEIGHTS, ncPeriodProblem, type NcPeriodSettings
 } from '../../../shared/ruleDefaults'
@@ -26,16 +27,6 @@ export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
       /* fall back to defaults */
     }
   }
-  let kpiThresholds: Record<string, number> = {}
-  if (row.kpi_thresholds) {
-    try {
-      const parsed = JSON.parse(String(row.kpi_thresholds))
-      if (parsed && typeof parsed === 'object') kpiThresholds = parsed as Record<string, number>
-    } catch {
-      /* ignore */
-    }
-  }
-
   const nc = Object.fromEntries(
     NC_PERIOD_KEYS.map((k) => [k, Number(row[NC_PERIOD_FIELDS[k].column] ?? NC_PERIOD_FIELDS[k].default)])
   ) as unknown as NcPeriodSettings
@@ -44,16 +35,9 @@ export async function getRules(conn: DuckDBConnection): Promise<Rules | null> {
     ...nc,
     version: Number(row.version),
     createdAt: String(row.created_at ?? ''),
-    prbThresholdPct: Number(row.prb_threshold_pct),
-    tchCongestionThresholdPct: Number(row.tch_congestion_threshold_pct ?? 1.0),
-    sdcchCongestionThresholdPct: Number(row.sdcch_congestion_threshold_pct ?? 1.0),
-    cssrThresholdPct: Number(row.cssr_threshold_pct ?? 95.0),
-    callDropThresholdPct: Number(row.call_drop_threshold_pct ?? 1.0),
-    dataAccessThresholdPct: Number(row.data_access_threshold_pct ?? 95.0),
-    dataServiceFailureThresholdPct: Number(row.data_service_failure_threshold_pct ?? 1.0),
+    prbThresholdPct: await getPrbTarget(conn),
     districtNcThresholdPct: Number(row.district_nc_threshold_pct),
     priorityWeights: weights,
-    kpiThresholds,
     notes: row.notes ? String(row.notes) : null
   }
 }
@@ -108,13 +92,6 @@ export function validateRules(patch: RulesPatch, current: Rules): void {
     const p = Number(v)
     if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error(`${name} must be between 0 and 100`)
   }
-  pct(patch.prbThresholdPct, 'PRB threshold')
-  pct(patch.tchCongestionThresholdPct, 'TCH Congestion threshold')
-  pct(patch.sdcchCongestionThresholdPct, 'SDCCH Congestion threshold')
-  pct(patch.cssrThresholdPct, 'CSSR target')
-  pct(patch.callDropThresholdPct, 'Call Drop threshold')
-  pct(patch.dataAccessThresholdPct, 'Data Access target')
-  pct(patch.dataServiceFailureThresholdPct, 'Data Service Failure threshold')
   pct(patch.districtNcThresholdPct, 'District NC threshold')
   const merged = Object.fromEntries(NC_PERIOD_KEYS.map((k) => [k, patch[k] ?? current[k]])) as unknown as NcPeriodSettings
   const problem = ncPeriodProblem(merged)
@@ -144,13 +121,6 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
     if (v !== current[k]) changes.push(`${fld.label} ${current[k]}→${v} ${fld.unit}`)
   }
   const scalar: Array<[keyof RulesPatch, string, string]> = [
-    ['prbThresholdPct', 'prb_threshold_pct', 'PRB'],
-    ['tchCongestionThresholdPct', 'tch_congestion_threshold_pct', 'TCH'],
-    ['sdcchCongestionThresholdPct', 'sdcch_congestion_threshold_pct', 'SDCCH'],
-    ['cssrThresholdPct', 'cssr_threshold_pct', 'CSSR'],
-    ['callDropThresholdPct', 'call_drop_threshold_pct', 'CDR'],
-    ['dataAccessThresholdPct', 'data_access_threshold_pct', 'data access'],
-    ['dataServiceFailureThresholdPct', 'data_service_failure_threshold_pct', 'data failure'],
     ['districtNcThresholdPct', 'district_nc_threshold_pct', 'district NC %']
   ]
   for (const [key, col, label] of scalar) {
@@ -169,11 +139,5 @@ export async function updateRules(conn: DuckDBConnection, patch: RulesPatch): Pr
   }
   if (patch.notes != null) columns.notes = patch.notes
 
-  const prb = patch.prbThresholdPct
-  return newRulesetVersion(conn, columns, changes.join(', ') || 'no setting changed', async () => {
-    // Removed in Task 5, when kpi_defs becomes the only owner of targets.
-    if (prb != null) {
-      await conn.run(`UPDATE kpi_defs SET target = ? WHERE kpi_key = 'prb_utilization' AND is_core`, [prb])
-    }
-  })
+  return newRulesetVersion(conn, columns, changes.join(', ') || 'no setting changed')
 }

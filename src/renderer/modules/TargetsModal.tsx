@@ -79,23 +79,25 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
     setError(null)
     setSuccess(null)
     try {
-      for (const d of defs) {
+      const patches = defs.flatMap((d) => {
         const edited = editedTargets[d.kpiId]
-        if (!edited) continue
-        const numTarget = edited.target.trim() === '' ? null : Number(edited.target)
-        const numWarn = edited.warningThreshold.trim() === '' ? null : Number(edited.warningThreshold)
-        const numCrit = edited.criticalThreshold.trim() === '' ? null : Number(edited.criticalThreshold)
-
-        await window.api.kpis.save({
-          ...d,
-          target: numTarget,
-          warningThreshold: numWarn,
-          criticalThreshold: numCrit,
+        if (!edited) return []
+        const num = (s: string): number | null => (s.trim() === '' ? null : Number(s))
+        const next = {
+          target: num(edited.target),
+          warningThreshold: num(edited.warningThreshold),
+          criticalThreshold: num(edited.criticalThreshold),
           betterDirection: edited.betterDirection
-        })
-      }
-      setSuccess(`Successfully updated targets for ${activeTech}!`)
+        }
+        const same = next.target === d.target && next.warningThreshold === d.warningThreshold &&
+          next.criticalThreshold === d.criticalThreshold && next.betterDirection === d.betterDirection
+        return same ? [] : [{ kpiId: d.kpiId, technology: d.technology, ...next }]
+      })
+      if (patches.length > 0) await window.api.kpis.saveTargets(patches)
+      setSuccess(patches.length > 0 ? `Saved ${patches.length} target${patches.length === 1 ? '' : 's'} for ${activeTech}` : 'Nothing changed')
+      emit('RULESET_CHANGED')
       emit('WORKSPACE_CHANGED')
+      await load(activeTech)
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
       setError(errMsg(e))

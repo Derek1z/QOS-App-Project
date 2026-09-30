@@ -10,8 +10,16 @@ import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
 import { migrateLegacyTargets } from './migrateTargets'
 import { recomputeNcLifecycle } from '../analytics/nc'
+import { recomputeAllAggregates } from '../import/aggregates'
+import { refreshAllIntelligence } from '../analytics/engine'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
 import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
+
+/** Bumped when a change to NC-period labelling means old workspaces must be
+ *  relabelled once before their history reads correctly (fix wave 2026-09-30:
+ *  seven-label lifecycle). Written at creation for new workspaces so they
+ *  never trigger the backfill; checked on every writable open. */
+const NC_PERIODS_MARKER = '2026-09-30'
 
 export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
   const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
@@ -286,7 +294,8 @@ export async function createWorkspace(dir: string, name: string, technology?: st
       const esc = safe.replace(/'/g, "''")
       await connection.run(
         `INSERT INTO workspace_meta (key, value) VALUES ` +
-        `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}')`
+        `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}'), ` +
+        `('nc_periods', '${NC_PERIODS_MARKER}')`
       )
       await seedKpiDefs(connection, '2G')
       await seedKpiDefs(connection, '3G')
@@ -353,6 +362,24 @@ export async function openWorkspace(
         await seedKpiDefs(connection, '3G')
         await seedKpiDefs(connection, '4G')
         await migrateLegacyTargets(connection)
+
+        // Relabel once for workspaces built before this branch's lifecycle
+        // rules (fix wave 2026-09-30): imports only recompute touched cells,
+        // so a workspace opened but never re-imported would otherwise show
+        // old-semantics labels forever. Read-only opens never recompute.
+        const markerR = await connection.runAndReadAll(
+          `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
+        )
+        const markerVal = markerR.getRowObjects()[0]?.value
+        if (markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
+          await recomputeAllAggregates(connection)
+          await refreshAllIntelligence(connection)
+          await connection.run(
+            `INSERT INTO workspace_meta (key, value) VALUES ('nc_periods', '${NC_PERIODS_MARKER}')
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value`
+          )
+        }
+
         await ensureDerivedKpiSchema(connection)
         // legacy workspaces may hold duplicate dimension names (pre-import
         // dedupe fix); merge them so lookups/joins stay unambiguous — this is

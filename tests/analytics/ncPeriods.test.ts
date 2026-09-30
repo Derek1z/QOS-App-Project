@@ -125,6 +125,47 @@ describe('NC periods (spec §3, §4)', () => {
     expect([b['2026-03-08'], b['2026-03-09']]).toEqual(['Recovering', 'Healthy'])
   })
 
+  it('look-back boundary: 21 days after is Recurring, 22 days after is New', { timeout: 60000 }, async () => {
+    // Default lookback is lookbackWeeks(3) x 7 = 21 days (rankSql:
+    // `run_start - prev_run_end <= lookback`). Previous run's last bad day is
+    // 2026-07-03 for both cells; date_diff('day', 07-03, 07-24) = 21 (<=21,
+    // Recurring), date_diff('day', 07-03, 07-25) = 22 (>21, New).
+    ws = await openRealWorkspace('3G')
+    await insertCells(ws.conn, ['BACK-21D', 'BACK-22D'])
+    await days(ws, 1, '2026-07-01', '2026-08-10', `d <= DATE '2026-07-03' OR d = DATE '2026-07-24'`)
+    await days(ws, 2, '2026-07-01', '2026-08-10', `d <= DATE '2026-07-03' OR d = DATE '2026-07-25'`)
+    await build(ws)
+    expect((await labels(ws, 'BACK-21D', 'daily'))['2026-07-24']).toBe('Recurring NC')
+    expect((await labels(ws, 'BACK-22D', 'daily'))['2026-07-25']).toBe('New NC')
+  })
+
+  it('intermittent window boundary: 3rd run inside the 49-day window is Intermittent, just outside is Recurring',
+    { timeout: 60000 }, async () => {
+      // Default intermittent window is intermittentWindowWeeks(7) x 7 = 49
+      // days; runs_in_window counts distinct runs over
+      // `RANGE BETWEEN (window - 1) PRECEDING AND CURRENT ROW`, i.e. pidx in
+      // [Y-48, Y] for the 3rd run's first day Y — a 49-day-wide frame ending
+      // at Y. Run 1's last bad day A is inside that frame when Y - A <= 48,
+      // just outside it when Y - A = 49. Run 2 sits 10 days before run 3 in
+      // both cases (within the 21-day lookback), so the "outside" case still
+      // has a recent run and falls to Recurring, not New.
+      ws = await openRealWorkspace('3G')
+      await insertCells(ws.conn, ['WIN-INSIDE', 'WIN-OUTSIDE'])
+      // Each cell has one continuous present range with clean (non-NC) days
+      // separating three runs: a single bad day, a single bad day 10 days
+      // before the 3rd run (inside the 21-day lookback, so a "not
+      // Intermittent" result falls to Recurring, not New), then a long 3rd run.
+      // WIN-INSIDE: run1 last day 2026-01-01, run3 first day 2026-02-18 (Y-A=48)
+      await days(ws, 1, '2026-01-01', '2026-03-10',
+        `d = DATE '2026-01-01' OR d = DATE '2026-02-08' OR d >= DATE '2026-02-18'`)
+      // WIN-OUTSIDE: run1 last day 2026-01-01, run3 first day 2026-02-19 (Y-A=49)
+      await days(ws, 2, '2026-01-01', '2026-03-11',
+        `d = DATE '2026-01-01' OR d = DATE '2026-02-09' OR d >= DATE '2026-02-19'`)
+      await build(ws)
+      expect((await labels(ws, 'WIN-INSIDE', 'daily'))['2026-02-18']).toBe('Intermittent NC')
+      expect((await labels(ws, 'WIN-OUTSIDE', 'daily'))['2026-02-19']).toBe('Recurring NC')
+    })
+
   it('severity ignores PRB outside 4G', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('3G')
     await insertCells(ws.conn, ['HOT-3G'])

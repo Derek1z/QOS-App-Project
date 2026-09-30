@@ -325,7 +325,7 @@ export default function Overview(): React.JSX.Element {
                 </h2>
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
-                Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · {banner.cells} Total Cells · {banner.ncCells} Non-Compliant ({banner.newNc} New NC, {banner.recurring} Recurring, {banner.persistent} Persistent) · {banner.recovering} Recovering
+                Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · {banner.cells} Total Cells · {banner.ncCells} Non-Compliant ({banner.newNc} New NC, {banner.recurring} Recurring, {banner.intermittent} Intermittent, {banner.persistent} Persistent, {banner.chronic} Chronic) · {banner.recovering} Recovering
               </p>
             </div>
           </div>
@@ -480,7 +480,7 @@ export default function Overview(): React.JSX.Element {
                   <span>🔄</span> {techCode} Non-Compliance (NC) Cell Movement ({grain.toUpperCase()})
                 </h3>
                 <p style={{ fontSize: '11.5px', color: 'var(--text-dim)', margin: '4px 0 0 0' }}>
-                  Scope: <strong style={{ color: '#38bdf8' }}>{TOTALITY.label}</strong> · Cell transitions (New NC, Recurring, Persistent, Recovering)
+                  Scope: <strong style={{ color: '#38bdf8' }}>{TOTALITY.label}</strong> · Cell transitions (New NC, Recurring, Intermittent, Persistent, Chronic, Recovering)
                 </p>
               </div>
               <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', background: 'var(--bg)', color: 'var(--text-dim)', border: '1px solid var(--border)' }}>

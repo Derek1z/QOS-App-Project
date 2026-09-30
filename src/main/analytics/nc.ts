@@ -1,6 +1,7 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { getRules } from './rules'
 import { coreBreachDaysSql } from './ncRule'
+import { SEVERITY_BASE, lifecycleCaseSql } from '../../../shared/lifecycle'
 
 /** Recompute lifecycle/trend/severity for the given cells across their full
  *  weekly, daily, and monthly history. Vectorized in DuckDB SQL for blazing performance. */
@@ -181,7 +182,7 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
                ELSE
                  CASE
                    WHEN (
-                     (CASE lifecycle WHEN 'New NC' THEN 40 WHEN 'Recurring NC' THEN 60 WHEN 'Persistent NC' THEN 80 WHEN 'Chronic NC' THEN 90 ELSE 40 END) +
+                     (${lifecycleCaseSql('lifecycle', SEVERITY_BASE, 40)}) +
                      (CASE WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 20 THEN 25
                            WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 10 THEN 15
                            WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 5 THEN 10
@@ -191,7 +192,7 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
                      (CASE WHEN availability_pct_avg IS NOT NULL AND availability_pct_avg < 99 THEN 5 ELSE 0 END)
                    ) >= 75 THEN 'Critical'
                    WHEN (
-                     (CASE lifecycle WHEN 'New NC' THEN 40 WHEN 'Recurring NC' THEN 60 WHEN 'Persistent NC' THEN 80 WHEN 'Chronic NC' THEN 90 ELSE 40 END) +
+                     (${lifecycleCaseSql('lifecycle', SEVERITY_BASE, 40)}) +
                      (CASE WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 20 THEN 25
                            WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 10 THEN 15
                            WHEN (coalesce(prb_avg, ${prbThresh}) - ${prbThresh}) >= 5 THEN 10

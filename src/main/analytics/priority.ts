@@ -1,6 +1,7 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
-import type { PriorityMode, PriorityBand, Lifecycle, Trend } from '../../../shared/api'
+import type { PriorityMode, PriorityBand, Trend } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
+import { PRIORITY_PERSISTENCE, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { getRules } from './rules'
 import { cellKpiBreachByCell } from './kpiBreach'
 
@@ -37,21 +38,6 @@ export const PRIORITY_BAND_FLOORS: Array<{ band: PriorityBand; floor: number }> 
 
 export function bandFor(score: number): PriorityBand {
   return PRIORITY_BAND_FLOORS.find((b) => score >= b.floor)?.band ?? 'Low'
-}
-
-const PERSISTENCE_BY_LIFECYCLE: Record<Lifecycle, number> = {
-  'Healthy': 0,
-  'Recovering': 0,
-  'New NC': 35,
-  'Recurring NC': 70,
-  'Persistent NC': 90,
-  'Chronic NC': 100
-}
-
-const TREND_COMPONENT: Record<Trend, number> = {
-  'Improving': 0,
-  'Stable': 50,
-  'Worsening': 100
 }
 
 export async function recomputePriority(conn: DuckDBConnection, cellIds: number[]): Promise<void> {
@@ -137,13 +123,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
     comp AS (
       SELECT b.cell_id, b.week_start,
         ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (COALESCE(b.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS prb_sev,
-        CASE b.lifecycle
-          WHEN 'Chronic NC' THEN 100.0
-          WHEN 'Persistent NC' THEN 90.0
-          WHEN 'Recurring NC' THEN 70.0
-          WHEN 'New NC' THEN 35.0
-          ELSE 0.0
-        END AS persistence,
+        CAST(${lifecycleCaseSql('b.lifecycle', PRIORITY_PERSISTENCE, 0)} AS DOUBLE) AS persistence,
         CASE WHEN b.avg_users > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (b.connected_users_sum - b.avg_users)) / b.avg_users)), 1) ELSE 0.0 END AS user_imp,
         CASE WHEN b.avg_volume > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (b.data_volume_mb_sum - b.avg_volume)) / b.avg_volume)), 1) ELSE 0.0 END AS traffic_imp,
         CASE WHEN b.avg_throughput > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (b.avg_throughput - b.dl_throughput_kbps_avg)) / b.avg_throughput)), 1) ELSE 0.0 END AS thrpt_deg,

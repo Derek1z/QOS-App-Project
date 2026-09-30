@@ -26,6 +26,7 @@ import type {
   DynamicKpiCardData, DerivedKPI, DerivedKpiSuggestion, Grain, PeriodId
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
+import { emptyLifecycleCounts } from '../../../shared/lifecycle'
 import { weekLabel, formatTimeLabel } from './overviewCharts'
 
 /** Browser-only stub installed when the renderer runs outside Electron
@@ -642,7 +643,7 @@ function demoNcLifecycle(): NcLifecycleResult {
       prb, isNc ? 1 : 0
     )
   }
-  const byLifecycle: NcLifecycleResult['byLifecycle'] = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 }
+  const byLifecycle: NcLifecycleResult['byLifecycle'] = emptyLifecycleCounts()
   const byTrend: NcLifecycleResult['byTrend'] = { Improving: 0, Stable: 0, Worsening: 0 }
   const bySeverity: NcLifecycleResult['bySeverity'] = { Normal: 0, Watch: 0, High: 0, Critical: 0 }
   let ncCells = 0

@@ -1,5 +1,6 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
-import type { HealthComponentRow, Lifecycle, Grain } from '../../../shared/api'
+import type { HealthComponentRow, Grain } from '../../../shared/api'
+import { NC_HEALTH, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { getRules } from './rules'
 import { cellKpiBreachByCell } from './kpiBreach'
 
@@ -16,15 +17,6 @@ const THROUGHPUT_REFERENCE_KBPS = 25_000
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
-}
-
-export const NC_HEALTH: Record<Lifecycle, number> = {
-  'Healthy': 100,
-  'Recovering': 90,
-  'New NC': 40,
-  'Recurring NC': 25,
-  'Persistent NC': 10,
-  'Chronic NC': 0
 }
 
 /** Network Health Score series, most recent last. */
@@ -137,15 +129,7 @@ export async function recomputeCellHealth(conn: DuckDBConnection, cellIds: numbe
       ),
       prep AS (
         SELECT w.cell_id, d.date_id,
-          CASE COALESCE(l.lifecycle, 'Healthy')
-            WHEN 'Healthy' THEN 100.0
-            WHEN 'Recovering' THEN 90.0
-            WHEN 'New NC' THEN 40.0
-            WHEN 'Recurring NC' THEN 25.0
-            WHEN 'Persistent NC' THEN 10.0
-            WHEN 'Chronic NC' THEN 0.0
-            ELSE 100.0
-          END AS nc_health,
+          CAST(${lifecycleCaseSql(`COALESCE(l.lifecycle, 'Healthy')`, NC_HEALTH, 100)} AS DOUBLE) AS nc_health,
           ROUND(COALESCE(ke.core_kpi_score, 100.0), 1) AS core_kpi_health,
           ROUND(COALESCE(ke.supporting_kpi_score,
             (CASE WHEN p.avg_throughput > 0 THEN LEAST(100.0, GREATEST(0.0, (100.0 * COALESCE(w.dl_throughput_kbps_avg, 0)) / p.avg_throughput)) ELSE 100.0 END * 0.5 +

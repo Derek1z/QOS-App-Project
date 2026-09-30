@@ -1,5 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { getCurrent } from '../workspace/manager'
+import { emptyLifecycleCounts } from '../../../shared/lifecycle'
 import type {
   Summary, NcLifecycleResult, NcLifecycleRow, NcMovementRow, PriorityMode, PriorityRow,
   Grain, PeriodId,
@@ -285,7 +286,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     totalCells: 0,
     ncCells: 0,
     ncRate: null,
-    byLifecycle: { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 },
+    byLifecycle: emptyLifecycleCounts(),
     byTrend: { Improving: 0, Stable: 0, Worsening: 0 },
     bySeverity: { Normal: 0, Watch: 0, High: 0, Critical: 0 },
     cells: []
@@ -321,7 +322,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     prbAvg: x.prb_avg == null ? null : Number(x.prb_avg)
   }))
   const weekStart = cells.length > 0 ? cells[0].weekStart : null
-  const byLifecycle = { Healthy: 0, 'New NC': 0, 'Recurring NC': 0, 'Persistent NC': 0, 'Chronic NC': 0, Recovering: 0 }
+  const byLifecycle = emptyLifecycleCounts()
   const byTrend = { Improving: 0, Stable: 0, Worsening: 0 }
   const bySeverity = { Normal: 0, Watch: 0, High: 0, Critical: 0 }
   let ncCells = 0

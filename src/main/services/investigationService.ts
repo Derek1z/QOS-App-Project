@@ -9,6 +9,7 @@ import type {
   InvestigationWeek, InvestigationPeer, EntityOption, ActionStatus, PerfMetric,
   Lifecycle, Trend, Severity, PriorityBand, Technology, Grain, PeriodId
 } from '../../../shared/api'
+import { LIFECYCLE_RANK, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { runDiagnosticEngine } from '../analytics/investigation/engine'
 import type { DiagnosticContext } from '../analytics/investigation/types'
 
@@ -146,7 +147,7 @@ export async function searchEntities(scope: InvestigationScope, q = '', technolo
        ${whereClause}
        ORDER BY
          CASE l.severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Watch' THEN 3 ELSE 4 END,
-         CASE l.lifecycle WHEN 'Chronic NC' THEN 1 WHEN 'Persistent NC' THEN 2 WHEN 'Recurring NC' THEN 3 WHEN 'New NC' THEN 4 ELSE 5 END,
+         ${lifecycleCaseSql('l.lifecycle', LIFECYCLE_RANK, 0)} DESC,
          COALESCE(p.score, 0) DESC,
          c.name
        LIMIT 100`

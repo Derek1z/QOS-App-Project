@@ -1,6 +1,10 @@
 /** Shared contracts between the Electron main process (IPC) and the renderer.
  *  This file must stay free of node/electron imports so both tsconfigs can use it. */
 
+import type { Lifecycle } from './lifecycle'
+
+export type { Lifecycle }
+
 export interface RecentWorkspace {
   path: string
   name: string
@@ -655,7 +659,6 @@ export interface ScheduledRunResult {
 
 // --- M2 analytics engine contracts (spec §20-§22, §35-§39, §43, §29) ---
 
-export type Lifecycle = 'Healthy' | 'New NC' | 'Recurring NC' | 'Persistent NC' | 'Chronic NC' | 'Recovering'
 export type Trend = 'Improving' | 'Stable' | 'Worsening'
 export type Severity = 'Normal' | 'Watch' | 'High' | 'Critical'
 export type PriorityMode = 'balanced' | 'customer' | 'congestion' | 'persistence' | 'deterioration'

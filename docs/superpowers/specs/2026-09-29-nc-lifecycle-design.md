@@ -1,7 +1,7 @@
 # NC Periods (Lifecycle) Design
 
 **Date**: 2026-09-29
-**Status**: Draft, awaiting review
+**Status**: Implemented (2026-09-30)
 **Scope**: how a cell's non-compliance (NC) period is labelled in the daily, weekly and monthly views, and one owner for every input behind it (§8)
 
 ---

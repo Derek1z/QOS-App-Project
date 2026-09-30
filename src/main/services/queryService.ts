@@ -2414,7 +2414,8 @@ function diagnoseRca(
   metric: ForecastMetric,
   risk: ForecastRisk,
   prbVal: number,
-  availVal: number
+  availVal: number,
+  prbThreshold: number
 ): { rcaCategory: ForecastRcaCategory; recommendedAction: string } {
   if (risk === 'Stable') {
     return {
@@ -2432,7 +2433,7 @@ function diagnoseRca(
   }
 
   // If metric is congestion or high PRB
-  if (metric === 'prb' || metric === 'tch_cong' || metric === 'sdcch_cong' || metric === 'traffic_util_3g' || prbVal >= 80) {
+  if (metric === 'prb' || metric === 'tch_cong' || metric === 'sdcch_cong' || metric === 'traffic_util_3g' || prbVal >= prbThreshold) {
     if (tech === '4G') {
       return {
         rcaCategory: 'Capacity Exhaustion',
@@ -2712,7 +2713,7 @@ export async function getForecast(opts: {
         forecast: fc.next,
         label: metricDef.label
       })
-      const rca = diagnoseRca(activeTech, metric, cls.risk, h.prb, h.avail)
+      const rca = diagnoseRca(activeTech, metric, cls.risk, h.prb, h.avail, prbThreshold)
 
       riskRows.push({
         id,

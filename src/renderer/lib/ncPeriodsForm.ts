@@ -28,3 +28,13 @@ export function formToSettings(form: Record<NcPeriodKey, string>): { settings: N
   const problem = ncPeriodProblem(settings)
   return problem ? { settings: null, problem } : { settings, problem: null }
 }
+
+/** Just the NC-period fields off any superset (e.g. a `Rules` row, which
+ *  carries extra columns like version and prbThresholdPct). */
+export function ncSettingsOf(r: NcPeriodSettings): NcPeriodSettings {
+  return Object.fromEntries(NC_PERIOD_KEYS.map((k) => [k, r[k]])) as unknown as NcPeriodSettings
+}
+
+export function settingsEqual(a: NcPeriodSettings, b: NcPeriodSettings): boolean {
+  return NC_PERIOD_KEYS.every((k) => a[k] === b[k])
+}

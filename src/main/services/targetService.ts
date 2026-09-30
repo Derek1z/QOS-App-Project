@@ -38,6 +38,12 @@ export async function saveKpiTargets(conn: DuckDBConnection, patches: KpiDefPatc
     if (existing?.isCore && p.isCore === false) {
       throw new Error(`${existing.label} is a core NCA KPI and must stay core`)
     }
+    // A core KPI switched off with active:false silently drops out of the NC
+    // rule without losing its target or its core flag — the same protection
+    // by a third route (fix wave 2026-09-30, item 3).
+    if (existing?.isCore && p.active === false) {
+      throw new Error(`${existing.label} is a core NCA KPI and must stay active`)
+    }
     if (!existing) continue
     for (const f of NC_FIELDS) {
       const before = existing[f]

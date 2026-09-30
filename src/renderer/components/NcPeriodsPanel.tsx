@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { emit } from '../store'
 import { errMsg } from '../lib/flows'
-import { NC_PERIOD_FIELDS, type NcPeriodKey } from '../../../shared/ruleDefaults'
-import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm } from '../lib/ncPeriodsForm'
+import { NC_PERIOD_FIELDS, type NcPeriodKey, type NcPeriodSettings } from '../../../shared/ruleDefaults'
+import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm, ncSettingsOf, settingsEqual } from '../lib/ncPeriodsForm'
 
 const input: React.CSSProperties = {
   width: '64px', background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)',
@@ -11,6 +11,7 @@ const input: React.CSSProperties = {
 
 export default function NcPeriodsPanel(): React.JSX.Element {
   const [form, setForm] = useState<Record<NcPeriodKey, string> | null>(null)
+  const [loaded, setLoaded] = useState<NcPeriodSettings | null>(null)
   const [version, setVersion] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -19,13 +20,18 @@ export default function NcPeriodsPanel(): React.JSX.Element {
     void window.api.rules.get().then((r) => {
       if (!r) return
       setForm(settingsToForm(r))
+      setLoaded(ncSettingsOf(r))
       setVersion(r.version)
     })
   }, [])
 
   if (!form) return <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-dim)' }}>Loading NC periods...</div>
 
-  const { problem } = formToSettings(form)
+  const { settings, problem } = formToSettings(form)
+  // Saving unchanged settings still versioned the ruleset and recomputed
+  // every cell for nothing (fix wave 2026-09-30, item 5): compare against the
+  // settings as loaded and make Save a no-op while they match.
+  const unchanged = settings != null && loaded != null && settingsEqual(settings, loaded)
 
   const save = async (): Promise<void> => {
     const { settings, problem: p } = formToSettings(form)
@@ -33,12 +39,14 @@ export default function NcPeriodsPanel(): React.JSX.Element {
       setMessage({ ok: false, text: p ?? 'Invalid settings' })
       return
     }
+    if (loaded && settingsEqual(settings, loaded)) return
     setSaving(true)
     setMessage(null)
     try {
       const r = await window.api.rules.update(settings)
       setVersion(r.version)
       setForm(settingsToForm(r))
+      setLoaded(ncSettingsOf(r))
       setMessage({ ok: true, text: `Saved as ruleset v${r.version}. NC periods recalculated.` })
       emit('RULESET_CHANGED')
     } catch (e) {
@@ -80,7 +88,7 @@ export default function NcPeriodsPanel(): React.JSX.Element {
           </div>
         </div>
       ))}
-      {(problem || message) && (
+      {(problem || message) && !unchanged && (
         <div style={{
           padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
           color: problem || (message && !message.ok) ? '#f87171' : '#34d399',
@@ -91,8 +99,8 @@ export default function NcPeriodsPanel(): React.JSX.Element {
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
-          onClick={() => void save()} disabled={saving || problem != null}
-          style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #059669, #10b981)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 800, cursor: problem ? 'not-allowed' : 'pointer', opacity: problem ? 0.5 : 1 }}
+          onClick={() => void save()} disabled={saving || problem != null || unchanged}
+          style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #059669, #10b981)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 800, cursor: (problem || unchanged) ? 'not-allowed' : 'pointer', opacity: (problem || unchanged) ? 0.5 : 1 }}
         >
           {saving ? 'Recalculating...' : 'Save NC Periods'}
         </button>

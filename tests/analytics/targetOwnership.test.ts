@@ -148,9 +148,20 @@ describe('kpi_defs is the only owner of KPI targets (spec §8)', () => {
 
   it('a reset does not version an active-only difference (fix round 2)', { timeout: 30000 }, async () => {
     ws = await openRealWorkspace('4G')
-    await saveKpiTargets(ws.conn, [{ technology: '4G', key: 'prb_utilization', active: false }])
+    // s1_signalling_success_rate is not a core KPI, unlike prb_utilization
+    // (fix wave 2026-09-30, item 3 rejects active:false on a core KPI).
+    await saveKpiTargets(ws.conn, [{ technology: '4G', key: 's1_signalling_success_rate', active: false }])
     expect((await getRules(ws.conn))!.version).toBe(2)
     await resetKpiTargets(ws.conn, '4G')
     expect((await getRules(ws.conn))!.version).toBe(2)
+  })
+
+  it('a core KPI cannot be switched off via active:false either (A8, fix wave 2026-09-30 item 3)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('4G')
+    await expect(
+      saveKpiTargets(ws.conn, [{ technology: '4G', key: 'prb_utilization', active: false }])
+    ).rejects.toThrow(/must stay active/)
+    const core = (await listKpiDefs(ws.conn, '4G')).find((k) => k.key === 'prb_utilization')!
+    expect(core.active).toBe(true)
   })
 })

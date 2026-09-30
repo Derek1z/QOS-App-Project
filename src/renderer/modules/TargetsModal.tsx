@@ -3,6 +3,7 @@ import { useAppStore, emit } from '../store'
 import { errMsg } from '../lib/flows'
 import type { KpiDefinition, Technology, DerivedKPI, BetterDirection } from '../../../shared/api'
 import NcPeriodsPanel from '../components/NcPeriodsPanel'
+import { targetInputProblem } from '../lib/targetsForm'
 
 export interface TargetsModalProps {
   isOpen: boolean
@@ -81,6 +82,16 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
     setError(null)
     setSuccess(null)
     try {
+      for (const d of defs) {
+        const edited = editedTargets[d.kpiId]
+        if (!edited) continue
+        const problem = targetInputProblem(d.label, edited)
+        if (problem) {
+          setError(problem)
+          setSaving(false)
+          return
+        }
+      }
       const patches = defs.flatMap((d) => {
         const edited = editedTargets[d.kpiId]
         if (!edited) return []

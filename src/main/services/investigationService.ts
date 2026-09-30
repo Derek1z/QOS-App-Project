@@ -10,6 +10,7 @@ import type {
   Lifecycle, Trend, Severity, PriorityBand, Technology, Grain, PeriodId
 } from '../../../shared/api'
 import { LIFECYCLE_RANK, lifecycleCaseSql } from '../../../shared/lifecycle'
+import { DEFAULT_NC_PERIODS } from '../../../shared/ruleDefaults'
 import { runDiagnosticEngine } from '../analytics/investigation/engine'
 import type { DiagnosticContext } from '../analytics/investigation/types'
 
@@ -567,8 +568,8 @@ export async function getInvestigation(
       callDrop: rules?.callDropThresholdPct ?? 1.0,
       dataAccess: rules?.dataAccessThresholdPct ?? 95.0,
       dataFailure: rules?.dataServiceFailureThresholdPct ?? 1.0,
-      persistentWeeks: rules?.persistentWeeks ?? 3,
-      chronicWeeks: rules?.chronicWeeks ?? 7
+      persistentWeeks: rules?.persistentWeeks ?? DEFAULT_NC_PERIODS.persistentWeeks,
+      chronicWeeks: rules?.chronicWeeks ?? DEFAULT_NC_PERIODS.chronicWeeks
     }
   }
 

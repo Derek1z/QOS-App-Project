@@ -10,6 +10,7 @@ import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
+import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
 
 export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
   const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
@@ -137,12 +138,10 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
   )
   await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_raw_archive START 1`)
   await connection.run(`ALTER TABLE workspace_snapshots ADD COLUMN IF NOT EXISTS path VARCHAR`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS daily_min_kpi_breaches INTEGER DEFAULT 1`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS monthly_breach_days INTEGER DEFAULT 3`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS persistent_days INTEGER DEFAULT 7`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS chronic_days INTEGER DEFAULT 21`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS persistent_months INTEGER DEFAULT 2`)
-  await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS chronic_months INTEGER DEFAULT 3`)
+  for (const k of NC_PERIOD_KEYS) {
+    const fld = NC_PERIOD_FIELDS[k]
+    await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS ${fld.column} INTEGER DEFAULT ${fld.default}`)
+  }
   await connection.run(`CREATE TABLE IF NOT EXISTS maintenance_settings (
      id INTEGER PRIMARY KEY CHECK (id = 1),
      enabled BOOLEAN DEFAULT false,

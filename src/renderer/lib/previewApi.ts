@@ -27,6 +27,7 @@ import type {
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
 import { emptyLifecycleCounts } from '../../../shared/lifecycle'
+import { DEFAULT_NC_PERIODS, DEFAULT_DISTRICT_NC_PCT, DEFAULT_PRIORITY_WEIGHTS } from '../../../shared/ruleDefaults'
 import { weekLabel, formatTimeLabel } from './overviewCharts'
 
 /** Browser-only stub installed when the renderer runs outside Electron
@@ -3173,17 +3174,9 @@ let demoRules: Rules = {
   callDropThresholdPct: 1.5,
   dataAccessThresholdPct: 98.0,
   dataServiceFailureThresholdPct: 1.0,
-  dailyMinKpiBreaches: 1,
-  weeklyBreachDays: 1,
-  monthlyBreachDays: 3,
-  persistentWeeks: 3,
-  chronicWeeks: 7,
-  persistentDays: 7,
-  chronicDays: 21,
-  persistentMonths: 2,
-  chronicMonths: 3,
-  districtNcThresholdPct: 10,
-  priorityWeights: [25, 20, 15, 15, 15, 10],
+  ...DEFAULT_NC_PERIODS,
+  districtNcThresholdPct: DEFAULT_DISTRICT_NC_PCT,
+  priorityWeights: DEFAULT_PRIORITY_WEIGHTS,
   notes: 'Demo ruleset — edits bump the version like the real engine'
 }
 

@@ -2,6 +2,7 @@
  *  This file must stay free of node/electron imports so both tsconfigs can use it. */
 
 import type { Lifecycle } from './lifecycle'
+import type { NcPeriodSettings } from './ruleDefaults'
 
 export type { Lifecycle }
 
@@ -1437,7 +1438,7 @@ export interface PriorityCenterOpts {
   offset?: number
 }
 
-export interface Rules {
+export interface Rules extends NcPeriodSettings {
   version: number
   createdAt: string
   prbThresholdPct: number
@@ -1447,24 +1448,13 @@ export interface Rules {
   callDropThresholdPct: number
   dataAccessThresholdPct: number
   dataServiceFailureThresholdPct: number
-  dailyMinKpiBreaches?: number
-  weeklyBreachDays: number
-  monthlyBreachDays?: number
-  persistentWeeks: number
-  chronicWeeks: number
-  persistentDays?: number
-  chronicDays?: number
-  persistentMonths?: number
-  chronicMonths?: number
   districtNcThresholdPct: number
   priorityWeights: number[]
   kpiThresholds?: Record<string, number>
   notes: string | null
 }
 
-export type RulesPatch = Partial<
-  Omit<Rules, 'version' | 'createdAt'>
->
+export type RulesPatch = Partial<Omit<Rules, 'version' | 'createdAt'>>
 
 // --- Executive Overview & Cross-Tech Contracts ---
 

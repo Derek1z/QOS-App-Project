@@ -144,7 +144,7 @@ async function recomputeCellMonthly(conn: DuckDBConnection, idList: string): Pro
       avg(f.prb_utilization), max(f.prb_utilization),
       sum(f.data_volume_mb), sum(f.connected_users),
       avg(f.dl_throughput_kbps), avg(f.availability_pct),
-      ${breachDay} >= max(COALESCE(r.monthly_breach_days, 3)) AS is_nc
+      ${breachDay} >= max(r.monthly_breach_days) AS is_nc
     FROM fact_cell_daily f
     JOIN (SELECT date_id, CAST(date_trunc('month', date) AS DATE) AS month_start FROM dim_date) m
       ON m.date_id = f.date_id

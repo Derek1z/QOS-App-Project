@@ -1,4 +1,5 @@
 import { coreBreachDaysSql } from '../analytics/ncRule'
+import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS, DEFAULT_DISTRICT_NC_PCT } from '../../../shared/ruleDefaults'
 
 /** DuckDB schema for one .qosdb workspace (spec §60-§63).
  *  Raw facts are immutable; all derived intelligence lives in separate tables. */
@@ -129,16 +130,8 @@ export const SCHEMA_SQL: string[] = [
      call_drop_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
      data_access_threshold_pct DOUBLE NOT NULL DEFAULT 95.0,
      data_service_failure_threshold_pct DOUBLE NOT NULL DEFAULT 1.0,
-     daily_min_kpi_breaches INTEGER NOT NULL DEFAULT 1,
-     weekly_breach_days INTEGER NOT NULL DEFAULT 1,
-     monthly_breach_days INTEGER NOT NULL DEFAULT 3,
-     persistent_weeks INTEGER NOT NULL DEFAULT 3,
-     chronic_weeks INTEGER NOT NULL DEFAULT 7,
-     persistent_days INTEGER NOT NULL DEFAULT 7,
-     chronic_days INTEGER NOT NULL DEFAULT 21,
-     persistent_months INTEGER NOT NULL DEFAULT 2,
-     chronic_months INTEGER NOT NULL DEFAULT 3,
-     district_nc_threshold_pct DOUBLE NOT NULL DEFAULT 10,
+     ${NC_PERIOD_KEYS.map((k) => `${NC_PERIOD_FIELDS[k].column} INTEGER NOT NULL DEFAULT ${NC_PERIOD_FIELDS[k].default},`).join('\n     ')}
+     district_nc_threshold_pct DOUBLE NOT NULL DEFAULT ${DEFAULT_DISTRICT_NC_PCT},
      priority_weights JSON,
      kpi_thresholds JSON,
      notes VARCHAR

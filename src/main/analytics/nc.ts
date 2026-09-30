@@ -2,6 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import { getRules } from './rules'
 import { coreBreachDaysSql } from './ncRule'
 import { SEVERITY_BASE, lifecycleCaseSql } from '../../../shared/lifecycle'
+import { periodsFor } from '../../../shared/ruleDefaults'
 
 /** Recompute lifecycle/trend/severity for the given cells across their full
  *  weekly, daily, and monthly history. Vectorized in DuckDB SQL for blazing performance. */
@@ -10,14 +11,12 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
   const rules = await getRules(conn)
   if (!rules) return
 
-  const chronicWeeks = rules.chronicWeeks ?? 7
-  const persistentWeeks = rules.persistentWeeks ?? 3
-  const chronicDays = rules.chronicDays ?? Math.max(14, chronicWeeks * 7)
-  const persistentDays = rules.persistentDays ?? Math.max(7, persistentWeeks * 7)
-  const chronicMonths = rules.chronicMonths ?? Math.max(2, Math.round(chronicWeeks / 4))
-  const persistentMonths = rules.persistentMonths ?? Math.max(2, Math.round(persistentWeeks / 4))
-  const dailyMinKpiBreaches = rules.dailyMinKpiBreaches ?? 1
-  const prbThresh = rules.prbThresholdPct ?? 80
+  const byGrain = {
+    daily: periodsFor('daily', rules),
+    weekly: periodsFor('weekly', rules),
+    monthly: periodsFor('monthly', rules)
+  }
+  const prbThresh = rules.prbThresholdPct
 
   // a day is NC when it is a core-KPI breach day (analytics/ncRule)
   const dailyIsNcExpr = `(ex.cell_id IS NOT NULL)`
@@ -50,8 +49,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
         `,
         obsDaysSql: 'CAST(coalesce(w.observed_days, 1) AS DOUBLE)',
         breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
-        chronicThresh: chronicWeeks,
-        persistentThresh: persistentWeeks
+        chronicThresh: byGrain.weekly.chronic,
+        persistentThresh: byGrain.weekly.persistent
       },
       {
         grain: 'daily',
@@ -73,8 +72,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
         `,
         obsDaysSql: '1.0',
         breachDaysSql: 'w.breach_days',
-        chronicThresh: chronicDays,
-        persistentThresh: persistentDays
+        chronicThresh: byGrain.daily.chronic,
+        persistentThresh: byGrain.daily.persistent
       },
       {
         grain: 'monthly',
@@ -89,8 +88,8 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
         `,
         obsDaysSql: 'CAST(coalesce(w.observed_days, 30) AS DOUBLE)',
         breachDaysSql: 'CAST(coalesce(w.breach_days, 0) AS DOUBLE)',
-        chronicThresh: chronicMonths,
-        persistentThresh: persistentMonths
+        chronicThresh: byGrain.monthly.chronic,
+        persistentThresh: byGrain.monthly.persistent
       }
     ]
 

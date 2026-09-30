@@ -446,7 +446,7 @@ export default function NcIntelligence(): React.JSX.Element {
               </h2>
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
-              Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · {persistentCount} Persistent, {recurringCount} Recurring, {newCount} New NCs, {recoveringCount} Recovering
+              Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · {persistentCount} Persistent/Chronic, {recurringCount} Recurring/Intermittent, {newCount} New, {recoveringCount} Recovering
             </p>
           </div>
         </div>

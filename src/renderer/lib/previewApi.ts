@@ -1956,8 +1956,8 @@ async function rSection(id: ReportSectionId): Promise<{ id: ReportSectionId; tab
           id,
           table: {
             title: 'KPI Trend',
-            columns: ['Week', 'New NC', 'Recurring', 'Persistent', 'Recovering', 'NC cells', 'NC rate'],
-            rows: mv.map((m) => [m.weekStart, m.newNc, m.recurring, m.persistent, m.recovering, m.ncCells, m.ncRate == null ? null : `${m.ncRate.toFixed(1)}%`]),
+            columns: ['Week', 'New NC', 'Recurring', 'Intermittent', 'Persistent', 'Chronic', 'Recovering', 'NC cells', 'NC rate'],
+            rows: mv.map((m) => [m.weekStart, m.newNc, m.recurring, m.intermittent, m.persistent, m.chronic, m.recovering, m.ncCells, m.ncRate == null ? null : `${m.ncRate.toFixed(1)}%`]),
             note: `Network health (last ${Math.min(8, h?.network.length ?? 0)} weeks): score + capacity/throughput/availability/nc-recurrence/growth.`
           }
         }

@@ -110,13 +110,13 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
     const h = await getHealth()
     const healthByWeek = new Map(h.network.map((w) => [w.asOf, w.score]))
     const rows = mv.map((m) => [
-      m.weekStart, m.newNc, m.recurring, m.persistent, m.recovering, m.ncCells,
+      m.weekStart, m.newNc, m.recurring, m.intermittent, m.persistent, m.chronic, m.recovering, m.ncCells,
       m.ncRate == null ? null : `${m.ncRate.toFixed(1)}%`,
       healthByWeek.get(m.weekStart) ?? null
     ])
     return {
       title: 'KPI Trend',
-      columns: ['Week', 'New NC', 'Recurring', 'Persistent', 'Recovering', 'NC cells', 'NC rate', 'Health'],
+      columns: ['Week', 'New NC', 'Recurring', 'Intermittent', 'Persistent', 'Chronic', 'Recovering', 'NC cells', 'NC rate', 'Health'],
       rows,
       note: `Network health (last ${Math.min(8, h.network.length)} weeks): the Health column is the network health score for the same week.`
     }

@@ -19,7 +19,7 @@ A cell that is chronic in the daily view must be findable as chronic in its week
 | "Recurring NC" = second consecutive period | The name says "came back"; the code means "continuing" |
 | "Recovering" lasts one period | A chronic cell with one clean day shows Healthy the next day |
 | No label for on/off cells | A cell failing every Tuesday never reads as a pattern |
-| `queryService` `LIFECYCLES` omits Chronic NC | Chronic cells cannot be filtered |
+| `queryService` `LIFECYCLES` omits Chronic NC | Dead constant that disagrees with the real label list |
 | Targets modal "Consecutive Breach Days for NC" starts at 3 and writes `weeklyBreachDays` | Saving targets silently changes the weekly rule from 1 to 3, and the label says "consecutive" when the rule is a count |
 
 ---
@@ -164,9 +164,10 @@ The NC periods only make sense if the inputs behind them have one owner each. To
 | A2 | The Overview window saves the PRB *warning* value (85) as the PRB threshold and writes 3 into bad days per week | Removed with A1 |
 | A3 | Targets are stored three times: `kpi_defs.target`, six `ruleset` columns (one CSSR for all technologies) and `kpi_thresholds` JSON (never read). Every ruleset save copies the six columns over `kpi_defs`, so a 3G CSSR target of 97 resets to 95 | `kpi_defs` only; the copy step is deleted |
 | A4 | PRB threshold lives in `ruleset.prb_threshold_pct`, apart from the other core KPI targets | Read the 4G `prb_utilization` target from `kpi_defs` |
-| A5 | Investigation checks all technologies against one `ruleset` value, with fallbacks that disagree in the same file (CSSR 98.5 vs 95, TCH 2.0 vs 1.0); 3G utilization is checked against the 4G PRB threshold | Per-technology targets from `kpi_defs` |
+| A5 | Investigation checks all technologies against one `ruleset` value, with fallbacks that disagree in the same file (CSSR 98.5 vs 95, TCH 2.0 vs 1.0) | Per-technology targets from `kpi_defs`. 3G has no utilization KPI in the registry, so 3G utilization keeps using the capacity threshold (the 4G PRB target) |
 | A6 | Saving a target does not recompute NC; cells stay judged against the old target until Rebuild Intelligence | A target save recomputes aggregates and intelligence, like a ruleset save |
-| A7 | `LIFECYCLES` in `queryService` omits Chronic NC | Use `shared/lifecycle.ts` |
+| A7 | `LIFECYCLES` in `queryService` omits Chronic NC (unused constant) | Delete it; every label list comes from `shared/lifecycle.ts` |
+| A8 | Core NCA KPIs can be deleted or saved without a target, which silently switches that part of the NC rule off | Core KPIs cannot be removed, and a core KPI target cannot be cleared |
 
 ### 8.3 Duplicates removed
 

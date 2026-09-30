@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { KpiCard } from '../components/KpiCard'
-import TargetsModal from '../components/TargetsModal'
+import TargetsModal from './TargetsModal'
 import type { ExecutiveOverviewResult, NcMovementRow } from '../../../shared/api'
 import {
   TOTALITY, toKpiCardProps, movementSeries, breachSeries, kpiFilterOptions, bannerSummary
@@ -29,6 +29,7 @@ export default function Overview(): React.JSX.Element {
     period,
     setPeriod,
     setModule,
+    targetsModalOpen,
     setTargetsModalOpen
   } = useAppStore()
 
@@ -577,7 +578,7 @@ export default function Overview(): React.JSX.Element {
       )}
 
       {/* Targets Drawer Modal */}
-      <TargetsModal />
+      <TargetsModal isOpen={targetsModalOpen} onClose={() => setTargetsModalOpen(false)} />
     </div>
   )
 }

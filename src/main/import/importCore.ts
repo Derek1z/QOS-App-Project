@@ -12,7 +12,6 @@ import { recomputeAggregates, updateCoverage } from './aggregates'
 import { refreshIntelligence } from '../analytics/engine'
 import { writeQuality } from './quality'
 import { listDerivedKpis, saveDerivedKpi } from '../services/derivedKpiService'
-import { enforce90DateRetention } from '../kpi/schemaV2'
 import type {
   CanonicalField, ImportResult, MappingConfig, ValidationIssue
 } from '../../../shared/api'
@@ -646,11 +645,6 @@ async function runImportCoreInner(
     onPhase?.('Refreshing intelligence')
     await refreshIntelligence(conn, dateIds)
     await conn.run('COMMIT')
-    try {
-      await enforce90DateRetention(conn)
-    } catch {
-      /* non-fatal if retention table structure differs */
-    }
 
     const validRows = await count(conn, `SELECT count(*) n FROM stg_clean WHERE date_id IS NOT NULL AND cell_name IS NOT NULL AND cell_name <> ''`)
     const rejectedRows = Math.max(0, staged - validRows) + csvRejects

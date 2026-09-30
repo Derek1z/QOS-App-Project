@@ -34,10 +34,6 @@ function ws() {
   return w
 }
 
-const LIFECYCLES = ['Healthy', 'New NC', 'Recurring NC', 'Persistent NC', 'Recovering'] as const
-const TRENDS = ['Improving', 'Stable', 'Worsening'] as const
-const SEVERITIES = ['Normal', 'Watch', 'High', 'Critical'] as const
-
 export async function getRulesCurrent(): Promise<Rules | null> {
   const w = getCurrent()
   if (!w) return null

@@ -58,6 +58,11 @@ export async function saveKpiTargets(conn: DuckDBConnection, patches: KpiDefPatc
   return saved
 }
 
+// The NC fields resetKpiDefsToDefaults actually writes — target and
+// worseIsHigher. It never touches isCore or active, so diffing those would
+// report a change the reset doesn't make (review finding, fix round 2).
+const RESET_FIELDS = ['target', 'worseIsHigher'] as const
+
 export async function resetKpiTargets(conn: DuckDBConnection, technology?: Technology): Promise<KpiDefinition[]> {
   const techs: Technology[] = technology ? [technology] : ['2G', '3G', '4G']
   const changes: string[] = []
@@ -66,13 +71,11 @@ export async function resetKpiTargets(conn: DuckDBConnection, technology?: Techn
     for (const seed of builtInSeeds(tech)) {
       const existing = current.find((k) => k.key === seed.key)
       if (!existing) continue
-      const defaults: Record<(typeof NC_FIELDS)[number], unknown> = {
+      const defaults: Record<(typeof RESET_FIELDS)[number], unknown> = {
         target: seed.target,
-        worseIsHigher: seed.worseIsHigher,
-        isCore: seed.isCore,
-        active: true
+        worseIsHigher: seed.worseIsHigher
       }
-      for (const f of NC_FIELDS) {
+      for (const f of RESET_FIELDS) {
         const before = existing[f]
         const after = defaults[f]
         if (after !== before) changes.push(`${tech} ${seed.key} ${f} ${before}→${after}`)

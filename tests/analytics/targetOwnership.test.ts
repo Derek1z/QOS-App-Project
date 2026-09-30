@@ -145,4 +145,12 @@ describe('kpi_defs is the only owner of KPI targets (spec §8)', () => {
     )).getRowObjects()[0].note
     expect(String(note)).toContain('3G call_setup_success_3g target 97→95')
   })
+
+  it('a reset does not version an active-only difference (fix round 2)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('4G')
+    await saveKpiTargets(ws.conn, [{ technology: '4G', key: 'prb_utilization', active: false }])
+    expect((await getRules(ws.conn))!.version).toBe(2)
+    await resetKpiTargets(ws.conn, '4G')
+    expect((await getRules(ws.conn))!.version).toBe(2)
+  })
 })

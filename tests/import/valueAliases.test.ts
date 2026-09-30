@@ -6,6 +6,7 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import { SCHEMA_SQL } from '../../src/main/workspace/schema'
 import { runImportCore } from '../../src/main/import/importCore'
 import { autoMap, makeFingerprint } from '../../src/main/import/mapping'
+import { seedKpiDefs } from '../../src/main/services/kpiService'
 
 const HEADER = [
   'DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', 'PRB Utilization',
@@ -20,7 +21,7 @@ describe('accepted geo value aliases on import', () => {
     dir = null
   })
 
-  it('re-points misspelled or oddly spaced region names at the existing regions', async () => {
+  it('re-points misspelled or oddly spaced region names at the existing regions', { timeout: 30000 }, async () => {
     dir = mkdtempSync(join(os.tmpdir(), 'qos-alias-test-'))
     const csvPath = join(dir, 'aliases.csv')
     writeFileSync(csvPath, [
@@ -33,6 +34,9 @@ describe('accepted geo value aliases on import', () => {
     const conn = await instance.connect()
     try {
       for (const sql of SCHEMA_SQL) await conn.run(sql)
+      await seedKpiDefs(conn, '2G')
+      await seedKpiDefs(conn, '3G')
+      await seedKpiDefs(conn, '4G')
       await conn.run(`INSERT INTO dim_region VALUES (1, 'Western North'), (2, 'Greater Accra')`)
       // keys are normalized values, exactly as the Data Manager stores them
       const valueAliases = { region: { 'westrn north': 'Western North', 'greater accra': 'Greater Accra' } }

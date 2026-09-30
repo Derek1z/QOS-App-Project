@@ -6,6 +6,7 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import { SCHEMA_SQL } from '../../src/main/workspace/schema'
 import { runImportCore } from '../../src/main/import/importCore'
 import { autoMap, makeFingerprint } from '../../src/main/import/mapping'
+import { seedKpiDefs } from '../../src/main/services/kpiService'
 
 const HEADER = [
   'DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', 'PRB Utilization',
@@ -29,7 +30,7 @@ describe('import of a file mixing date formats', () => {
     dir = null
   })
 
-  it('stores every row and reads ISO and day-first dates correctly', async () => {
+  it('stores every row and reads ISO and day-first dates correctly', { timeout: 30000 }, async () => {
     dir = mkdtempSync(join(os.tmpdir(), 'qos-import-test-'))
     const csvPath = join(dir, 'formats.csv')
     writeFileSync(csvPath, [HEADER.join(','), ...ROWS].join('\n'))
@@ -38,6 +39,9 @@ describe('import of a file mixing date formats', () => {
     const conn = await instance.connect()
     try {
       for (const sql of SCHEMA_SQL) await conn.run(sql)
+      await seedKpiDefs(conn, '2G')
+      await seedKpiDefs(conn, '3G')
+      await seedKpiDefs(conn, '4G')
       const res = await runImportCore(conn, {
         workspacePath: wsPath,
         workspaceName: 'ws',

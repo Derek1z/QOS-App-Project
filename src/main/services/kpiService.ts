@@ -1689,8 +1689,8 @@ export async function seedKpiDefs(conn: DuckDBConnection, technology: Technology
        ON CONFLICT (technology, kpi_key) DO UPDATE SET
          label = excluded.label,
          unit = excluded.unit,
-         worse_is_higher = excluded.worse_is_higher,
-         better_direction = excluded.better_direction,
+         worse_is_higher = kpi_defs.worse_is_higher,
+         better_direction = kpi_defs.better_direction,
          category = excluded.category,
          target = COALESCE(kpi_defs.target, excluded.target),
          warning_threshold = COALESCE(kpi_defs.warning_threshold, excluded.warning_threshold),

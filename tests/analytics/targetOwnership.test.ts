@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
+import { join } from 'node:path'
 import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
 import { recomputeAllAggregates } from '../../src/main/import/aggregates'
 import { refreshAllIntelligence } from '../../src/main/analytics/engine'
 import { getRules, updateRules } from '../../src/main/analytics/rules'
 import { getCoreTargets } from '../../src/main/analytics/targets'
-import { saveKpiTargets } from '../../src/main/services/targetService'
+import { saveKpiTargets, resetKpiTargets } from '../../src/main/services/targetService'
 import { listKpiDefs, removeKpiDef } from '../../src/main/services/kpiService'
 
 const WEEK = [20260720, 20260721, 20260722, 20260723, 20260724, 20260725, 20260726]
@@ -98,5 +99,50 @@ describe('kpi_defs is the only owner of KPI targets (spec §8)', () => {
     ).rejects.toThrow(/needs a target/)
     const core = (await listKpiDefs(ws.conn, '4G')).find((k) => k.key === 'call_drop_rate_4g')!
     await expect(removeKpiDef(ws.conn, core.kpiId)).rejects.toThrow(/cannot be removed/)
+  })
+
+  it('a core KPI cannot be demoted out of core status either (A8, fix round 1 #4)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('4G')
+    await expect(
+      saveKpiTargets(ws.conn, [{ technology: '4G', key: 'call_drop_rate_4g', isCore: false }])
+    ).rejects.toThrow(/must stay core/)
+    const core = (await listKpiDefs(ws.conn, '4G')).find((k) => k.key === 'call_drop_rate_4g')!
+    expect(core.isCore).toBe(true)
+  })
+
+  it('a direction change reaches NC and persists after reload (fix round 1 #1)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    const before = (await listKpiDefs(ws.conn, '3G')).find((k) => k.key === 'call_setup_success_3g')!
+    expect(before.worseIsHigher).toBe(false)
+    await saveKpiTargets(ws.conn, [{ technology: '3G', key: 'call_setup_success_3g', betterDirection: 'lower_is_better' }])
+    expect((await getRules(ws.conn))!.version).toBe(2)
+    const afterSave = (await listKpiDefs(ws.conn, '3G')).find((k) => k.key === 'call_setup_success_3g')!
+    expect(afterSave.worseIsHigher).toBe(true)
+    expect(afterSave.betterDirection).toBe('lower_is_better')
+
+    const mgr = await import('../../src/main/workspace/manager')
+    mgr.closeWorkspace()
+    await mgr.openWorkspace(join(ws.dir, 'test.qosdb'))
+    const afterReload = (await listKpiDefs(mgr.getCurrent()!.connection, '3G')).find((k) => k.key === 'call_setup_success_3g')!
+    expect(afterReload.worseIsHigher).toBe(true)
+    expect(afterReload.betterDirection).toBe('lower_is_better')
+  })
+
+  it('a reset with nothing to change creates no version (fix round 1 #3)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    await resetKpiTargets(ws.conn, '3G')
+    expect((await getRules(ws.conn))!.version).toBe(1)
+  })
+
+  it('a reset after an edit lists the change in its note (fix round 1 #3)', { timeout: 30000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    await saveKpiTargets(ws.conn, [{ technology: '3G', key: 'call_setup_success_3g', target: 97 }])
+    await resetKpiTargets(ws.conn, '3G')
+    expect((await getRules(ws.conn))!.version).toBe(3)
+    expect(await target(ws, '3G', 'call_setup_success_3g')).toBe(95)
+    const note = (await ws.conn.runAndReadAll(
+      `SELECT note FROM notes_events WHERE kind = 'ruleset_change' ORDER BY occurred_at DESC LIMIT 1`
+    )).getRowObjects()[0].note
+    expect(String(note)).toContain('3G call_setup_success_3g target 97→95')
   })
 })

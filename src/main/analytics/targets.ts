@@ -2,13 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import type { Technology } from '../../../shared/api'
 
 /** KPI targets have one owner: kpi_defs (spec 2026-09-29 §8). Every reader
- *  goes through here; nothing else stores or defaults a target.
- *
- *  services/kpiService is imported dynamically inside getKpiTarget, not at
- *  module scope: schema.ts builds AGG_CELL_DAILY_SELECT from
- *  analytics/ncRule's coreBreachDaysSql, which needs PRB_TARGET_SQL from this
- *  file, and kpiService reaches back to schema.ts through workspace/manager —
- *  a static import here would close that cycle. */
+ *  goes through here; nothing else stores or defaults a target. */
 
 const q = (s: string): string => `'${s.replace(/'/g, "''")}'`
 
@@ -21,19 +15,7 @@ export const PRB_TARGET_SQL = kpiTargetSql('4G', 'prb_utilization')
 
 export async function getKpiTarget(conn: DuckDBConnection, technology: Technology, key: string): Promise<number | null> {
   const v = (await conn.runAndReadAll(`SELECT ${kpiTargetSql(technology, key)} AS t`)).getRowObjects()[0]?.t
-  if (v != null) return Number(v)
-  // Lazy-seed like kpiService.listKpiDefs: a workspace whose kpi_defs table
-  // hasn't been populated yet for this technology (e.g. a bare schema in a
-  // low-level import test) gets the built-in seeds, including their default
-  // targets, on first read instead of silently missing the NC rule.
-  const has = (await conn.runAndReadAll(
-    `SELECT count(*) AS n FROM kpi_defs WHERE technology = ${q(technology)}`
-  )).getRowObjects()[0]?.n
-  if (Number(has) > 0) return null
-  const { seedKpiDefs } = await import('../services/kpiService')
-  await seedKpiDefs(conn, technology)
-  const retry = (await conn.runAndReadAll(`SELECT ${kpiTargetSql(technology, key)} AS t`)).getRowObjects()[0]?.t
-  return retry == null ? null : Number(retry)
+  return v == null ? null : Number(v)
 }
 
 export async function getPrbTarget(conn: DuckDBConnection): Promise<number> {

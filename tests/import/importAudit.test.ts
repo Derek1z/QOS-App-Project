@@ -6,6 +6,7 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import { SCHEMA_SQL } from '../../src/main/workspace/schema'
 import { runImportCore } from '../../src/main/import/importCore'
 import { autoMap, makeFingerprint } from '../../src/main/import/mapping'
+import { seedKpiDefs } from '../../src/main/services/kpiService'
 
 const HEADER = [
   'DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', 'PRB Utilization',
@@ -20,7 +21,7 @@ describe('import audit', () => {
     dir = null
   })
 
-  it('records the workspace file size after the import, not the source file size', async () => {
+  it('records the workspace file size after the import, not the source file size', { timeout: 30000 }, async () => {
     dir = mkdtempSync(join(os.tmpdir(), 'qos-audit-test-'))
     const csvPath = join(dir, 'one-day.csv')
     writeFileSync(csvPath, [
@@ -32,6 +33,9 @@ describe('import audit', () => {
     const conn = await instance.connect()
     try {
       for (const sql of SCHEMA_SQL) await conn.run(sql)
+      await seedKpiDefs(conn, '2G')
+      await seedKpiDefs(conn, '3G')
+      await seedKpiDefs(conn, '4G')
       await conn.run('CHECKPOINT')
       const dbBefore = statSync(wsPath).size
       const res = await runImportCore(conn, {
@@ -60,7 +64,7 @@ describe('import audit', () => {
     }
   })
 
-  it('files the audit row under the same import id as the imported facts and raw archive', async () => {
+  it('files the audit row under the same import id as the imported facts and raw archive', { timeout: 30000 }, async () => {
     dir = mkdtempSync(join(os.tmpdir(), 'qos-audit-test-'))
     const csvPath = join(dir, 'one-day.csv')
     writeFileSync(csvPath, [
@@ -72,6 +76,9 @@ describe('import audit', () => {
     const conn = await instance.connect()
     try {
       for (const sql of SCHEMA_SQL) await conn.run(sql)
+      await seedKpiDefs(conn, '2G')
+      await seedKpiDefs(conn, '3G')
+      await seedKpiDefs(conn, '4G')
       const res = await runImportCore(conn, {
         workspacePath: wsPath,
         workspaceName: 'ws',

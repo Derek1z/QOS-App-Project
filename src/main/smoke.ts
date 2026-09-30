@@ -270,11 +270,8 @@ export async function runSmokeTest(dir: string): Promise<void> {
     bySev[String(row.name)] = String(row.severity)
   }
   console.log('[SMOKE] 11. byName:', JSON.stringify(byName), 'bySev:', JSON.stringify(bySev))
-  if (byName['ACC-001-A'] !== 'Recurring NC') {
-    throw new Error('ACC-001-A should be Recurring NC (2nd consecutive week): ' + JSON.stringify(byName))
-  }
-  if (bySev['ACC-001-A'] !== 'Critical') {
-    throw new Error('ACC-001-A should be Critical (recurring + worsening + high PRB): ' + JSON.stringify(bySev))
+  if (byName['ACC-001-A'] !== 'New NC') {
+    throw new Error('ACC-001-A should be New NC (2nd week of its first run): ' + JSON.stringify(byName))
   }
   if (byName['ACC-001-B'] !== 'Healthy') throw new Error('ACC-001-B should be Healthy')
   if (byName['KUM-002-A'] !== 'New NC') throw new Error('KUM-002-A should be New NC')
@@ -294,14 +291,16 @@ export async function runSmokeTest(dir: string): Promise<void> {
     throw new Error('severity spread wrong: ' + JSON.stringify(nc.bySeverity))
   }
 
-  // 13. priority queue: latest week, balanced mode; ACC-001-A leads
-  //     (Recurring + worsening + high PRB outweighs KUM-002-A's PRB-only score)
+  // 13. priority queue: latest week, balanced mode; KUM-002-A leads
+  //     (spec §3 rule 5: ACC-001-A's 2nd consecutive week of its first run is
+  //     New NC, not Recurring NC, so both cells share the same New-NC
+  //     persistence score and KUM-002-A's higher PRB breaks the tie)
   console.log('[SMOKE] 13. Testing priority queue...')
   const queue = await getPriorityQueue('balanced', 10)
   console.log('[SMOKE] 13. Priority queue count:', queue.length, 'top cell:', queue[0]?.cellName)
   if (queue.length !== 3) throw new Error('priority queue length ' + queue.length)
-  if (queue[0].cellName !== 'ACC-001-A') {
-    throw new Error('priority top should be ACC-001-A: ' + queue[0].cellName)
+  if (queue[0].cellName !== 'KUM-002-A') {
+    throw new Error('priority top should be KUM-002-A: ' + queue[0].cellName)
   }
   if (!['Watch', 'Medium', 'High', 'Critical'].includes(queue[0].band)) {
     throw new Error('priority band wrong: ' + queue[0].band + ' ' + queue[0].score)

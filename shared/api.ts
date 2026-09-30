@@ -697,7 +697,9 @@ export interface NcMovementRow {
   weekStart: string
   newNc: number
   recurring: number
+  intermittent: number
   persistent: number
+  chronic: number
   recovering: number
   ncCells: number
   totalCells: number

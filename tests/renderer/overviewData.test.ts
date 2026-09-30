@@ -36,14 +36,14 @@ const CSSR_3G: DynamicKpiCardData = {
 
 const MOVEMENT: NcMovementRow[] = [
   {
-    weekStart: '2026-07-20', newNc: 3, recurring: 1, persistent: 2, recovering: 4, ncCells: 6, totalCells: 100, ncRate: 6,
+    weekStart: '2026-07-20', newNc: 3, recurring: 1, intermittent: 2, persistent: 2, chronic: 1, recovering: 4, ncCells: 6, totalCells: 100, ncRate: 6,
     coreKpiNcRates: {
       call_setup_success_3g: { key: 'call_setup_success_3g', label: '3G CSSR', unit: '%', ncRate: 3, breachedCells: 3, totalCells: 100, worseIsHigher: false },
       call_drop_rate_3g: { key: 'call_drop_rate_3g', label: '3G Call Drop Rate', unit: '%', ncRate: 5, breachedCells: 5, totalCells: 100, worseIsHigher: true }
     }
   },
   {
-    weekStart: '2026-07-27', newNc: 1, recurring: 2, persistent: 3, recovering: 1, ncCells: 6, totalCells: 100, ncRate: 6,
+    weekStart: '2026-07-27', newNc: 1, recurring: 2, intermittent: 0, persistent: 3, chronic: 2, recovering: 1, ncCells: 6, totalCells: 100, ncRate: 6,
     coreKpiNcRates: {
       call_drop_rate_3g: { key: 'call_drop_rate_3g', label: '3G Call Drop Rate', unit: '%', ncRate: 7, breachedCells: 7, totalCells: 100, worseIsHigher: true }
     }
@@ -94,8 +94,8 @@ describe('KPI card props from executive overview data', () => {
 describe('Overview chart series', () => {
   it('labels NC lifecycle movement by ISO week', () => {
     expect(movementSeries(MOVEMENT, 'weekly')).toEqual([
-      { label: 'W30', newNc: 3, recurring: 1, persistent: 2, recovering: 4 },
-      { label: 'W31', newNc: 1, recurring: 2, persistent: 3, recovering: 1 }
+      { label: 'W30', newNc: 3, recurring: 1, intermittent: 2, persistent: 2, chronic: 1, recovering: 4 },
+      { label: 'W31', newNc: 1, recurring: 2, intermittent: 0, persistent: 3, chronic: 2, recovering: 1 }
     ])
   })
 
@@ -125,12 +125,12 @@ describe('Overview banner summary', () => {
       { technology: '3G', healthScore: 87.5, cellCount: 100, ncCellCount: 6, compliancePct: 94, primaryKpis: [], availableKpiCards: [] },
       MOVEMENT[MOVEMENT.length - 1]
     )
-    expect(summary).toEqual({ healthPct: 87.5, cells: 100, ncCells: 6, newNc: 1, recurring: 2, persistent: 3, recovering: 1 })
+    expect(summary).toEqual({ healthPct: 87.5, cells: 100, ncCells: 6, newNc: 1, recurring: 2, intermittent: 0, persistent: 3, chronic: 2, recovering: 1 })
   })
 
   it('reports no health and no cells when the technology has no data', () => {
     expect(bannerSummary(undefined, undefined)).toEqual({
-      healthPct: null, cells: 0, ncCells: 0, newNc: 0, recurring: 0, persistent: 0, recovering: 0
+      healthPct: null, cells: 0, ncCells: 0, newNc: 0, recurring: 0, intermittent: 0, persistent: 0, chronic: 0, recovering: 0
     })
   })
 })

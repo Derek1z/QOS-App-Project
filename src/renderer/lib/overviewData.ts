@@ -62,12 +62,14 @@ export function toKpiCardProps(c: DynamicKpiCardData): OverviewKpiCard {
 export function movementSeries(
   rows: NcMovementRow[],
   grain: Grain
-): Array<{ label: string; newNc: number; recurring: number; persistent: number; recovering: number }> {
+): Array<{ label: string; newNc: number; recurring: number; intermittent: number; persistent: number; chronic: number; recovering: number }> {
   return rows.map((r) => ({
     label: formatTimeLabel(r.weekStart, grain),
     newNc: r.newNc,
     recurring: r.recurring,
+    intermittent: r.intermittent,
     persistent: r.persistent,
+    chronic: r.chronic,
     recovering: r.recovering
   }))
 }
@@ -100,7 +102,7 @@ export function kpiFilterOptions(rows: NcMovementRow[]): Array<{ key: string; la
 export function bannerSummary(
   tech: TechHealthCard | undefined,
   latest: NcMovementRow | undefined
-): { healthPct: number | null; cells: number; ncCells: number; newNc: number; recurring: number; persistent: number; recovering: number } {
+): { healthPct: number | null; cells: number; ncCells: number; newNc: number; recurring: number; intermittent: number; persistent: number; chronic: number; recovering: number } {
   const cells = tech?.cellCount ?? 0
   return {
     healthPct: tech && cells > 0 ? tech.healthScore : null,
@@ -108,7 +110,9 @@ export function bannerSummary(
     ncCells: tech?.ncCellCount ?? 0,
     newNc: latest?.newNc ?? 0,
     recurring: latest?.recurring ?? 0,
+    intermittent: latest?.intermittent ?? 0,
     persistent: latest?.persistent ?? 0,
+    chronic: latest?.chronic ?? 0,
     recovering: latest?.recovering ?? 0
   }
 }

@@ -4,6 +4,7 @@ import type {
   NcLifecycleResult, NcLifecycleRow, PriorityRow, HealthResult, PriorityMode, Grain, Technology,
   CellIntelligenceResult, CellIntelligenceRow, CellKpiValue
 } from '../../../shared/api'
+import { LIFECYCLES, NC_LIFECYCLES, LIFECYCLE_STYLE, type Lifecycle } from '../../../shared/lifecycle'
 
 function renderBreachedKpis(kpis: CellKpiValue[] | undefined, fallbackScore: number, tech: Technology): React.JSX.Element {
   const breached = (kpis ?? []).filter((k) => k.breached)
@@ -74,36 +75,9 @@ function renderBreachedKpis(kpis: CellKpiValue[] | undefined, fallbackScore: num
 }
 
 function renderLifecycleBadge(lifecycle?: string, breachDays?: number): React.JSX.Element {
-  const lc = lifecycle || 'Persistent NC'
-  let bg = 'rgba(239, 68, 68, 0.15)'
-  let color = '#f87171'
-  let border = 'rgba(239, 68, 68, 0.3)'
-
-  if (lc === 'Recurring NC') {
-    bg = 'rgba(245, 158, 11, 0.15)'
-    color = '#fbbf24'
-    border = 'rgba(245, 158, 11, 0.3)'
-  } else if (lc === 'New NC') {
-    bg = 'rgba(234, 179, 8, 0.15)'
-    color = '#facc15'
-    border = 'rgba(234, 179, 8, 0.3)'
-  } else if (lc === 'Recovering') {
-    bg = 'rgba(6, 182, 212, 0.15)'
-    color = '#38bdf8'
-    border = 'rgba(6, 182, 212, 0.3)'
-  } else if (lc === 'Healthy') {
-    bg = 'rgba(16, 185, 129, 0.15)'
-    color = '#34d399'
-    border = 'rgba(16, 185, 129, 0.3)'
-  }
-
-  const streakStr = breachDays != null && breachDays > 0
-    ? `${breachDays}d streak`
-    : lc === 'Persistent NC'
-    ? '≥ 3w streak'
-    : lc === 'Recurring NC'
-    ? 'Intermittent'
-    : 'Active'
+  const lc = (LIFECYCLES as readonly string[]).includes(lifecycle ?? '') ? (lifecycle as Lifecycle) : 'Healthy'
+  const { bg, color, border } = LIFECYCLE_STYLE[lc]
+  const streakStr = breachDays != null && breachDays > 0 ? `${breachDays} bad day${breachDays === 1 ? '' : 's'}` : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
@@ -121,9 +95,11 @@ function renderLifecycleBadge(lifecycle?: string, breachDays?: number): React.JS
       >
         {lc}
       </span>
-      <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>
-        ⏱ {streakStr}
-      </span>
+      {streakStr && (
+        <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>
+          ⏱ {streakStr}
+        </span>
+      )}
     </div>
   )
 }
@@ -282,11 +258,12 @@ export default function NcIntelligence(): React.JSX.Element {
     setModule('investigation')
   }
 
-  const persistentCount = nc?.byLifecycle['Persistent NC'] ?? 8
-  const newCount = nc?.byLifecycle['New NC'] ?? 4
-  const recurringCount = nc?.byLifecycle['Recurring NC'] ?? 6
-  const recoveringCount = nc?.byLifecycle['Recovering'] ?? 5
-  const totalBreaches = persistentCount + newCount + recurringCount
+  const count = (l: Lifecycle): number => nc?.byLifecycle[l] ?? 0
+  const persistentCount = count('Persistent NC') + count('Chronic NC')
+  const newCount = count('New NC')
+  const recurringCount = count('Recurring NC') + count('Intermittent NC')
+  const recoveringCount = count('Recovering')
+  const totalBreaches = NC_LIFECYCLES.reduce((s, l) => s + count(l), 0)
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -496,7 +473,7 @@ export default function NcIntelligence(): React.JSX.Element {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
         <div style={{ background: 'var(--bg-card)', padding: '18px 20px', borderRadius: '14px', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            🔴 Persistent Breaches
+            🔴 Persistent / Chronic Breaches
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: '#f8fafc', margin: '6px 0' }}>
             {persistentCount} <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-dim)' }}>cells</span>
@@ -506,7 +483,7 @@ export default function NcIntelligence(): React.JSX.Element {
 
         <div style={{ background: 'var(--bg-card)', padding: '18px 20px', borderRadius: '14px', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            🟠 Recurring Breaches
+            🟠 Recurring / Intermittent Breaches
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: '#f8fafc', margin: '6px 0' }}>
             {recurringCount} <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-dim)' }}>cells</span>

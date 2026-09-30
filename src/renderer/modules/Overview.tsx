@@ -3,6 +3,7 @@ import { useAppStore } from '../store'
 import { KpiCard } from '../components/KpiCard'
 import TargetsModal from './TargetsModal'
 import type { ExecutiveOverviewResult, NcMovementRow } from '../../../shared/api'
+import { LIFECYCLE_STYLE } from '../../../shared/lifecycle'
 import {
   TOTALITY, toKpiCardProps, movementSeries, breachSeries, kpiFilterOptions, bannerSummary
 } from '../lib/overviewData'
@@ -497,10 +498,13 @@ export default function Overview(): React.JSX.Element {
                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#f8fafc' }}
                   />
                   <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
-                  <Bar dataKey="newNc" name="New NC" stackId="a" fill="#ef4444" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="recurring" name="Recurring NC" stackId="a" fill="#f59e0b" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="persistent" name="Persistent NC" stackId="a" fill="#8b5cf6" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="recovering" name="Recovering" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  {([
+                    ['newNc', 'New NC'], ['recurring', 'Recurring NC'], ['intermittent', 'Intermittent NC'],
+                    ['persistent', 'Persistent NC'], ['chronic', 'Chronic NC'], ['recovering', 'Recovering']
+                  ] as const).map(([key, label], i, all) => (
+                    <Bar key={key} dataKey={key} name={label} stackId="a" fill={LIFECYCLE_STYLE[label].color}
+                      radius={i === all.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             </div>

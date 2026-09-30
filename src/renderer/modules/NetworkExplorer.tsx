@@ -9,6 +9,7 @@ import type {
   Grain,
   Technology
 } from '../../../shared/api'
+import { LIFECYCLE_STYLE, type Lifecycle } from '../../../shared/lifecycle'
 import Chart from '../lib/Chart'
 import { cellDetailOption } from '../lib/cellCharts'
 
@@ -958,18 +959,8 @@ export default function NetworkExplorer(): React.JSX.Element {
                           fontWeight: 800,
                           padding: '2px 6px',
                           borderRadius: '4px',
-                          background:
-                            n.lifecycle === 'Persistent NC'
-                              ? 'rgba(239, 68, 68, 0.2)'
-                              : n.lifecycle === 'Recurring NC'
-                              ? 'rgba(251, 191, 36, 0.2)'
-                              : 'rgba(52, 211, 153, 0.2)',
-                          color:
-                            n.lifecycle === 'Persistent NC'
-                              ? '#f87171'
-                              : n.lifecycle === 'Recurring NC'
-                              ? '#fbbf24'
-                              : '#34d399'
+                          background: LIFECYCLE_STYLE[(n.lifecycle as Lifecycle) ?? 'Healthy']?.bg ?? LIFECYCLE_STYLE.Healthy.bg,
+                          color: LIFECYCLE_STYLE[(n.lifecycle as Lifecycle) ?? 'Healthy']?.color ?? LIFECYCLE_STYLE.Healthy.color
                         }}
                       >
                         {n.lifecycle}
@@ -1325,18 +1316,8 @@ export default function NetworkExplorer(): React.JSX.Element {
                     fontWeight: 800,
                     padding: '4px 10px',
                     borderRadius: '6px',
-                    background:
-                      detail.current.lifecycle === 'Persistent NC'
-                        ? 'rgba(239, 68, 68, 0.2)'
-                        : detail.current.lifecycle === 'Recurring NC'
-                        ? 'rgba(251, 191, 36, 0.2)'
-                        : 'rgba(52, 211, 153, 0.2)',
-                    color:
-                      detail.current.lifecycle === 'Persistent NC'
-                        ? '#f87171'
-                        : detail.current.lifecycle === 'Recurring NC'
-                        ? '#fbbf24'
-                        : '#34d399'
+                    background: LIFECYCLE_STYLE[(detail.current.lifecycle as Lifecycle) ?? 'Healthy']?.bg ?? LIFECYCLE_STYLE.Healthy.bg,
+                    color: LIFECYCLE_STYLE[(detail.current.lifecycle as Lifecycle) ?? 'Healthy']?.color ?? LIFECYCLE_STYLE.Healthy.color
                   }}
                 >
                   {detail.current.lifecycle}
@@ -1454,15 +1435,7 @@ export default function NetworkExplorer(): React.JSX.Element {
                         justifyContent: 'center'
                       }}
                     >
-                      {w.lifecycle === 'Persistent NC'
-                        ? 'P'
-                        : w.lifecycle === 'Recurring NC'
-                        ? 'R'
-                        : w.lifecycle === 'New NC'
-                        ? 'N'
-                        : w.lifecycle === 'Recovering'
-                        ? 'C'
-                        : '·'}
+                      {LIFECYCLE_STYLE[w.lifecycle as Lifecycle]?.short ?? '·'}
                     </div>
                   ))}
                 </div>

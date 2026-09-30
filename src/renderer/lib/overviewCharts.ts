@@ -1,5 +1,6 @@
 import type { EChartsOption } from 'echarts'
 import type { HealthComponentRow, NcMovementRow, Grain } from '../../../shared/api'
+import { LIFECYCLE_STYLE } from '../../../shared/lifecycle'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 
 function normalizeDateStr(dateStr: string): string {
@@ -144,7 +145,7 @@ export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'week
       textStyle: { color: PALETTE.dim, fontSize: 11 },
       itemWidth: 12,
       itemHeight: 8,
-      data: ['New NC', 'Recurring', 'Persistent', 'Recovering', 'NC rate']
+      data: ['New NC', 'Recurring', 'Intermittent', 'Persistent', 'Chronic', 'Recovering', 'NC rate']
     },
     xAxis: { type: 'category', data: timeLabels, axisLabel: axisLabelStyle(), axisLine: { lineStyle: { color: PALETTE.border } } },
     yAxis: [
@@ -166,10 +167,14 @@ export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'week
       }
     ],
     series: [
-      { ...base, name: 'New NC', data: movement.map((m) => m.newNc), lineStyle: { color: PALETTE.warn }, itemStyle: { color: PALETTE.warn } },
-      { ...base, name: 'Recurring', data: movement.map((m) => m.recurring), lineStyle: { color: PALETTE.accent }, itemStyle: { color: PALETTE.accent } },
-      { ...base, name: 'Persistent', data: movement.map((m) => m.persistent), lineStyle: { color: PALETTE.danger }, itemStyle: { color: PALETTE.danger } },
-      { ...base, name: 'Recovering', data: movement.map((m) => m.recovering), lineStyle: { color: PALETTE.green }, itemStyle: { color: PALETTE.green } },
+      ...([
+        ['New NC', 'newNc', 'New NC'], ['Recurring', 'recurring', 'Recurring NC'],
+        ['Intermittent', 'intermittent', 'Intermittent NC'], ['Persistent', 'persistent', 'Persistent NC'],
+        ['Chronic', 'chronic', 'Chronic NC'], ['Recovering', 'recovering', 'Recovering']
+      ] as const).map(([name, key, label]) => ({
+        ...base, name, data: movement.map((m) => m[key]),
+        lineStyle: { color: LIFECYCLE_STYLE[label].color }, itemStyle: { color: LIFECYCLE_STYLE[label].color }
+      })),
       {
         type: 'line',
         name: 'NC rate',

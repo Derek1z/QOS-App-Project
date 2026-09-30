@@ -273,6 +273,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (byName['ACC-001-A'] !== 'New NC') {
     throw new Error('ACC-001-A should be New NC (2nd week of its first run): ' + JSON.stringify(byName))
   }
+  if (bySev['ACC-001-A'] !== 'High') {
+    throw new Error('ACC-001-A should be High (New NC + worsening + PRB 89 vs 80): ' + JSON.stringify(bySev))
+  }
   if (byName['ACC-001-B'] !== 'Healthy') throw new Error('ACC-001-B should be Healthy')
   if (byName['KUM-002-A'] !== 'New NC') throw new Error('KUM-002-A should be New NC')
   const newNc = await cur3.connection.runAndReadAll(

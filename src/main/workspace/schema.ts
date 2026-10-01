@@ -158,6 +158,11 @@ export const SCHEMA_SQL: string[] = [
      date_id INTEGER PRIMARY KEY,
      observed_cells BIGINT, expected_cells BIGINT, coverage_pct DOUBLE, missing_cells JSON
    )`,
+  `CREATE TABLE IF NOT EXISTS period_coverage (
+     grain VARCHAR NOT NULL, period_start DATE NOT NULL,
+     days_with_data INTEGER NOT NULL, days_in_period INTEGER NOT NULL, is_complete BOOLEAN NOT NULL,
+     PRIMARY KEY (grain, period_start)
+   )`,
 
   // --- per-technology KPI definitions (spec §54a) ---
   `CREATE SEQUENCE IF NOT EXISTS seq_kpi_defs START 1`,

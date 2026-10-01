@@ -18,9 +18,10 @@ import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
 /** Bumped when a change to NC-period labelling means old workspaces must be
  *  relabelled once before their history reads correctly (2026-09-30:
  *  seven-label lifecycle; 2026-10-01: a week counts for the months its bad
- *  days fall in). Written at creation for new workspaces so they never
- *  trigger the backfill; checked on every writable open. */
-const NC_PERIODS_MARKER = '2026-10-01'
+ *  days fall in; 2026-10-01.2: complete periods — period_coverage backfill,
+ *  partial non-NC periods skipped). Written at creation for new workspaces
+ *  so they never trigger the backfill; checked on every writable open. */
+const NC_PERIODS_MARKER = '2026-10-01.2'
 
 export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
   const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
@@ -152,6 +153,11 @@ async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> 
     const fld = NC_PERIOD_FIELDS[k]
     await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS ${fld.column} INTEGER DEFAULT ${fld.default}`)
   }
+  await connection.run(`CREATE TABLE IF NOT EXISTS period_coverage (
+     grain VARCHAR NOT NULL, period_start DATE NOT NULL,
+     days_with_data INTEGER NOT NULL, days_in_period INTEGER NOT NULL, is_complete BOOLEAN NOT NULL,
+     PRIMARY KEY (grain, period_start)
+   )`)
   await connection.run(`CREATE TABLE IF NOT EXISTS maintenance_settings (
      id INTEGER PRIMARY KEY CHECK (id = 1),
      enabled BOOLEAN DEFAULT false,

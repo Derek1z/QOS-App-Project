@@ -67,7 +67,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const marker = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01')
+    expect(String(marker)).toBe('2026-10-01.2')
 
     // Overwrite the same row again; with the marker present a second reopen
     // must not recompute, so the overwritten value survives.
@@ -99,7 +99,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const marker = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01')
+    expect(String(marker)).toBe('2026-10-01.2')
   })
 
   it('a newly created workspace writes the marker so it never triggers the backfill', { timeout: 30000 }, async () => {
@@ -107,6 +107,6 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const marker = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01')
+    expect(String(marker)).toBe('2026-10-01.2')
   })
 })

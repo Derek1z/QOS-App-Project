@@ -1,6 +1,7 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import type { Technology } from '../../../shared/api'
 import { coreBreachDaysSql } from '../analytics/ncRule'
+import { refreshPeriodCoverage } from '../analytics/periods'
 
 /** Incremental aggregate refresh (spec §66): only affected days/weeks/months are recomputed. */
 
@@ -295,5 +296,6 @@ export async function updateCoverage(conn: DuckDBConnection, dateIds: number[]):
       FROM dim_date d WHERE d.date_id IN (${idList})
     ) hist USING (date_id)
   `)
+  await refreshPeriodCoverage(conn, dateIds)
 }
 

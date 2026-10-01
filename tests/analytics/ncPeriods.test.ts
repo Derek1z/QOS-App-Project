@@ -93,6 +93,19 @@ describe('NC periods (spec §3, §4)', () => {
     expect((await labels(ws, 'RUN-56', 'monthly'))['2026-08-01']).toBe('Chronic NC')
   })
 
+  it('a week counts for the months its bad days fall in, not the month it starts in', { timeout: 60000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    await insertCells(ws.conn, ['WEDNESDAYS'])
+    // Wednesdays 20 May .. 15 Jul: weeks starting 18 May .. 13 Jul are NC; the 7th
+    // (Mon 29 Jun) is Chronic, but its only bad day is Wed 1 Jul.
+    await days(ws, 1, '2026-05-01', '2026-07-31', `dayofweek(d) = 3 AND d BETWEEN DATE '2026-05-20' AND DATE '2026-07-15'`)
+    await build(ws)
+    expect((await labels(ws, 'WEDNESDAYS', 'weekly'))['2026-06-29']).toBe('Chronic NC')
+    const m = await labels(ws, 'WEDNESDAYS', 'monthly')
+    expect(m['2026-06-01']).toBe('Persistent NC') // its own weeks reach Persistent; the 29 Jun week's bad day is in July
+    expect(m['2026-07-01']).toBe('Chronic NC') // 1, 8 and 15 Jul: NC month holding the chronic weeks' bad days
+  })
+
   it('month edge: a run ending on the 2nd leaves that month not NC', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('3G')
     await insertCells(ws.conn, ['ENDS-2ND'])

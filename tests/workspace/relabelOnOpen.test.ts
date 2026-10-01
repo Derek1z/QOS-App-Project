@@ -67,7 +67,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const marker = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-09-30')
+    expect(String(marker)).toBe('2026-10-01')
 
     // Overwrite the same row again; with the marker present a second reopen
     // must not recompute, so the overwritten value survives.
@@ -78,11 +78,35 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     expect(await lifecycleAt(ws, 'TUESDAYS', '2026-07-21')).toBe('Recurring NC')
   })
 
+  it('a workspace relabelled under the earlier month rule is relabelled again', { timeout: 60000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    await insertCells(ws.conn, ['TUESDAYS'])
+    await days(ws, 1, '2026-07-06', '2026-08-30', `dayofweek(d) = 2`)
+    await recomputeAllAggregates(ws.conn)
+    await refreshAllIntelligence(ws.conn)
+    // Stamped by the 2026-09-30 build, whose monthly roll-up counted a week for
+    // the month it starts in; the month rule changed on 2026-10-01.
+    await ws.conn.run(`UPDATE cell_nc_lifecycle SET lifecycle = 'Recurring NC' WHERE grain = 'daily' AND is_nc`)
+    await ws.conn.run(
+      `INSERT INTO workspace_meta (key, value) VALUES ('nc_periods', '2026-09-30')
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`
+    )
+    const manager = await import('../../src/main/workspace/manager')
+    await manager.closeWorkspace()
+    await manager.openWorkspace(join(ws.dir, 'test.qosdb'))
+    ws.conn = manager.getCurrent()!.connection
+    expect(await lifecycleAt(ws, 'TUESDAYS', '2026-07-21')).toBe('Intermittent NC')
+    const marker = (await ws.conn.runAndReadAll(
+      `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
+    )).getRowObjects()[0]?.value
+    expect(String(marker)).toBe('2026-10-01')
+  })
+
   it('a newly created workspace writes the marker so it never triggers the backfill', { timeout: 30000 }, async () => {
     ws = await openRealWorkspace('3G')
     const marker = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-09-30')
+    expect(String(marker)).toBe('2026-10-01')
   })
 })

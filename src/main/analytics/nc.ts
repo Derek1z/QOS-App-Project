@@ -127,16 +127,25 @@ const ROLL_UP_SQL = [
      GROUP BY wk.cell_id, wk.period_date
    ) x
    WHERE w.grain = 'weekly' AND w.cell_id = x.cell_id AND w.period_date = x.period_date AND x.worst > w.lc_rank`,
+  // A month takes the worst of its own days and of every week with a bad day
+  // in that month — a week straddling two months counts where its bad days are.
   `UPDATE stg_nc_lifecycle AS m SET lc_rank = x.worst
    FROM (
-     SELECT mo.cell_id, mo.period_date, max(f.lc_rank) AS worst
-     FROM stg_nc_lifecycle mo
-     JOIN stg_nc_lifecycle f ON f.cell_id = mo.cell_id AND f.grain IN ('daily', 'weekly')
-       AND CAST(date_trunc('month', f.period_date) AS DATE) = mo.period_date
-     WHERE mo.grain = 'monthly' AND mo.is_nc
-     GROUP BY mo.cell_id, mo.period_date
+     SELECT cell_id, month_start, max(lc_rank) AS worst
+     FROM (
+       SELECT cell_id, CAST(date_trunc('month', period_date) AS DATE) AS month_start, lc_rank
+       FROM stg_nc_lifecycle WHERE grain = 'daily'
+       UNION ALL
+       SELECT DISTINCT wk.cell_id, CAST(date_trunc('month', d.period_date) AS DATE), wk.lc_rank
+       FROM stg_nc_lifecycle wk
+       JOIN stg_nc_lifecycle d ON d.cell_id = wk.cell_id AND d.grain = 'daily' AND d.is_nc
+         AND d.period_date BETWEEN wk.period_date AND wk.period_date + 6
+       WHERE wk.grain = 'weekly'
+     )
+     GROUP BY cell_id, month_start
    ) x
-   WHERE m.grain = 'monthly' AND m.cell_id = x.cell_id AND m.period_date = x.period_date AND x.worst > m.lc_rank`
+   WHERE m.grain = 'monthly' AND m.is_nc AND m.cell_id = x.cell_id AND m.period_date = x.month_start
+     AND x.worst > m.lc_rank`
 ]
 
 /** Recompute lifecycle, trend and severity for the given cells across their

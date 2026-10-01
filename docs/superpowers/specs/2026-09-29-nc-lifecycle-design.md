@@ -61,7 +61,7 @@ Window rules use calendar distance between period starts: days for daily, weeks 
 After each grain is labelled on its own:
 
 - **Week** label = the more severe of its own label and the most severe label of its days.
-- **Month** label = the more severe of its own label, the most severe label of its days, and the most severe label of the weeks that *start* in that month.
+- **Month** label = the more severe of its own label, the most severe label of its days, and the most severe label of every week that has a bad day in that month. A week that straddles two months counts for the month(s) its bad days fall in (decided 2026-10-01: a week starting 29 Jan whose bad days are all in February raises February, not January; a chronic week is always visible in the month that holds its bad days).
 
 The roll-up only raises a period that is itself NC, so the `is_nc` flag and the label never contradict each other.
 
@@ -117,7 +117,7 @@ Every save already creates a new ruleset version, recomputes aggregates and inte
 | Renderer: `NcIntelligence`, `NetworkExplorer`, `Overview`, `overviewCharts`, `comparisonCharts`, `modules/TargetsModal`, `previewApi` | Intermittent colour and filter entry; NC Periods tab; mock data uses the new labels |
 | `smoke.ts` | ACC-001-A (2nd consecutive NC week, no earlier run) becomes New NC; add the Recurring and Intermittent cases |
 
-After upgrading, existing workspaces need **Data Manager → Maintenance → Rebuild Intelligence** once to relabel history.
+After upgrading, an existing workspace relabels its history once, automatically, on its first writable open (`workspace_meta` key `nc_periods`; the value is bumped whenever the labelling rules change).
 
 ---
 

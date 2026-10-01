@@ -16,10 +16,11 @@ import type { WorkspaceInfo, Technology } from '../../../shared/api'
 import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
 
 /** Bumped when a change to NC-period labelling means old workspaces must be
- *  relabelled once before their history reads correctly (fix wave 2026-09-30:
- *  seven-label lifecycle). Written at creation for new workspaces so they
- *  never trigger the backfill; checked on every writable open. */
-const NC_PERIODS_MARKER = '2026-09-30'
+ *  relabelled once before their history reads correctly (2026-09-30:
+ *  seven-label lifecycle; 2026-10-01: a week counts for the months its bad
+ *  days fall in). Written at creation for new workspaces so they never
+ *  trigger the backfill; checked on every writable open. */
+const NC_PERIODS_MARKER = '2026-10-01'
 
 export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
   const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))

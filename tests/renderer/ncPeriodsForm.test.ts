@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm, ncSettingsOf, settingsEqual } from '../../src/renderer/lib/ncPeriodsForm'
+import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm, ncSettingsOf, settingsEqual, panelNotice } from '../../src/renderer/lib/ncPeriodsForm'
 import { NC_PERIOD_KEYS, DEFAULT_NC_PERIODS } from '../../shared/ruleDefaults'
 
 describe('NC Periods form', () => {
@@ -29,5 +29,17 @@ describe('NC Periods form', () => {
   it('settingsEqual compares only the NC-period keys (fix wave 2026-09-30, item 5)', () => {
     expect(settingsEqual(DEFAULT_NC_PERIODS, { ...DEFAULT_NC_PERIODS })).toBe(true)
     expect(settingsEqual(DEFAULT_NC_PERIODS, { ...DEFAULT_NC_PERIODS, recoveryWeeks: 4 })).toBe(false)
+  })
+
+  it('shows the save confirmation even though the saved form now equals the loaded settings', () => {
+    const saved = { ok: true, text: 'Saved as ruleset v2. NC periods recalculated.' }
+    expect(panelNotice(null, saved)).toEqual(saved)
+  })
+
+  it('shows a validation problem before any earlier message', () => {
+    const saved = { ok: true, text: 'Saved as ruleset v2. NC periods recalculated.' }
+    expect(panelNotice('Persistent must be shorter than Chronic (weeks)', saved))
+      .toEqual({ ok: false, text: 'Persistent must be shorter than Chronic (weeks)' })
+    expect(panelNotice(null, null)).toBeNull()
   })
 })

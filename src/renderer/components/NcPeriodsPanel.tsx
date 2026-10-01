@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { emit } from '../store'
 import { errMsg } from '../lib/flows'
 import { NC_PERIOD_FIELDS, type NcPeriodKey, type NcPeriodSettings } from '../../../shared/ruleDefaults'
-import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm, ncSettingsOf, settingsEqual } from '../lib/ncPeriodsForm'
+import { NC_PERIOD_GROUPS, dailyEquivalent, formToSettings, settingsToForm, ncSettingsOf, settingsEqual, panelNotice } from '../lib/ncPeriodsForm'
 
 const input: React.CSSProperties = {
   width: '64px', background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)',
@@ -32,6 +32,7 @@ export default function NcPeriodsPanel(): React.JSX.Element {
   // every cell for nothing (fix wave 2026-09-30, item 5): compare against the
   // settings as loaded and make Save a no-op while they match.
   const unchanged = settings != null && loaded != null && settingsEqual(settings, loaded)
+  const notice = panelNotice(problem, message)
 
   const save = async (): Promise<void> => {
     const { settings, problem: p } = formToSettings(form)
@@ -75,7 +76,10 @@ export default function NcPeriodsPanel(): React.JSX.Element {
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <input
                       type="number" min={fld.min} max={fld.max} step={1} value={form[k]} style={input}
-                      onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                      onChange={(e) => {
+                        setForm({ ...form, [k]: e.target.value })
+                        setMessage(null)
+                      }}
                     />
                     <span style={{ color: 'var(--text-dim)' }}>{fld.unit}</span>
                   </span>
@@ -88,13 +92,13 @@ export default function NcPeriodsPanel(): React.JSX.Element {
           </div>
         </div>
       ))}
-      {(problem || message) && !unchanged && (
+      {notice && (
         <div style={{
           padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
-          color: problem || (message && !message.ok) ? '#f87171' : '#34d399',
-          background: problem || (message && !message.ok) ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)'
+          color: notice.ok ? '#34d399' : '#f87171',
+          background: notice.ok ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'
         }}>
-          {problem ?? message?.text}
+          {notice.text}
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

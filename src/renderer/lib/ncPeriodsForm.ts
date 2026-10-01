@@ -38,3 +38,14 @@ export function ncSettingsOf(r: NcPeriodSettings): NcPeriodSettings {
 export function settingsEqual(a: NcPeriodSettings, b: NcPeriodSettings): boolean {
   return NC_PERIOD_KEYS.every((k) => a[k] === b[k])
 }
+
+/** What the panel's notice line shows: a validation problem first, otherwise
+ *  the last save's result. Whether the form differs from the loaded settings
+ *  must not hide it — right after a save the two are equal by definition. */
+export function panelNotice(
+  problem: string | null,
+  message: { ok: boolean; text: string } | null
+): { ok: boolean; text: string } | null {
+  if (problem) return { ok: false, text: problem }
+  return message
+}

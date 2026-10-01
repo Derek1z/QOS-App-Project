@@ -1366,7 +1366,7 @@ export default function NetworkExplorer(): React.JSX.Element {
                         : '#94a3b8'
                   }}
                 >
-                  Trend: {detail.current.trend}
+                  Trend: {detail.current.trend ?? '—'}
                 </span>
 
                 {detail.current.priorityScore != null && (

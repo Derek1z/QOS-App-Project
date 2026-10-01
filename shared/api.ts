@@ -676,7 +676,7 @@ export interface NcLifecycleRow {
   weekStart: string
   isNc: boolean
   lifecycle: Lifecycle
-  trend: Trend
+  trend: Trend | null
   severity: Severity
   breachDays: number
   prbAvg: number | null
@@ -785,7 +785,7 @@ export interface CellIntelligenceRow {
   weekStart: string
   isNc: boolean
   lifecycle: Lifecycle
-  trend: Trend
+  trend: Trend | null
   severity: Severity
   prbAvg: number | null
   breachDays: number
@@ -827,7 +827,7 @@ export interface CellDetail {
   current: {
     weekStart: string
     lifecycle: Lifecycle
-    trend: Trend
+    trend: Trend | null
     severity: Severity
     priorityScore: number | null
     priorityBand: PriorityBand | null

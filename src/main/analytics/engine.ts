@@ -14,9 +14,9 @@ export async function refreshIntelligence(conn: DuckDBConnection, dateIds: numbe
     SELECT DISTINCT f.cell_id
     FROM fact_cell_daily f
     JOIN dim_date d ON d.date_id = f.date_id
-    WHERE d.week_start IN (
-      SELECT DISTINCT week_start FROM dim_date WHERE date_id IN (${idList})
-    )
+    WHERE d.week_start IN (SELECT DISTINCT week_start FROM dim_date WHERE date_id IN (${idList}))
+       OR date_trunc('month', d.date) IN (
+            SELECT DISTINCT date_trunc('month', date) FROM dim_date WHERE date_id IN (${idList}))
   `)
   const cellIds = r.getRowObjects().map((x) => Number(x.cell_id))
   if (cellIds.length === 0) return

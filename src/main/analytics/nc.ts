@@ -4,6 +4,7 @@ import { coreBreachDaysSql, WORKSPACE_TECH_SQL } from './ncRule'
 import { getPrbTarget } from './targets'
 import { periodsFor, type NcGrain, type GrainPeriods } from '../../../shared/ruleDefaults'
 import { LIFECYCLE_RANK as R, SEVERITY_BASE, lifecycleFromRankSql, rankTableSql } from '../../../shared/lifecycle'
+import { periodCoverageJoin, completeSql } from './periods'
 
 /** NC periods (spec docs/superpowers/specs/2026-09-29-nc-lifecycle-design.md).
  *  1. Label each grain on its own (§3): runs of NC periods (a period with no
@@ -28,7 +29,8 @@ function sourceSql(grain: NcGrain, idList: string): string {
              CAST(CASE WHEN ex.cell_id IS NOT NULL THEN 1 ELSE 0 END AS DOUBLE) AS breach_days,
              1.0 AS observed_days, f.prb_utilization AS prb_avg,
              f.data_volume_mb AS vol, f.connected_users AS usr,
-             f.dl_throughput_kbps AS thr, f.availability_pct AS avail
+             f.dl_throughput_kbps AS thr, f.availability_pct AS avail,
+             true AS complete
       FROM fact_cell_daily f
       JOIN dim_date d USING (date_id)
       LEFT JOIN (${coreBreachDaysSql()}) ex ON ex.cell_id = f.cell_id AND ex.date_id = f.date_id
@@ -40,8 +42,10 @@ function sourceSql(grain: NcGrain, idList: string): string {
              CAST(coalesce(w.breach_days, 0) AS DOUBLE) AS breach_days,
              CAST(greatest(coalesce(w.observed_days, 1), 1) AS DOUBLE) AS observed_days,
              w.prb_avg, w.data_volume_mb_sum AS vol, w.connected_users_sum AS usr,
-             w.dl_throughput_kbps_avg AS thr, w.availability_pct_avg AS avail
+             w.dl_throughput_kbps_avg AS thr, w.availability_pct_avg AS avail,
+             ${completeSql(grain)} AS complete
       FROM ${table} w
+      ${periodCoverageJoin(grain, `w.${col}`)}
       WHERE w.cell_id IN (${idList})`
 }
 
@@ -58,8 +62,10 @@ function rankSql(p: GrainPeriods): string {
       ELSE ${R['Healthy']} END`
 }
 
-/** Improving/Worsening from five period-over-period signals (spec §38). */
+/** Improving/Worsening from five period-over-period signals (spec §38). A
+ *  partial period has no trend (spec §3.4). */
 const TREND_SQL = `CASE
+    WHEN NOT complete THEN NULL
     WHEN prev_is_nc IS NULL AND prev_prb IS NULL THEN 'Stable'
     WHEN improving - worsening >= 2 THEN 'Improving'
     WHEN improving - worsening <= -2 THEN 'Worsening'
@@ -67,21 +73,22 @@ const TREND_SQL = `CASE
 
 function stageGrainSql(grain: NcGrain, idList: string, p: GrainPeriods): string {
   const byCell = 'PARTITION BY cell_id ORDER BY pidx'
+  const byCellComplete = 'PARTITION BY cell_id, complete ORDER BY pidx'
   return `
     INSERT INTO stg_nc_lifecycle
     WITH src AS (
-      SELECT *, ${PIDX[grain]} AS pidx FROM (${sourceSql(grain, idList)})
+      SELECT *, ${PIDX[grain]} AS pidx FROM (${sourceSql(grain, idList)}) WHERE complete OR is_nc
     ),
     runs AS (
       SELECT *,
         sum(CASE WHEN is_nc THEN 0 ELSE 1 END) OVER (${byCell}) AS grp,
         max(CASE WHEN is_nc THEN pidx END) OVER (${byCell} ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_nc_pidx,
-        lag(is_nc) OVER (${byCell}) AS prev_is_nc,
-        lag(prb_avg) OVER (${byCell}) AS prev_prb,
-        lag(breach_days) OVER (${byCell}) AS prev_breach,
-        lag(thr) OVER (${byCell}) AS prev_thr,
-        lag(vol / observed_days) OVER (${byCell}) AS prev_vol_pd,
-        lag(usr / observed_days) OVER (${byCell}) AS prev_usr_pd
+        lag(is_nc) OVER (${byCellComplete}) AS prev_is_nc,
+        lag(prb_avg) OVER (${byCellComplete}) AS prev_prb,
+        lag(breach_days) OVER (${byCellComplete}) AS prev_breach,
+        lag(thr) OVER (${byCellComplete}) AS prev_thr,
+        lag(vol / observed_days) OVER (${byCellComplete}) AS prev_vol_pd,
+        lag(usr / observed_days) OVER (${byCellComplete}) AS prev_usr_pd
       FROM src
     ),
     streaks AS (
@@ -113,6 +120,18 @@ function stageGrainSql(grain: NcGrain, idList: string, p: GrainPeriods): string 
     )
     SELECT cell_id, '${grain}', period_date, is_nc, ${rankSql(p)}, ${TREND_SQL}, breach_days, prb_avg, avail
     FROM scored`
+}
+
+/** Partial periods that are not NC (spec 2026-10-01 §3.3): skipped by runs, so
+ *  they carry the cell's last label of the grain, with is_nc false and no trend. */
+function stageSkippedSql(grain: NcGrain, idList: string): string {
+  return `
+    INSERT INTO stg_nc_lifecycle
+    SELECT s.cell_id, '${grain}', s.period_date, false, coalesce(k.lc_rank, ${R['Healthy']}), NULL,
+           s.breach_days, s.prb_avg, s.avail
+    FROM (SELECT * FROM (${sourceSql(grain, idList)}) WHERE NOT complete AND NOT is_nc) s
+    ASOF LEFT JOIN (SELECT cell_id, period_date, lc_rank FROM stg_nc_lifecycle WHERE grain = '${grain}') k
+      ON s.cell_id = k.cell_id AND s.period_date > k.period_date`
 }
 
 /** Raise NC weeks and months to the worst label inside them (spec §4). */
@@ -171,7 +190,10 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
     await conn.run(`CREATE OR REPLACE TEMP TABLE stg_nc_lifecycle (
       cell_id BIGINT, grain VARCHAR, period_date DATE, is_nc BOOLEAN, lc_rank INTEGER,
       trend VARCHAR, breach_days DOUBLE, prb_avg DOUBLE, avail DOUBLE)`)
-    for (const g of grains) await conn.run(stageGrainSql(g, idList, periodsFor(g, rules)))
+    for (const g of grains) {
+      await conn.run(stageGrainSql(g, idList, periodsFor(g, rules)))
+      if (g !== 'daily') await conn.run(stageSkippedSql(g, idList))
+    }
     for (const sql of ROLL_UP_SQL) await conn.run(sql)
 
     await conn.run(`DELETE FROM cell_nc_lifecycle WHERE cell_id IN (${idList})`)

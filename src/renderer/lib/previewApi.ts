@@ -650,7 +650,7 @@ function demoNcLifecycle(): NcLifecycleResult {
   let ncCells = 0
   for (const c of cells) {
     byLifecycle[c.lifecycle]++
-    byTrend[c.trend]++
+    if (c.trend) byTrend[c.trend]++
     bySeverity[c.severity]++
     if (c.isNc) ncCells++
   }

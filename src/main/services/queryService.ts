@@ -321,7 +321,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     weekStart: String(x.period_start ?? ''),
     isNc: Boolean(x.is_nc),
     lifecycle: String(x.lifecycle) as NcLifecycleRow['lifecycle'],
-    trend: String(x.trend) as NcLifecycleRow['trend'],
+    trend: x.trend == null ? null : (String(x.trend) as NcLifecycleRow['trend']),
     severity: String(x.severity) as NcLifecycleRow['severity'],
     breachDays: Number(x.breach_days ?? 0),
     prbAvg: x.prb_avg == null ? null : Number(x.prb_avg)
@@ -333,7 +333,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
   let ncCells = 0
   for (const c of cells) {
     byLifecycle[c.lifecycle]++
-    byTrend[c.trend]++
+    if (c.trend) byTrend[c.trend]++
     bySeverity[c.severity]++
     if (c.isNc) ncCells++
   }
@@ -568,7 +568,7 @@ export async function getCellIntelligence(
     weekStart: weekOf(x),
     isNc: Boolean(x.is_nc),
     lifecycle: String(x.lifecycle) as Lifecycle,
-    trend: String(x.trend) as Trend,
+    trend: x.trend == null ? null : (String(x.trend) as Trend),
     severity: String(x.severity) as Severity,
     prbAvg: x.prb_avg == null ? null : Number(x.prb_avg),
     breachDays: Number(x.breach_days ?? 0),
@@ -773,7 +773,7 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
       ? {
           weekStart: String(life.week_start),
           lifecycle: String(life.lifecycle) as Lifecycle,
-          trend: String(life.trend) as Trend,
+          trend: life.trend == null ? null : (String(life.trend) as Trend),
           severity: String(life.severity) as Severity,
           priorityScore: cur ? Number(cur.score) : null,
           priorityBand: cur ? (String(cur.band) as NonNullable<CellDetail['current']>['priorityBand']) : null,

@@ -656,6 +656,7 @@ function demoNcLifecycle(): NcLifecycleResult {
   }
   return {
     weekStart,
+    periodComplete: true,
     totalCells: cells.length,
     ncCells,
     ncRate: Math.round((ncCells / cells.length) * 1000) / 10,
@@ -3528,6 +3529,7 @@ export const previewApi: Api & { demo: true } = {
       const { min, max } = factDateRange()
       return {
         asOf: max,
+        periodComplete: true,
         periodLabel: `Week of ${max}`,
         activeTechnology: '4G',
         availableKpiCards: [],

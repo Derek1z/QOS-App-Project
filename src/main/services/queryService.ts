@@ -27,6 +27,7 @@ import { getPrbTarget } from '../analytics/targets'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
 import { listKpiDefs, workspaceTechnology } from './kpiService'
+import { latestPeriodSql, latestWeekEndDateIdSql } from '../analytics/periods'
 
 /** Spec §64: UI modules call centralized analytics interfaces, not raw SQL. */
 
@@ -57,7 +58,7 @@ export async function getKpiOverview(limit = 8, _grain: Grain = 'weekly'): Promi
   const tech: Technology = raw === '2G' || raw === '3G' ? (String(raw) as Technology) : '4G'
 
   const latestR = await conn.runAndReadAll(
-    `SELECT max(week_start) AS ws FROM agg_cell_kpi_weekly`
+    `SELECT CAST(${latestPeriodSql('weekly')} AS VARCHAR) AS ws`
   )
   const weekStart = latestR.getRowObjects()[0]?.ws
   if (weekStart == null) return { technology: tech, weekStart: null, kpis: [], worstCells: [] }
@@ -136,7 +137,7 @@ export async function getKpiOverview(limit = 8, _grain: Grain = 'weekly'): Promi
      FROM agg_cell_kpi_weekly w
      JOIN kpi_defs k ON k.kpi_id = w.kpi_id
      WHERE k.technology = ? AND k.active AND k.target IS NOT NULL
-       AND w.week_start >= (SELECT max(week_start) FROM agg_cell_kpi_weekly) - INTERVAL 11 WEEK
+       AND w.week_start >= ${latestPeriodSql('weekly')} - INTERVAL 11 WEEK
      GROUP BY k.kpi_key, w.week_start
      ORDER BY w.week_start`,
     [tech]
@@ -288,6 +289,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
   await ensureGrainLifecyclePopulated(conn, safeGrain)
   const empty: NcLifecycleResult = {
     weekStart: null,
+    periodComplete: true,
     totalCells: 0,
     ncCells: 0,
     ncRate: null,
@@ -309,7 +311,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     LEFT JOIN dim_district d ON d.district_id = c.district_id
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
     WHERE l.ruleset_version = ${rules.version} AND l.grain = '${safeGrain}'
-      AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = '${safeGrain}')
+      AND l.period_start = ${latestPeriodSql(safeGrain)}
     ORDER BY l.severity DESC, l.lifecycle, c.name
   `)
   const cells: NcLifecycleRow[] = r.getRowObjects().map((x) => ({
@@ -337,8 +339,13 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     bySeverity[c.severity]++
     if (c.isNc) ncCells++
   }
+  const pcR = await conn.runAndReadAll(
+    `SELECT ${safeGrain === 'daily' ? 'true' : `coalesce((SELECT is_complete FROM period_coverage WHERE grain = '${safeGrain}' AND period_start = ${latestPeriodSql(safeGrain)}), true)`} AS c`
+  )
+  const periodComplete = Boolean(pcR.getRowObjects()[0]?.c ?? true)
   return {
     weekStart,
+    periodComplete,
     totalCells: cells.length,
     ncCells,
     ncRate: cells.length > 0 ? Math.round((ncCells / cells.length) * 1000) / 10 : null,
@@ -536,7 +543,7 @@ export async function getCellIntelligence(
     ON p.cell_id = l.cell_id AND p.mode = 'balanced' AND p.as_of = l.period_start
     WHERE l.grain = '${g}'
       AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-      AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = '${g}')
+      AND l.period_start = ${latestPeriodSql(g)}
       ${where.length > 0 ? `AND ${where.join(' AND ')}` : ''}
   `
   const totalR = await conn.runAndReadAll(`SELECT count(*) AS n ${base}`)
@@ -680,7 +687,7 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
      WHERE cell_id = ${numCellId} AND grain = '${g}'
        AND ruleset_version = (SELECT max(version) FROM ruleset)
        AND period_start = (SELECT max(period_start) FROM cell_nc_lifecycle
-         WHERE cell_id = ${numCellId} AND grain = '${g}')
+         WHERE cell_id = ${numCellId} AND grain = '${g}' AND period_start <= ${latestPeriodSql(g)})
      LIMIT 1`
   )
   const life = lifeR.getRowObjects()[0]
@@ -801,7 +808,7 @@ export async function getHealth(grain: Grain = 'weekly'): Promise<HealthResult> 
     LEFT JOIN dim_district d ON d.district_id = c.district_id
     LEFT JOIN dim_region rg ON rg.region_id = c.region_id
     JOIN dim_date dt ON dt.date_id = h.date_id
-    WHERE h.date_id = (SELECT max(date_id) FROM cell_health_history)
+    WHERE h.date_id = ${latestWeekEndDateIdSql()}
     ORDER BY h.health_score ASC, h.cell_id
     LIMIT 200
   `)
@@ -1627,7 +1634,7 @@ export async function getExplorer(
       LEFT JOIN cell_nc_lifecycle l
         ON l.cell_id = c.cell_id AND l.grain = 'weekly'
         AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-        AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+        AND l.period_start = ${latestPeriodSql('weekly')}
       LEFT JOIN cell_priority_history p
         ON p.cell_id = c.cell_id AND p.mode = 'balanced'
         AND p.as_of = (SELECT max(as_of) FROM cell_priority_history WHERE mode = 'balanced')`
@@ -1677,9 +1684,9 @@ export async function getExplorer(
      JOIN dim_district d ON d.district_id = c.district_id
      JOIN dim_region rg ON rg.region_id = c.region_id
      LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
-       AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
+       AND h.date_id = ${latestWeekEndDateIdSql()}
      LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
-       AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+       AND w.week_start = ${latestPeriodSql('weekly')}
      ${e.extra}
      ${whereSql}
      GROUP BY ${e.id}, ${e.name}${groupBy}
@@ -1740,9 +1747,9 @@ export async function getRegionMap(
     FROM dim_region r
     LEFT JOIN dim_cell c ON c.region_id = r.region_id
     LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
-      AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
+      AND h.date_id = ${latestWeekEndDateIdSql()}
     LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
-      AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+      AND w.week_start = ${latestPeriodSql('weekly')}
     LEFT JOIN fact_cell_daily f ON f.cell_id = c.cell_id
       AND f.date_id = (SELECT max(date_id) FROM fact_cell_daily)
     GROUP BY r.region_id, r.name
@@ -1761,7 +1768,7 @@ export async function getRegionMap(
     FROM dim_region r
     JOIN dim_cell c ON c.region_id = r.region_id
     JOIN agg_cell_kpi_weekly w ON w.cell_id = c.cell_id
-      AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly)
+      AND w.week_start = ${latestPeriodSql('weekly')}
     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
     WHERE k.technology = '${tech}' AND k.active
     GROUP BY r.region_id, k.kpi_key, k.label, k.unit, k.target, k.worse_is_higher, k.is_core
@@ -1773,7 +1780,7 @@ export async function getRegionMap(
     FROM dim_region r
     JOIN dim_cell c ON c.region_id = r.region_id
     JOIN agg_cell_kpi_weekly w ON w.cell_id = c.cell_id
-      AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly)
+      AND w.week_start = ${latestPeriodSql('weekly')}
     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
     WHERE k.technology = '${tech}' AND k.is_core AND k.target IS NOT NULL AND (
       (k.worse_is_higher AND w.avg_value > k.target) OR
@@ -1915,9 +1922,9 @@ export async function getRegionDistricts(
      JOIN dim_region rg ON rg.region_id = d.region_id
      LEFT JOIN dim_cell c ON c.district_id = d.district_id
      LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
-       AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
+       AND h.date_id = ${latestWeekEndDateIdSql()}
      LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
-       AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+       AND w.week_start = ${latestPeriodSql('weekly')}
      LEFT JOIN fact_cell_daily f ON f.cell_id = c.cell_id
        AND f.date_id = (SELECT max(date_id) FROM fact_cell_daily)
      WHERE d.region_id = ${numRegionId}
@@ -1937,7 +1944,7 @@ export async function getRegionDistricts(
     FROM dim_district d
     JOIN dim_cell c ON c.district_id = d.district_id
     JOIN agg_cell_kpi_weekly w ON w.cell_id = c.cell_id
-      AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly)
+      AND w.week_start = ${latestPeriodSql('weekly')}
     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
     WHERE d.region_id = ${numRegionId} AND k.technology = '${tech}' AND k.active
     GROUP BY d.district_id, k.kpi_key, k.label, k.unit, k.target, k.worse_is_higher, k.is_core
@@ -1949,7 +1956,7 @@ export async function getRegionDistricts(
     FROM dim_district d
     JOIN dim_cell c ON c.district_id = d.district_id
     JOIN agg_cell_kpi_weekly w ON w.cell_id = c.cell_id
-      AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly)
+      AND w.week_start = ${latestPeriodSql('weekly')}
     JOIN kpi_defs k ON k.kpi_id = w.kpi_id
     WHERE d.region_id = ${numRegionId} AND k.technology = '${tech}' AND k.is_core AND k.target IS NOT NULL AND (
       (k.worse_is_higher AND w.avg_value > k.target) OR
@@ -2242,7 +2249,7 @@ export async function getPriorityCenter(
     LEFT JOIN entity_action_status st
       ON st.entity_type = '${safeScope}' AND st.entity_id = ${cfg.eId}
     LEFT JOIN agg_cell_weekly w
-      ON w.cell_id = c.cell_id AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+      ON w.cell_id = c.cell_id AND w.week_start = ${latestPeriodSql('weekly')}
   `
   const base = `${from} ${whereSql}`
 
@@ -2902,10 +2909,14 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
 
   // Latest week start
   const latestWkR = await conn.runAndReadAll(
-    `SELECT CAST(max(week_start) AS VARCHAR) AS max_wk FROM agg_cell_weekly`
+    `SELECT CAST(${latestPeriodSql('weekly')} AS VARCHAR) AS max_wk`
   )
   const latestWk = latestWkR.getRowObjects()[0]?.max_wk ? String(latestWkR.getRowObjects()[0].max_wk) : null
   const asOf = latestWk ?? new Date().toISOString().slice(0, 10)
+  const pcR = await conn.runAndReadAll(
+    `SELECT coalesce((SELECT is_complete FROM period_coverage WHERE grain = 'weekly' AND period_start = ${latestPeriodSql('weekly')}), true) AS c`
+  )
+  const periodComplete = Boolean(pcR.getRowObjects()[0]?.c ?? true)
 
   // Get active rules & KPI definitions
   const allKpiDefs = await listKpiDefs(conn)
@@ -2918,7 +2929,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
       count(*) FILTER (WHERE severity = 'Critical') AS critical_count
     FROM cell_nc_lifecycle
     WHERE grain = 'weekly' AND ruleset_version = (SELECT max(version) FROM ruleset)
-      AND period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+      AND period_start = ${latestPeriodSql('weekly')}
   `)
   const lifeCounts = lifeCountsR.getRowObjects()[0] ?? {}
   const chronicCellCount = Number(lifeCounts.chronic_count ?? 0)
@@ -2931,7 +2942,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
     FROM agg_cell_weekly w
     JOIN dim_cell c ON c.cell_id = w.cell_id
     JOIN dim_district d ON d.district_id = c.district_id
-    WHERE w.week_start = (SELECT max(week_start) FROM agg_cell_weekly) AND w.is_nc
+    WHERE w.week_start = ${latestPeriodSql('weekly')} AND w.is_nc
     GROUP BY d.name
     ORDER BY count(*) DESC
     LIMIT 3
@@ -2941,7 +2952,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
   // Total cell count in latest week
   const totalCellsR = await conn.runAndReadAll(`
     SELECT count(DISTINCT cell_id) AS total_cells FROM agg_cell_weekly
-    WHERE week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+    WHERE week_start = ${latestPeriodSql('weekly')}
   `)
   const totalObservedCells = Math.max(1, Number(totalCellsR.getRowObjects()[0]?.total_cells ?? 1))
 
@@ -2980,7 +2991,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
       const ncR = await conn.runAndReadAll(`
         SELECT count(DISTINCT cell_id) AS nc_count
         FROM agg_cell_weekly
-        WHERE week_start = (SELECT max(week_start) FROM agg_cell_weekly) AND is_nc
+        WHERE week_start = ${latestPeriodSql('weekly')} AND is_nc
       `)
       ncCellCount = Number(ncR.getRowObjects()[0]?.nc_count ?? 0)
     } else {
@@ -3009,7 +3020,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
           SELECT count(DISTINCT w.cell_id) AS nc_count
           FROM agg_cell_kpi_weekly w
           WHERE w.kpi_id = ${numKpiId}
-            AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly WHERE kpi_id = ${numKpiId})
+            AND w.week_start = (SELECT max(week_start) FROM agg_cell_kpi_weekly WHERE kpi_id = ${numKpiId} AND week_start <= ${latestPeriodSql('weekly')})
             AND ${breachCond}
         `)
         ncCellCount = Number(ncR.getRowObjects()[0]?.nc_count ?? 0)
@@ -3120,7 +3131,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
         count(DISTINCT w.cell_id) AS cell_count,
         count(DISTINCT w.cell_id) FILTER (WHERE w.is_nc) AS nc_count
       FROM agg_cell_weekly w
-      WHERE w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+      WHERE w.week_start = ${latestPeriodSql('weekly')}
     `)
     const techCellRow = techCellsR.getRowObjects()[0] ?? {}
     const cellCount = Number(techCellRow.cell_count ?? 0)
@@ -3178,6 +3189,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
 
   return {
     asOf,
+    periodComplete,
     periodLabel: `Week of ${asOf}`,
     overallHealthScore,
     overallHealthDelta,

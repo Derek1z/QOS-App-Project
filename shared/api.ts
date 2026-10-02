@@ -684,6 +684,8 @@ export interface NcLifecycleRow {
 
 export interface NcLifecycleResult {
   weekStart: string | null
+  /** False when no complete period exists yet and the newest partial one is shown. */
+  periodComplete: boolean
   totalCells: number
   ncCells: number
   ncRate: number | null
@@ -1514,6 +1516,8 @@ export interface ExecutiveProblemSummary {
 
 export interface ExecutiveOverviewResult {
   asOf: string | null
+  /** False when no complete period exists yet and the newest partial one is shown. */
+  periodComplete: boolean
   periodLabel?: string
   overallHealthScore: number
   overallHealthDelta?: number | null

@@ -6,6 +6,7 @@ import { backupsDir, snapshotsDir } from '../paths'
 import type {
   CreateSnapshotOpts, SnapshotComparison, SnapshotComparisonKpi, WorkspaceInfo, WorkspaceSnapshot
 } from '../../../shared/api'
+import { latestWeekEndDateIdSql } from '../analytics/periods'
 
 /** Workspace snapshots (spec §7): analytical point-in-time copies of the
  *  .qosdb file stored under backups/snapshots/ and tracked in the
@@ -192,7 +193,7 @@ const SNAPSHOT_KPI_SQL = `
     (SELECT avg(availability_pct) FROM fact_cell_daily) AS avg_availability,
     (SELECT max(version) FROM ruleset) AS ruleset_version,
     (SELECT avg(health_score) FROM cell_health_history
-      WHERE date_id = (SELECT max(date_id) FROM cell_health_history)) AS health_score
+      WHERE date_id = ${latestWeekEndDateIdSql()}) AS health_score
 `
 
 const SNAPSHOT_KPIS: Array<{ key: string; label: string; unit: string; worseIsHigher: boolean }> = [

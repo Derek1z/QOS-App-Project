@@ -9,6 +9,12 @@ describe('priority score and imported KPI breaches', () => {
   beforeAll(async () => {
     ws = await openRealWorkspace('4G')
     await insertCells(ws.conn, ['CELL-BREACH', 'CELL-OK', 'CELL-NOKPI'])
+    // "latest" is the latest *complete* week (spec §3.1): mark this week complete
+    // since the inserted rows are a direct agg_cell_weekly fixture, not a real import.
+    await ws.conn.run(
+      `INSERT INTO period_coverage (grain, period_start, days_with_data, days_in_period, is_complete)
+       VALUES ('weekly', DATE '2026-07-20', 7, 7, true)`
+    )
     // identical classical inputs: PRB 60 (below the 80 threshold), network-average
     // users/volume/throughput, no NC history -> classical balanced score = 10 * 50 / 100 = 5.0
     for (const id of [1, 2, 3]) {

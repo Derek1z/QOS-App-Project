@@ -5,6 +5,7 @@ import { PRIORITY_PERSISTENCE, lifecycleCaseSql } from '../../../shared/lifecycl
 import { getRules } from './rules'
 import { getPrbTarget } from './targets'
 import { cellKpiBreachByCell } from './kpiBreach'
+import { latestPeriodSql } from './periods'
 
 /** How much the imported-KPI target-breach component weighs in the score.
  *  The six classical components keep 80%; the editable targets drive 20%. */
@@ -61,7 +62,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         SELECT cell_id, week_start,
           row_number() OVER (PARTITION BY cell_id ORDER BY week_start DESC) AS rn
         FROM agg_cell_weekly
-        WHERE cell_id IN (${idList})
+        WHERE cell_id IN (${idList}) AND week_start <= ${latestPeriodSql('weekly')}
       ),
     peers AS (
       SELECT week_start,

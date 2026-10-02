@@ -8,6 +8,12 @@ describe('Ghana map PRB non-compliance (4G, PRB-only data)', () => {
   beforeAll(async () => {
     ws = await openRealWorkspace('4G')
     await insertCells(ws.conn, ['C1', 'C2', 'C3', 'C4', 'C5'])
+    // "latest" is the latest *complete* week (spec §3.1): mark this week complete
+    // since the inserted rows are a direct agg_cell_weekly fixture, not a real import.
+    await ws.conn.run(
+      `INSERT INTO period_coverage (grain, period_start, days_with_data, days_in_period, is_complete)
+       VALUES ('weekly', DATE '2026-07-20', 7, 7, true)`
+    )
     // region average 85% (> 80) while exactly 3 of 5 cells are at/above the 80% threshold
     const prb = [95, 95, 95, 70, 70]
     for (let i = 0; i < prb.length; i++) {

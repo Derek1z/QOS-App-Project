@@ -14,6 +14,7 @@ import { LIFECYCLE_RANK, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { DEFAULT_NC_PERIODS } from '../../../shared/ruleDefaults'
 import { runDiagnosticEngine } from '../analytics/investigation/engine'
 import type { DiagnosticContext } from '../analytics/investigation/types'
+import { latestPeriodSql, latestWeekEndDateIdSql } from '../analytics/periods'
 
 /** M4 Investigation Workspace (spec §47–50): deterministic, evidence-based
  *  diagnosis with calibrated language; notes/events; before/after; report export.
@@ -143,7 +144,7 @@ export async function searchEntities(scope: InvestigationScope, q = '', technolo
        LEFT JOIN dim_district d ON d.district_id = c.district_id
        LEFT JOIN dim_region rg ON rg.region_id = c.region_id
        LEFT JOIN cell_nc_lifecycle l ON l.cell_id = c.cell_id AND l.grain = 'weekly'
-         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE grain = 'weekly')
+         AND l.period_start = ${latestPeriodSql('weekly')}
        LEFT JOIN cell_priority_history p ON p.cell_id = c.cell_id AND p.mode = 'balanced'
          AND p.as_of = (SELECT max(as_of) FROM cell_priority_history)
        ${whereClause}
@@ -330,7 +331,7 @@ export async function getInvestigation(
          ON p.cell_id = l.cell_id AND p.mode = 'balanced' AND p.as_of = l.period_start
        WHERE l.cell_id = ${numEntityId} AND l.grain = '${grain}'
          AND l.ruleset_version = (SELECT max(version) FROM ruleset)
-         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE cell_id = ${numEntityId} AND grain = '${grain}')
+         AND l.period_start = (SELECT max(period_start) FROM cell_nc_lifecycle WHERE cell_id = ${numEntityId} AND grain = '${grain}' AND period_start <= ${latestPeriodSql(grain)})
        LIMIT 1`
     )
     const row = curR.getRowObjects()[0]
@@ -688,9 +689,9 @@ export async function getInvestigation(
       `SELECT c2.name AS name, w.prb_avg, w.dl_throughput_kbps_avg AS thr, h.health_score, w.is_nc AS nc
        FROM dim_cell c2
        LEFT JOIN agg_cell_weekly w ON w.cell_id = c2.cell_id
-         AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+         AND w.week_start = ${latestPeriodSql('weekly')}
        LEFT JOIN cell_health_history h ON h.cell_id = c2.cell_id
-         AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
+         AND h.date_id = ${latestWeekEndDateIdSql()}
        WHERE c2.site_id = (SELECT site_id FROM dim_cell WHERE cell_id = ${numEntityId})
        ORDER BY h.health_score ASC NULLS LAST, c2.cell_id LIMIT 10`
     )
@@ -714,9 +715,9 @@ export async function getInvestigation(
        FROM ${t} e
        JOIN dim_cell c ON c.${idC} = e.${idC}
        LEFT JOIN agg_cell_weekly w ON w.cell_id = c.cell_id
-         AND w.week_start = (SELECT max(week_start) FROM agg_cell_weekly)
+         AND w.week_start = ${latestPeriodSql('weekly')}
        LEFT JOIN cell_health_history h ON h.cell_id = c.cell_id
-         AND h.date_id = (SELECT max(date_id) FROM cell_health_history)
+         AND h.date_id = ${latestWeekEndDateIdSql()}
        WHERE e.${parentC} = ${parentSub}
        GROUP BY e.${idC}, e.name
        ORDER BY health_score ASC NULLS LAST LIMIT 10`

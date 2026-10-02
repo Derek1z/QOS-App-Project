@@ -1,7 +1,7 @@
 # Complete Periods Design
 
 **Date**: 2026-10-01
-**Status**: Draft, awaiting review
+**Status**: Implemented (2026-10-02)
 **Scope**: weekly and monthly analytics use complete periods for "latest" and for comparisons; partial periods stay visible and marked
 
 ---

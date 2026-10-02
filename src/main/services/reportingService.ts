@@ -14,7 +14,7 @@ import type {
   ReportSectionId, ReportSnapshot, ReportType, CellIntelligenceRow, CellKpiValue
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, REPORT_SECTIONS } from '../../../shared/api'
-import { latestComplete } from '../../../shared/periods'
+import { latestComplete, periodLabel } from '../../../shared/periods'
 
 type JSZipLike = {
   loadAsync(data: Uint8Array | Buffer): Promise<{
@@ -111,7 +111,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
     const h = await getHealth()
     const healthByWeek = new Map(h.network.map((w) => [w.asOf, w.score]))
     const rows = mv.map((m) => [
-      m.weekStart, m.newNc, m.recurring, m.intermittent, m.persistent, m.chronic, m.recovering, m.ncCells,
+      periodLabel(m.weekStart, 'weekly', m.weekStart, m), m.newNc, m.recurring, m.intermittent, m.persistent, m.chronic, m.recovering, m.ncCells,
       m.ncRate == null ? null : `${m.ncRate.toFixed(1)}%`,
       healthByWeek.get(m.weekStart) ?? null
     ])
@@ -134,7 +134,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
       title: 'All Cells',
       columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Priority', ...kpiCols.map((k) => k.label)],
       rows: r.rows.map((c) => [
-        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity,
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.priorityScore ?? null,
         ...kpiCols.map((k) => kpiCellValue(c, k.key))
       ]),
@@ -150,7 +150,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
       title: 'NC Register',
       columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Breach days', ...kpiCols.map((k) => k.label)],
       rows: nc.map((c) => [
-        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend, c.severity,
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays,
         ...kpiCols.map((k) => kpiCellValue(c, k.key))
       ]),
@@ -165,7 +165,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
       title: 'Persistent NC',
       columns: ['Cell', 'Region', 'District', 'Site', 'Trend', 'Severity', 'PRB %', 'Breach days', 'Priority', ...kpiCols.map((k) => k.label)],
       rows: r.rows.map((c) => [
-        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.trend, c.severity,
+        c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays, c.priorityScore ?? null,
         ...kpiCols.map((k) => kpiCellValue(c, k.key))
       ]),
@@ -518,7 +518,7 @@ async function buildExcelCharts(sections: SectionData[], charts: ReportChartConf
       const h = await getHealth()
       const mv = await getNcMovement(8)
       const health = h.network.slice(-8)
-      const labels = health.map((x) => x.asOf)
+      const labels = health.map((x) => periodLabel(x.asOf, 'weekly', x.asOf, x))
       if (labels.length >= 2) {
         const svg = svgLineChart({
           title: 'Network health & NC cells — weekly',

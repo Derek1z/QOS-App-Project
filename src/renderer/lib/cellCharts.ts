@@ -1,11 +1,33 @@
 import type { EChartsOption, SeriesOption } from 'echarts'
-import type { CellDetail, Grain, Technology } from '../../../shared/api'
+import type { CellDetail, CellWeekPoint, Grain, Technology } from '../../../shared/api'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 import { formatTimeLabel } from './overviewCharts'
+import { periodLabel } from '../../../shared/periods'
 
 import type { CellKpiValue } from '../../../shared/api'
 
 const COLOR_CYCLES = [PALETTE.warn, PALETTE.accent, PALETTE.green, '#a855f7']
+
+/** One data point per week, styled hollow/lighter when its week is partial
+ *  (spec §3.2, fix wave 2026-10-01 final review item 4 — same treatment as
+ *  overviewCharts' ncMovementOption). */
+function weekPoints(weeks: CellWeekPoint[], pick: (w: CellWeekPoint) => number | null) {
+  return weeks.map((w) => ({
+    value: pick(w),
+    itemStyle: { opacity: w.complete !== false ? 1 : 0.45 },
+    symbol: w.complete !== false ? 'circle' : 'emptyCircle'
+  }))
+}
+
+/** Same as weekPoints but for a value array already resolved by key (the
+ *  dynamic active-KPI-cards path). */
+function toPoints(values: (number | null)[], weeks: CellWeekPoint[]) {
+  return values.map((v, i) => ({
+    value: v,
+    itemStyle: { opacity: weeks[i]?.complete !== false ? 1 : 0.45 },
+    symbol: weeks[i]?.complete !== false ? 'circle' : 'emptyCircle'
+  }))
+}
 
 function resolveKpiSeriesData(detail: CellDetail, key: string): (number | null)[] {
   const k = key.toLowerCase()
@@ -33,7 +55,7 @@ export function cellDetailOption(
   technology: Technology = '4G',
   activeKpis?: CellKpiValue[]
 ): EChartsOption {
-  const timeLabels = detail.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+  const timeLabels = detail.weeks.map((w) => periodLabel(formatTimeLabel(w.weekStart, grain), grain, w.weekStart, w))
 
   const selectedCards = activeKpis && activeKpis.length > 0 ? activeKpis.slice(0, 4) : null
   const gridCount = selectedCards ? Math.min(4, Math.max(1, selectedCards.length)) : 4
@@ -84,7 +106,7 @@ export function cellDetailOption(
     })
 
     series = selectedCards.map((kpi, i) => {
-      const data = resolveKpiSeriesData(detail, kpi.key)
+      const data = toPoints(resolveKpiSeriesData(detail, kpi.key), detail.weeks)
       const color = COLOR_CYCLES[i % COLOR_CYCLES.length]
       return {
         name: kpi.label,
@@ -207,7 +229,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 0,
             yAxisIndex: 0,
-            data: detail.weeks.map((w) => w.prbAvg),
+            data: weekPoints(detail.weeks, (w) => w.prbAvg),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -227,7 +249,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 1,
             yAxisIndex: 1,
-            data: detail.weeks.map((w) => w.throughputKbps),
+            data: weekPoints(detail.weeks, (w) => w.throughputKbps),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -239,7 +261,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 2,
             yAxisIndex: 2,
-            data: detail.weeks.map((w) => w.users),
+            data: weekPoints(detail.weeks, (w) => w.users),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -251,7 +273,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 3,
             yAxisIndex: 3,
-            data: detail.weeks.map((w) => w.volumeMb),
+            data: weekPoints(detail.weeks, (w) => w.volumeMb),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -266,7 +288,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 0,
             yAxisIndex: 0,
-            data: detail.weeks.map((w) => w.throughputKbps),
+            data: weekPoints(detail.weeks, (w) => w.throughputKbps),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -286,7 +308,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 1,
             yAxisIndex: 1,
-            data: detail.weeks.map((w) => w.volumeMb),
+            data: weekPoints(detail.weeks, (w) => w.volumeMb),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -298,7 +320,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 2,
             yAxisIndex: 2,
-            data: detail.weeks.map((w) => w.availability),
+            data: weekPoints(detail.weeks, (w) => w.availability),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -317,7 +339,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 3,
             yAxisIndex: 3,
-            data: detail.weeks.map((w) => w.breachDays),
+            data: weekPoints(detail.weeks, (w) => w.breachDays),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -331,7 +353,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 0,
             yAxisIndex: 0,
-            data: detail.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
+            data: weekPoints(detail.weeks, (w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -351,7 +373,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 1,
             yAxisIndex: 1,
-            data: detail.weeks.map((w) => w.throughputKbps),
+            data: weekPoints(detail.weeks, (w) => w.throughputKbps),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -363,7 +385,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 2,
             yAxisIndex: 2,
-            data: detail.weeks.map((w) => w.availability),
+            data: weekPoints(detail.weeks, (w) => w.availability),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,
@@ -375,7 +397,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 3,
             yAxisIndex: 3,
-            data: detail.weeks.map((w) => w.breachDays),
+            data: weekPoints(detail.weeks, (w) => w.breachDays),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,

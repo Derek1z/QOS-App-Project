@@ -17,7 +17,8 @@ import { validateSample } from './validator'
 import { discoverKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { detectDerivedKpiSuggestions } from '../services/derivedKpiService'
 import { invalidateSummaryCache } from '../services/queryService'
-import createImportWorker from './importWorker?nodeWorker'
+import { utilityProcess } from 'electron'
+import importWorkerPath from './importWorker?modulePath'
 import type { ImportCoreJob } from './importCore'
 import type {
   CanonicalField, FileAnalysis, GeoFieldStats, GeoStatsResult, ImportProgress, ImportResult, MappingConfig, PreviewResult,
@@ -147,36 +148,40 @@ interface WorkerMessage {
   message?: string
 }
 
+/** The import runs in an Electron utility process, not a worker_threads
+ *  worker. A utility process resolves modules exactly like the main process,
+ *  including @duckdb/node-api from app.asar.unpacked in a packaged build; a
+ *  worker thread in the packaged Windows portable failed there with
+ *  "Cannot find module '@duckdb/node-api'". */
 function runInWorker(
   job: Omit<ImportCoreJob, 'backupPath'>,
   onProgress?: (p: ImportProgress) => void
 ): Promise<ImportResult> {
   return new Promise((resolve, reject) => {
     let settled = false
-    const worker = createImportWorker({ workerData: job })
-    worker.on('message', (msg: WorkerMessage) => {
+    const child = utilityProcess.fork(importWorkerPath, [], { serviceName: 'QoS import', stdio: 'inherit' })
+    const finish = (settle: () => void): void => {
+      if (settled) return
+      settled = true
+      settle()
+      // the child keeps listening on its port; end it once it has reported
+      child.kill()
+    }
+    child.on('message', (msg: WorkerMessage) => {
       if (msg.type === 'progress') {
         if (msg.phase) onProgress?.({ phase: msg.phase, detail: msg.detail })
       } else if (msg.type === 'done') {
-        settled = true
-        resolve(msg.result as ImportResult)
+        finish(() => resolve(msg.result as ImportResult))
       } else if (msg.type === 'error') {
-        settled = true
-        reject(new Error(msg.message ?? 'Import worker failed'))
+        finish(() => reject(new Error(msg.message ?? 'Import process failed')))
       }
     })
-    worker.on('error', (e) => {
-      if (!settled) {
-        settled = true
-        reject(e)
-      }
+    child.on('exit', (code) => {
+      finish(() =>
+        reject(new Error(code === 0 ? 'Import process exited before reporting a result' : `Import process exited with code ${code}`))
+      )
     })
-    worker.on('exit', (code) => {
-      if (!settled) {
-        settled = true
-        reject(new Error(code === 0 ? 'Import worker exited before reporting a result' : `Import worker exited with code ${code}`))
-      }
-    })
+    child.postMessage(job)
   })
 }
 

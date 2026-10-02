@@ -1,4 +1,3 @@
-import { parentPort, workerData } from 'node:worker_threads'
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
@@ -14,11 +13,12 @@ interface WorkerMessage {
 }
 
 function post(msg: WorkerMessage): void {
-  parentPort?.postMessage(msg)
+  process.parentPort.postMessage(msg)
 }
 
-async function main(): Promise<void> {
-  const job = workerData as ImportCoreJob
+/** Runs in an Electron utility process (see runInWorker in importer.ts): the
+ *  job arrives as the first message on process.parentPort. */
+async function main(job: ImportCoreJob): Promise<void> {
   const lockHeld = acquireLock(job.workspacePath)
   let instance: Awaited<ReturnType<typeof DuckDBInstance.create>> | null = null
   let conn: DuckDBConnection | null = null
@@ -73,4 +73,6 @@ function closeHandles(
   }
 }
 
-void main()
+process.parentPort.once('message', (e) => {
+  void main(e.data as ImportCoreJob)
+})

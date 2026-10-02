@@ -433,7 +433,7 @@ export async function getHealthMatrix(
        SELECT DISTINCT date_id FROM cell_health_history ORDER BY date_id DESC LIMIT ${weeksN}
      ),
      latest_week AS (
-       SELECT max(date_id) AS max_date_id FROM target_weeks
+       SELECT coalesce(max(date_id) FILTER (WHERE date_id <= ${latestWeekEndDateIdSql()}), max(date_id)) AS max_date_id FROM target_weeks
      ),
      ranked_entities AS (
        SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,

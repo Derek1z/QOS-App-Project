@@ -56,4 +56,33 @@ describe('series rows say whether each period is complete (spec §3.2, §4.3)', 
     expect(m.weeksComplete.length).toBe(m.weeks.length)
     expect(m.weeksComplete[m.weeksComplete.length - 1]).toBe(false)
   })
+
+  it('health matrix picks its worst entities by the latest complete week, not the latest partial one', { timeout: 60000 }, async () => {
+    ws = await openRealWorkspace('3G')
+    await insertCells(ws.conn, ['C1', 'C2'])
+    const range = `range(DATE '2026-06-29', DATE '2026-07-23', INTERVAL 1 DAY) r(d)`
+    for (const cellId of [1, 2]) {
+      await ws.conn.run(
+        `INSERT INTO fact_cell_daily (date_id, cell_id, prb_utilization, data_volume_mb, connected_users,
+           dl_throughput_kbps, availability_pct, source_import_id)
+         SELECT CAST(strftime(d, '%Y%m%d') AS INTEGER), ${cellId}, 50, 100, 10, 20000, 99.9, 1 FROM ${range}`
+      )
+    }
+    await recomputeAllAggregates(ws.conn)
+    await refreshAllIntelligence(ws.conn)
+
+    // Latest COMPLETE week is 2026-07-13..19 (week-end date_id 20260719);
+    // latest PARTIAL week is 2026-07-20..22 (week-end date_id 20260726).
+    // Force cell 1 to look worst in the partial week but best in the complete
+    // week, and cell 2 the opposite — only a ranking keyed on the latest
+    // complete week tells them apart correctly.
+    await ws.conn.run(`UPDATE cell_health_history SET health_score = 90 WHERE cell_id = 1 AND date_id = 20260719`)
+    await ws.conn.run(`UPDATE cell_health_history SET health_score = 20 WHERE cell_id = 2 AND date_id = 20260719`)
+    await ws.conn.run(`UPDATE cell_health_history SET health_score = 10 WHERE cell_id = 1 AND date_id = 20260726`)
+    await ws.conn.run(`UPDATE cell_health_history SET health_score = 95 WHERE cell_id = 2 AND date_id = 20260726`)
+
+    const m = await getHealthMatrix('cell', { limit: 1, sort: 'worst' })
+    expect(m.rows.length).toBe(1)
+    expect(m.rows[0].id).toBe(2)
+  })
 })

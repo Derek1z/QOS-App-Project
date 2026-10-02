@@ -3,6 +3,7 @@
 
 import type { Lifecycle } from './lifecycle'
 import type { NcPeriodSettings } from './ruleDefaults'
+import type { PeriodCompleteness } from './periods'
 
 export type { Lifecycle }
 
@@ -423,7 +424,7 @@ export interface MappingConfig {
 }
 
 /** One week of a KPI's value history on the KPI Watch card. */
-export interface KpiTrendPoint {
+export interface KpiTrendPoint extends PeriodCompleteness {
   weekStart: string
   /** network mean value that week (per the definition's aggregation) */
   value: number | null
@@ -695,7 +696,7 @@ export interface NcLifecycleResult {
   cells: NcLifecycleRow[]
 }
 
-export interface NcMovementRow {
+export interface NcMovementRow extends PeriodCompleteness {
   weekStart: string
   newNc: number
   recurring: number
@@ -739,7 +740,7 @@ export interface PriorityRow {
   }
 }
 
-export interface HealthComponentRow {
+export interface HealthComponentRow extends PeriodCompleteness {
   asOf: string
   score: number
   capacity: number
@@ -775,6 +776,7 @@ export interface HealthMatrixRow {
 export interface HealthMatrixResult {
   scope: HealthScope
   weeks: string[]
+  weeksComplete: boolean[]
   rows: HealthMatrixRow[]
 }
 
@@ -806,7 +808,7 @@ export interface CellIntelligenceResult {
   rows: CellIntelligenceRow[]
 }
 
-export interface CellWeekPoint {
+export interface CellWeekPoint extends PeriodCompleteness {
   weekStart: string
   prbAvg: number | null
   tchCong?: number | null
@@ -1086,7 +1088,7 @@ export interface BeforeAfterMetric {
   improved: boolean | null
 }
 
-export interface InvestigationWeek {
+export interface InvestigationWeek extends PeriodCompleteness {
   weekStart: string
   prbAvg: number | null
   throughputKbps: number | null

@@ -3,6 +3,7 @@ import type { HealthComponentRow, Grain } from '../../../shared/api'
 import { NC_HEALTH, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { getRules } from './rules'
 import { cellKpiBreachByCell } from './kpiBreach'
+import { periodCoverageJoin, completeSql, daysWithDataSql } from './periods'
 
 /** KPI target-breach share of the cell health score (spec §54a). */
 const KPI_BREACH_WEIGHT = 0.15
@@ -34,8 +35,10 @@ export async function computeNetworkHealth(
     )
     SELECT CAST(n.period_start AS VARCHAR) AS as_of,
       n.prb_avg, n.nc_rate, n.dl_throughput_kbps_avg, n.availability_pct_avg,
-      v.data_volume_mb_sum, v.prev_volume
+      v.data_volume_mb_sum, v.prev_volume,
+      ${completeSql(grain)} AS complete, ${daysWithDataSql(grain)} AS days_with_data
     FROM agg_network_${grain} n JOIN vol v USING (period_start)
+    ${periodCoverageJoin(grain, 'n.period_start')}
     ORDER BY n.period_start
   `)
   const out: HealthComponentRow[] = []
@@ -61,7 +64,9 @@ export async function computeNetworkHealth(
       throughput,
       availability: coreCompliance,
       ncRecurrence,
-      growth
+      growth,
+      complete: Boolean(x.complete),
+      daysWithData: Number(x.days_with_data ?? 0)
     })
   }
   return out

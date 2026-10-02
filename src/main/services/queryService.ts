@@ -27,7 +27,7 @@ import { getPrbTarget } from '../analytics/targets'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
 import { listKpiDefs, workspaceTechnology } from './kpiService'
-import { latestPeriodSql, latestWeekEndDateIdSql } from '../analytics/periods'
+import { latestPeriodSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
 
 /** Spec §64: UI modules call centralized analytics interfaces, not raw SQL. */
 
@@ -133,12 +133,14 @@ export async function getKpiOverview(limit = 8, _grain: Grain = 'weekly'): Promi
   const trendR = await conn.runAndReadAll(
     `SELECT k.kpi_key AS key, w.week_start,
        ROUND(avg(${val}), 1) AS value,
-       count(*) FILTER (WHERE ${breach}) AS breached_cells
+       count(*) FILTER (WHERE ${breach}) AS breached_cells,
+       ${completeSql('weekly')} AS complete, ${daysWithDataSql('weekly')} AS days_with_data
      FROM agg_cell_kpi_weekly w
      JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+     ${periodCoverageJoin('weekly', 'w.week_start')}
      WHERE k.technology = ? AND k.active AND k.target IS NOT NULL
        AND w.week_start >= ${latestPeriodSql('weekly')} - INTERVAL 11 WEEK
-     GROUP BY k.kpi_key, w.week_start
+     GROUP BY k.kpi_key, w.week_start, pc.is_complete, pc.days_with_data, pc.days_in_period
      ORDER BY w.week_start`,
     [tech]
   )
@@ -149,7 +151,9 @@ export async function getKpiOverview(limit = 8, _grain: Grain = 'weekly'): Promi
     list.push({
       weekStart: String(x.week_start ?? ''),
       value: x.value == null ? null : Number(x.value),
-      breached: Number(x.breached_cells ?? 0) > 0
+      breached: Number(x.breached_cells ?? 0) > 0,
+      complete: Boolean(x.complete),
+      daysWithData: Number(x.days_with_data ?? 0)
     })
     trendByKey.set(key, list)
   }
@@ -197,7 +201,7 @@ export async function getNcMovement(
   const safeGrain = grain === 'daily' || grain === 'monthly' ? grain : 'weekly'
   await ensureGrainLifecyclePopulated(conn, safeGrain)
   const r = await conn.runAndReadAll(`
-    SELECT CAST(period_start AS VARCHAR) AS week_start,
+    SELECT CAST(cell_nc_lifecycle.period_start AS VARCHAR) AS week_start,
       count(*) FILTER (WHERE lifecycle = 'New NC') AS new_nc,
       count(*) FILTER (WHERE lifecycle = 'Recurring NC') AS recurring,
       count(*) FILTER (WHERE lifecycle = 'Intermittent NC') AS intermittent,
@@ -205,12 +209,14 @@ export async function getNcMovement(
       count(*) FILTER (WHERE lifecycle = 'Chronic NC') AS chronic,
       count(*) FILTER (WHERE lifecycle = 'Recovering') AS recovering,
       count(*) FILTER (WHERE is_nc) AS nc_cells,
-      count(*) AS total_cells
+      count(*) AS total_cells,
+      ${completeSql(safeGrain)} AS complete, ${daysWithDataSql(safeGrain)} AS days_with_data
     FROM cell_nc_lifecycle
-    WHERE grain = '${safeGrain}'
+    ${periodCoverageJoin(safeGrain, 'cell_nc_lifecycle.period_start')}
+    WHERE cell_nc_lifecycle.grain = '${safeGrain}'
       AND ruleset_version = (SELECT max(version) FROM ruleset)
-    GROUP BY period_start
-    ORDER BY period_start DESC
+    GROUP BY cell_nc_lifecycle.period_start${safeGrain === 'daily' ? '' : ', pc.is_complete, pc.days_with_data, pc.days_in_period'}
+    ORDER BY cell_nc_lifecycle.period_start DESC
     LIMIT ?
   `, [limit])
   const rows = r.getRowObjects().reverse()
@@ -276,7 +282,9 @@ export async function getNcMovement(
       ncCells: nc,
       totalCells: total,
       ncRate: total > 0 ? Math.round((nc / total) * 1000) / 10 : null,
-      coreKpiNcRates: coreKpiTrend.get(wsStr)
+      coreKpiNcRates: coreKpiTrend.get(wsStr),
+      complete: Boolean(x.complete),
+      daysWithData: Number(x.days_with_data ?? 0)
     }
   })
 }
@@ -463,9 +471,17 @@ export async function getHealthMatrix(
     e.scores.set(Number(x.date_id), x.score == null ? null : Number(x.score))
   }
 
+  const wcR = weekDates.length > 0 ? await conn.runAndReadAll(
+    `SELECT CAST(d.date_id AS DOUBLE) AS date_id, coalesce(pc.is_complete, true) AS complete
+     FROM dim_date d
+     LEFT JOIN period_coverage pc ON pc.grain = 'weekly' AND pc.period_start = CAST(d.date - 6 AS DATE)
+     WHERE d.date_id IN (${weekDates.join(',')})`
+  ) : null
+  const completeByDate = new Map((wcR?.getRowObjects() ?? []).map((x) => [Number(x.date_id), Boolean(x.complete)]))
+
   let entities = [...byEntity.entries()]
   if (sort === 'worst') {
-    const latestWeek = weekDates[weekDates.length - 1]
+    const latestWeek = [...weekDates].reverse().find((d) => completeByDate.get(d) !== false) ?? weekDates[weekDates.length - 1]
     entities.sort((a, b) => {
       const sa = a[1].scores.get(latestWeek)
       const sb = b[1].scores.get(latestWeek)
@@ -479,6 +495,7 @@ export async function getHealthMatrix(
   return {
     scope,
     weeks: weekDates.map((d) => String(d)),
+    weeksComplete: weekDates.map((d) => completeByDate.get(d) ?? true),
     rows: entities.map(([id, e]) => ({
       id,
       name: e.name,
@@ -708,11 +725,13 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
        CAST(COALESCE(w.breach_days, 0) AS DOUBLE) AS breach_days,
        COALESCE(l.is_nc, false) AS is_nc,
        COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
-       COALESCE(l.severity, 'Normal') AS severity
+       COALESCE(l.severity, 'Normal') AS severity,
+       ${completeSql(g)} AS complete, ${daysWithDataSql(g)} AS days_with_data
      FROM ${aggTable} w
      LEFT JOIN cell_nc_lifecycle l
        ON l.cell_id = w.cell_id AND l.period_start = ${dateCol}
        AND l.grain = '${g}' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
+     ${periodCoverageJoin(g, dateCol)}
      WHERE w.cell_id = ${numCellId}
      ORDER BY ${dateCol}`
   )
@@ -726,7 +745,9 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
     breachDays: Number(x.breach_days ?? 0),
     isNc: Boolean(x.is_nc),
     lifecycle: String(x.lifecycle) as Lifecycle,
-    severity: String(x.severity) as Severity
+    severity: String(x.severity) as Severity,
+    complete: Boolean(x.complete),
+    daysWithData: Number(x.days_with_data ?? 0)
   }))
   const latestWeek = weeks.length > 0 ? weeks[weeks.length - 1].weekStart : (life ? String(life.week_start) : '')
   const kpis = latestWeek ? await cellKpiValues(conn, cellId, latestWeek) : []

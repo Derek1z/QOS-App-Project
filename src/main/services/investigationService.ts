@@ -14,7 +14,7 @@ import { LIFECYCLE_RANK, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { DEFAULT_NC_PERIODS } from '../../../shared/ruleDefaults'
 import { runDiagnosticEngine } from '../analytics/investigation/engine'
 import type { DiagnosticContext } from '../analytics/investigation/types'
-import { latestPeriodSql, latestWeekEndDateIdSql } from '../analytics/periods'
+import { latestPeriodSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
 
 /** M4 Investigation Workspace (spec §47–50): deterministic, evidence-based
  *  diagnosis with calibrated language; notes/events; before/after; report export.
@@ -253,18 +253,22 @@ export async function getInvestigation(
     scope === 'cell'
       ? `SELECT CAST(${dateCol} AS VARCHAR) AS week_start, w.prb_avg, w.dl_throughput_kbps_avg AS thr,
                 w.connected_users_sum AS usr, w.data_volume_mb_sum AS vol, w.availability_pct_avg AS avail,
-                w.is_nc, l.lifecycle
+                w.is_nc, l.lifecycle,
+                ${completeSql(grain)} AS complete, ${daysWithDataSql(grain)} AS days_with_data
          FROM ${aggTable} w
          LEFT JOIN cell_nc_lifecycle l
            ON l.cell_id = w.cell_id AND l.period_start = ${dateCol}
            AND l.grain = '${grain}' AND l.ruleset_version = (SELECT max(version) FROM ruleset)
+         ${periodCoverageJoin(grain, dateCol)}
          WHERE w.cell_id = ${numEntityId} ORDER BY ${dateCol}`
       : `SELECT CAST(${dateCol} AS VARCHAR) AS week_start, avg(w.prb_avg) AS prb_avg,
                 avg(w.dl_throughput_kbps_avg) AS thr, sum(w.connected_users_sum) AS usr,
                 sum(w.data_volume_mb_sum) AS vol, avg(w.availability_pct_avg) AS avail,
-                sum(w.is_nc) > 0 AS is_nc, NULL AS lifecycle
+                sum(w.is_nc) > 0 AS is_nc, NULL AS lifecycle,
+                ${completeSql(grain)} AS complete, ${daysWithDataSql(grain)} AS days_with_data
          FROM ${aggTable} w ${join}
-         WHERE ${filter} GROUP BY ${dateCol} ORDER BY ${dateCol}`
+         ${periodCoverageJoin(grain, dateCol)}
+         WHERE ${filter} GROUP BY ${dateCol}${grain === 'daily' ? '' : ', pc.is_complete, pc.days_with_data, pc.days_in_period'} ORDER BY ${dateCol}`
   )
 
   // Enrich with extra KPIs by period
@@ -314,7 +318,9 @@ export async function getInvestigation(
       trafficUtil: km?.get('traffic_utilization_3g') ?? null,
       dataAccess: km?.get('data_access_success_3g') ?? null,
       dataFailure: km?.get('data_service_failure_4g') ?? null,
-      speedMbps: km?.get(technology === '3G' ? 'dl_user_throughput_3g' : 'dl_user_throughput_4g') ?? (x.thr != null ? Number(x.thr) / 1024 : null)
+      speedMbps: km?.get(technology === '3G' ? 'dl_user_throughput_3g' : 'dl_user_throughput_4g') ?? (x.thr != null ? Number(x.thr) / 1024 : null),
+      complete: Boolean(x.complete),
+      daysWithData: Number(x.days_with_data ?? 0)
     }
   })
   const last = weeks[weeks.length - 1]

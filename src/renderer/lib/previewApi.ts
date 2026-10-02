@@ -722,7 +722,9 @@ function demoNcMovement(limit = 8): NcMovementRow[] {
       recovering: recov[j],
       ncCells: nc,
       totalCells: total,
-      ncRate: Math.round((nc / total) * 1000) / 10
+      ncRate: Math.round((nc / total) * 1000) / 10,
+      complete: true,
+      daysWithData: 7
     }
   })
 }
@@ -874,7 +876,9 @@ function demoCellDetail(cellId: number, _grain?: Grain, technology: Technology =
       breachDays: isNc ? 1 + ((i * 3) % 3) : 0,
       isNc,
       lifecycle: isNc ? base.lifecycle : i >= 11 && base.lifecycle === 'Recovering' ? 'Recovering' : 'Healthy',
-      severity: isNc ? base.severity : 'Normal'
+      severity: isNc ? base.severity : 'Normal',
+      complete: true,
+      daysWithData: 7
     }
   })
   return {
@@ -2548,7 +2552,9 @@ function demoInvestigation(
         dasr: dasr3g,
         dataAccess: dasr3g,
         dataFailure: isNc ? 2.6 : 0.8,
-        speedMbps: is3G ? hsdpaSpeed : Math.round((throughputKbps / 1024) * 10) / 10
+        speedMbps: is3G ? hsdpaSpeed : Math.round((throughputKbps / 1024) * 10) / 10,
+        complete: true,
+        daysWithData: 7
       }
     })
 
@@ -2588,7 +2594,9 @@ function demoInvestigation(
         dasr: avg('dasr'),
         dataAccess: avg('dataAccess'),
         dataFailure: avg('dataFailure'),
-        speedMbps: avg('speedMbps')
+        speedMbps: avg('speedMbps'),
+        complete: true,
+        daysWithData: 7
       }
     })
   }
@@ -3127,6 +3135,7 @@ function demoHealthMatrix(
   return {
     scope,
     weeks,
+    weeksComplete: weeks.map(() => true),
     rows: rows.map((r, i) => ({
       id: r.id,
       name: r.name,
@@ -3149,7 +3158,9 @@ function demoHealth(): HealthResult {
       throughput: Math.round((s + 5 - (i % 4)) * 10) / 10,
       availability: 99.6,
       ncRecurrence: Math.round((100 - 4.6 * 3 - (i % 2)) * 10) / 10,
-      growth: Math.round((s - 15 + (i % 5)) * 10) / 10
+      growth: Math.round((s - 15 + (i % 5)) * 10) / 10,
+      complete: true,
+      daysWithData: 7
     }
   })
   const cells: HealthResult['cells'] = demoNcLifecycle().cells
@@ -3491,7 +3502,7 @@ export const previewApi: Api & { demo: true } = {
         return weeks.map((w, i) => {
           const value = Math.round(Math.max(0, base + ((key.length + i * 7) % 11 - 5) * (worseIsHigher ? 4 : 0.4)) * 10) / 10
           const breached = target != null && (worseIsHigher ? value > target : value < target)
-          return { weekStart: w, value, breached }
+          return { weekStart: w, value, breached, complete: true, daysWithData: 7 }
         })
       }
       const kpis: KpiOverviewKpi[] = [...byKey.values()]

@@ -37,15 +37,19 @@ if (process.platform === 'win32') {
     env: { ...process.env, SMOKE_TEST: '1', QOS_SMOKE: '1' }
   })
 } else {
-  // Cross-compiling for Windows on Linux: verify generated portable executable
-  const { statSync } = require('node:fs')
-  const size = existsSync(exe) ? statSync(exe).size : 0
-  if (size > 10 * 1024 * 1024) {
-    console.log(`verify-portable: Cross-compiling for Windows on Linux; portable artifact verified successfully (${(size / (1024 * 1024)).toFixed(2)} MB).`)
-    r = { status: 0, stdout: 'Artifact verified', stderr: '' }
+  // Cross-compiling for Windows on Linux: the .exe can't run here, so check
+  // the packaged files the import needs at runtime. (Before 2026-10-02 this
+  // only checked the .exe was over 10 MB, which let a build that couldn't
+  // import on Windows pass.) A full Windows run needs `npm run dist:portable`
+  // on Windows, or running the new .exe there.
+  const { checkPackageLayout } = require('./check-package-layout.cjs')
+  const problems = checkPackageLayout(join(RELEASE, 'win-unpacked', 'resources'), 'win32')
+  if (problems.length === 0) {
+    console.log('verify-portable: Windows package layout verified (DuckDB API + win32 engine unpacked, no foreign engines, import process present).')
+    r = { status: 0, stdout: 'Layout verified', stderr: '' }
   } else {
-    console.error('verify-portable: Artifact is invalid or too small: ' + size + ' bytes')
-    r = { status: 1, stdout: '', stderr: 'Artifact too small' }
+    for (const p of problems) console.error('verify-portable: ' + p)
+    r = { status: 1, stdout: '', stderr: problems.join('\n') }
   }
 }
 const out = (r.stdout ?? '') + (r.stderr ?? '')

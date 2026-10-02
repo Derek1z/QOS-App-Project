@@ -13,6 +13,7 @@ import {
   Area,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -327,6 +328,7 @@ export default function Overview(): React.JSX.Element {
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
                 Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · {banner.cells} Total Cells · {banner.ncCells} Non-Compliant ({banner.newNc} New NC, {banner.recurring} Recurring, {banner.intermittent} Intermittent, {banner.persistent} Persistent, {banner.chronic} Chronic) · {banner.recovering} Recovering
+                {overview?.periodComplete === false ? ' (partial week — no complete week yet)' : ''}
               </p>
             </div>
           </div>
@@ -504,7 +506,11 @@ export default function Overview(): React.JSX.Element {
                     ['persistent', 'Persistent NC'], ['chronic', 'Chronic NC'], ['recovering', 'Recovering']
                   ] as const).map(([key, label], i, all) => (
                     <Bar key={key} dataKey={key} name={label} stackId="a" fill={LIFECYCLE_STYLE[label].color}
-                      radius={i === all.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                      radius={i === all.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}>
+                      {ncMovementData.map((row, idx) => (
+                        <Cell key={`${key}-${idx}`} fillOpacity={row.complete ? 1 : 0.45} />
+                      ))}
+                    </Bar>
                   ))}
                 </BarChart>
               </ResponsiveContainer>

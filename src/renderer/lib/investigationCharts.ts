@@ -1,6 +1,6 @@
 import type { EChartsOption } from 'echarts'
 import type { InvestigationResult, Grain, Technology } from '../../../shared/api'
-import { latestComplete } from '../../../shared/periods'
+import { latestComplete, periodLabel } from '../../../shared/periods'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 import { formatTimeLabel } from './overviewCharts'
 
@@ -284,7 +284,7 @@ export function heroMetricChartOption(
   const tech: Technology = technologyOverride ?? res.technology ?? '4G'
   const metrics = getAvailableTelemetryMetrics(res, tech, prbThreshold)
   const activeMetric = metrics.find((m) => m.id === metricKey) ?? metrics[0]
-  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+  const timeLabels = res.weeks.map((w) => periodLabel(formatTimeLabel(w.weekStart, grain), grain, w.weekStart, w))
 
   const interventionIdx = res.interventionWeek
     ? res.weeks.findIndex((w) => w.weekStart === res.interventionWeek)
@@ -409,7 +409,7 @@ export function standaloneKpiChartOption(
   metric: TelemetryMetricConfig,
   grain: Grain = 'weekly'
 ): EChartsOption {
-  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+  const timeLabels = res.weeks.map((w) => periodLabel(formatTimeLabel(w.weekStart, grain), grain, w.weekStart, w))
   const markLineData: any[] = []
   if (metric.target != null) {
     markLineData.push({
@@ -483,7 +483,7 @@ export function correlationChartOption(
   const metrics = getAvailableTelemetryMetrics(res, tech, prbThreshold)
   const loadMetric = metrics[0] // Primary load metric
   const perfMetric = metrics[1] // Performance / Speed / Drop metric
-  const timeLabels = res.weeks.map((w) => formatTimeLabel(w.weekStart, grain))
+  const timeLabels = res.weeks.map((w) => periodLabel(formatTimeLabel(w.weekStart, grain), grain, w.weekStart, w))
 
   return {
     backgroundColor: 'transparent',

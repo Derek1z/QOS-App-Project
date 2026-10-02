@@ -1,5 +1,6 @@
 import type { DynamicKpiCardData, Grain, NcMovementRow, TechHealthCard } from '../../../shared/api'
 import { formatTimeLabel } from './overviewCharts'
+import { periodLabel } from '../../../shared/periods'
 
 /** Pure shaping of the executive-overview data (getExecutiveOverview +
  *  getNcMovement) into what the Overview cards, banner and charts render. */
@@ -62,9 +63,10 @@ export function toKpiCardProps(c: DynamicKpiCardData): OverviewKpiCard {
 export function movementSeries(
   rows: NcMovementRow[],
   grain: Grain
-): Array<{ label: string; newNc: number; recurring: number; intermittent: number; persistent: number; chronic: number; recovering: number }> {
+): Array<{ label: string; complete: boolean; newNc: number; recurring: number; intermittent: number; persistent: number; chronic: number; recovering: number }> {
   return rows.map((r) => ({
-    label: formatTimeLabel(r.weekStart, grain),
+    label: periodLabel(formatTimeLabel(r.weekStart, grain), grain, r.weekStart, r),
+    complete: r.complete !== false,
     newNc: r.newNc,
     recurring: r.recurring,
     intermittent: r.intermittent,
@@ -82,7 +84,7 @@ export function breachSeries(
   grain: Grain
 ): Array<{ label: string; totalBreaches: number }> {
   return rows.map((r) => ({
-    label: formatTimeLabel(r.weekStart, grain),
+    label: periodLabel(formatTimeLabel(r.weekStart, grain), grain, r.weekStart, r),
     totalBreaches: kpiKey === TOTALITY.key
       ? Object.values(r.coreKpiNcRates ?? {}).reduce((sum, k) => sum + k.breachedCells, 0)
       : r.coreKpiNcRates?.[kpiKey]?.breachedCells ?? 0

@@ -1,6 +1,7 @@
 import type { EChartsOption } from 'echarts'
 import type { HealthComponentRow, NcMovementRow, Grain } from '../../../shared/api'
 import { LIFECYCLE_STYLE } from '../../../shared/lifecycle'
+import { periodLabel } from '../../../shared/periods'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 
 function normalizeDateStr(dateStr: string): string {
@@ -108,13 +109,13 @@ export function healthLineOption(network: HealthComponentRow[], grain: Grain = '
 /** NC Movement: stacked area of lifecycle counts + NC-rate line with the
  *  district threshold (10%) marked on the secondary axis. */
 export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'weekly'): EChartsOption {
-  const timeLabels = movement.map((m) => formatTimeLabel(m.weekStart, grain))
+  const timeLabels = movement.map((m) => periodLabel(formatTimeLabel(m.weekStart, grain), grain, m.weekStart, m))
   const stack = 'nc'
   const base = {
     type: 'line' as const,
     stack,
     smooth: 0.25,
-    symbol: 'none',
+    symbolSize: 6,
     emphasis: { focus: 'series' as const },
     areaStyle: { opacity: 0.75 }
   }
@@ -172,7 +173,13 @@ export function ncMovementOption(movement: NcMovementRow[], grain: Grain = 'week
         ['Intermittent', 'intermittent', 'Intermittent NC'], ['Persistent', 'persistent', 'Persistent NC'],
         ['Chronic', 'chronic', 'Chronic NC'], ['Recovering', 'recovering', 'Recovering']
       ] as const).map(([name, key, label]) => ({
-        ...base, name, data: movement.map((m) => m[key]),
+        ...base,
+        name,
+        data: movement.map((m) => ({
+          value: m[key],
+          itemStyle: { opacity: m.complete !== false ? 1 : 0.45 },
+          symbol: m.complete !== false ? 'circle' : 'emptyCircle'
+        })),
         lineStyle: { color: LIFECYCLE_STYLE[label].color }, itemStyle: { color: LIFECYCLE_STYLE[label].color }
       })),
       {

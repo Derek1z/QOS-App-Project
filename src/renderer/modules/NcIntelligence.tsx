@@ -447,6 +447,7 @@ export default function NcIntelligence(): React.JSX.Element {
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
               Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · {persistentCount} Persistent/Chronic, {recurringCount} Recurring/Intermittent, {newCount} New, {recoveringCount} Recovering
+              {nc?.periodComplete === false ? ' (partial week — no complete week yet)' : ''}
             </p>
           </div>
         </div>

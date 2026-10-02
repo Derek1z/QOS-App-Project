@@ -205,7 +205,17 @@ export default function HealthMatrix(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>{SCOPES.find((s) => s.id === scope)?.label}</th>
-                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{formatTimeLabel(matrix.weeks[latestIdx], grain)}</th>}
+                    {matrix.weeks.length > 0 && (
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          ...(matrix.weeksComplete[latestIdx] === false ? { color: 'var(--text-faint)', fontWeight: 400 } : {})
+                        }}
+                      >
+                        {formatTimeLabel(matrix.weeks[latestIdx], grain)}
+                        {matrix.weeksComplete[latestIdx] === false ? ' · partial' : ''}
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>

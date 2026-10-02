@@ -3,6 +3,7 @@ import type { DynamicKpiCardData, NcMovementRow } from '../../shared/api'
 import {
   trendArrow, targetLabel, toKpiCardProps, movementSeries, breachSeries, kpiFilterOptions, bannerSummary
 } from '../../src/renderer/lib/overviewData'
+import { formatTimeLabel } from '../../src/renderer/lib/overviewCharts'
 
 const CSSR_3G: DynamicKpiCardData = {
   kpiId: 7,
@@ -94,8 +95,8 @@ describe('KPI card props from executive overview data', () => {
 describe('Overview chart series', () => {
   it('labels NC lifecycle movement by ISO week', () => {
     expect(movementSeries(MOVEMENT, 'weekly')).toEqual([
-      { label: 'W30', newNc: 3, recurring: 1, intermittent: 2, persistent: 2, chronic: 1, recovering: 4 },
-      { label: 'W31', newNc: 1, recurring: 2, intermittent: 0, persistent: 3, chronic: 2, recovering: 1 }
+      { label: 'W30', complete: true, newNc: 3, recurring: 1, intermittent: 2, persistent: 2, chronic: 1, recovering: 4 },
+      { label: 'W31', complete: true, newNc: 1, recurring: 2, intermittent: 0, persistent: 3, chronic: 2, recovering: 1 }
     ])
   })
 
@@ -108,6 +109,19 @@ describe('Overview chart series', () => {
       { label: 'W30', totalBreaches: 3 },
       { label: 'W31', totalBreaches: 0 }
     ])
+  })
+
+  it('labels a partial week with its coverage', () => {
+    const rows = movementSeries(
+      [
+        { ...MOVEMENT[0], weekStart: '2026-07-13', complete: true, daysWithData: 7 },
+        { ...MOVEMENT[1], weekStart: '2026-07-20', complete: false, daysWithData: 3 }
+      ],
+      'weekly'
+    )
+    expect(rows[0].label).toBe(formatTimeLabel('2026-07-13', 'weekly'))
+    expect(rows[1].label).toBe(`${formatTimeLabel('2026-07-20', 'weekly')} · 3 of 7 days`)
+    expect(rows[1].complete).toBe(false)
   })
 
   it('offers totality plus every core KPI present in the movement data', () => {

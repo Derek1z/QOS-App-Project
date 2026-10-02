@@ -106,17 +106,23 @@ describe('NC periods (spec §3, §4)', () => {
     expect(m['2026-07-01']).toBe('Chronic NC') // 1, 8 and 15 Jul: NC month holding the chronic weeks' bad days
   })
 
-  it('month edge: a run ending on the 2nd leaves that month not NC, and (being partial, data ends 20 Aug of 31) it carries July\'s label rather than computing its own Recovering (spec 2026-10-01 §3.3)', { timeout: 60000 }, async () => {
+  it('month edge: a run ending on the 2nd leaves that month not NC, and (being partial, data ends 20 Aug of 31) the partial non-NC August carries July\'s label after roll-up (spec 2026-10-01 §3.3)', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('3G')
     await insertCells(ws.conn, ['ENDS-2ND'])
     await days(ws, 1, '2026-06-14', '2026-08-20', `d <= DATE '2026-08-02'`)
     await build(ws)
     expect((await labels(ws, 'ENDS-2ND', 'daily'))['2026-08-01']).toBe('Chronic NC')
+    const m2 = await labels(ws, 'ENDS-2ND', 'monthly')
+    // July's own streak is only Persistent, but the weeks of 20 and 27 Jul are
+    // Chronic and have bad days falling in July, so roll-up raises July to
+    // Chronic NC (spec §4) — the carried label must reflect that post-roll-up
+    // value, not July's pre-roll-up Persistent NC.
+    expect(m2['2026-07-01']).toBe('Chronic NC')
     const m = (await ws.conn.runAndReadAll(
       `SELECT is_nc, lifecycle FROM cell_nc_lifecycle WHERE grain = 'monthly' AND period_start = DATE '2026-08-01'`
     )).getRowObjects()[0]
     expect(Boolean(m.is_nc)).toBe(false)
-    expect(String(m.lifecycle)).toBe('Persistent NC')
+    expect(String(m.lifecycle)).toBe('Chronic NC')
   })
 
   it('a missing day inside a run neither breaks nor extends it', { timeout: 60000 }, async () => {

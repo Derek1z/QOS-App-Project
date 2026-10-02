@@ -190,11 +190,17 @@ export async function recomputeNcLifecycle(conn: DuckDBConnection, cellIds: numb
     await conn.run(`CREATE OR REPLACE TEMP TABLE stg_nc_lifecycle (
       cell_id BIGINT, grain VARCHAR, period_date DATE, is_nc BOOLEAN, lc_rank INTEGER,
       trend VARCHAR, breach_days DOUBLE, prb_avg DOUBLE, avail DOUBLE)`)
+    for (const g of grains) await conn.run(stageGrainSql(g, idList, periodsFor(g, rules)))
+    for (const sql of ROLL_UP_SQL) await conn.run(sql)
+    // Skipped partial periods carry the cell's last label of that grain (spec
+    // §3.3) — run after roll-up (spec §4) so the carried label is the one the
+    // cell is actually shown with, not a week/month's pre-roll-up rank. Safe
+    // because skipped rows are is_nc = false, so the roll-up above never
+    // writes to them nor (with the default rules, which require bad days)
+    // reads from them as a source.
     for (const g of grains) {
-      await conn.run(stageGrainSql(g, idList, periodsFor(g, rules)))
       if (g !== 'daily') await conn.run(stageSkippedSql(g, idList))
     }
-    for (const sql of ROLL_UP_SQL) await conn.run(sql)
 
     await conn.run(`DELETE FROM cell_nc_lifecycle WHERE cell_id IN (${idList})`)
     await conn.run(`

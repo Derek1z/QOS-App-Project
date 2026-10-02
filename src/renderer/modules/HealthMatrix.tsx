@@ -109,6 +109,13 @@ export default function HealthMatrix(): React.JSX.Element {
 
   const height = matrix && matrix.rows.length > 0 ? Math.max(220, Math.min(520, matrix.rows.length * 18 + 70)) : 220
 
+  const latestIdx = matrix
+    ? (() => {
+        const i = matrix.weeksComplete.lastIndexOf(true)
+        return i >= 0 ? i : matrix.weeks.length - 1
+      })()
+    : -1
+
   return (
     <div className="module">
       <div className="module-head">
@@ -198,12 +205,12 @@ export default function HealthMatrix(): React.JSX.Element {
                 <thead>
                   <tr>
                     <th>{SCOPES.find((s) => s.id === scope)?.label}</th>
-                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{formatTimeLabel(matrix.weeks[matrix.weeks.length - 1], grain)}</th>}
+                    {matrix.weeks.length > 0 && <th style={{ textAlign: 'right' }}>{formatTimeLabel(matrix.weeks[latestIdx], grain)}</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {matrix.rows.slice(0, 10).map((r) => {
-                    const latest = r.scores[r.scores.length - 1]
+                    const latest = r.scores[latestIdx]
                     const color = latest == null ? 'var(--text-faint)' : latest >= 80 ? 'var(--green)' : latest >= 65 ? 'var(--accent)' : latest >= 50 ? 'var(--warn)' : 'var(--danger)'
                     return (
                       <tr key={r.id}>

@@ -28,6 +28,7 @@ import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
 import { listKpiDefs, workspaceTechnology } from './kpiService'
 import { latestPeriodSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
+import { latestComplete, previousComplete } from '../../../shared/periods'
 
 /** Spec §64: UI modules call centralized analytics interfaces, not raw SQL. */
 
@@ -749,7 +750,7 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
     complete: Boolean(x.complete),
     daysWithData: Number(x.days_with_data ?? 0)
   }))
-  const latestWeek = weeks.length > 0 ? weeks[weeks.length - 1].weekStart : (life ? String(life.week_start) : '')
+  const latestWeek = latestComplete(weeks)?.weekStart ?? (life ? String(life.week_start) : '')
   const kpis = latestWeek ? await cellKpiValues(conn, cellId, latestWeek) : []
 
   const extraKpiTrends: Record<string, (number | null)[]> = {}
@@ -2922,8 +2923,8 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
   const activeGrain = opts?.grain ?? 'weekly'
   const sparkLimit = opts?.period === '12w' ? 12 : opts?.period === '7d' ? 7 : 4
   const healthSeries = await computeNetworkHealth(conn, activeGrain)
-  const curHealth = healthSeries[healthSeries.length - 1]
-  const prevHealth = healthSeries.length > 1 ? healthSeries[healthSeries.length - 2] : null
+  const curHealth = latestComplete(healthSeries)
+  const prevHealth = previousComplete(healthSeries, curHealth) ?? null
 
   const overallHealthScore = curHealth ? curHealth.score : 85
   const overallHealthDelta = curHealth && prevHealth ? Math.round((curHealth.score - prevHealth.score) * 10) / 10 : null
@@ -2996,18 +2997,25 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
 
     if (def.key === 'prb_utilization') {
       const r = await conn.runAndReadAll(`
-        SELECT period_start, prb_avg FROM agg_network_weekly
-        ORDER BY period_start DESC LIMIT ${sparkLimit}
+        SELECT aw.period_start, aw.prb_avg, ${completeSql('weekly')} AS complete
+        FROM agg_network_weekly aw
+        ${periodCoverageJoin('weekly', 'aw.period_start')}
+        ORDER BY aw.period_start DESC LIMIT ${sparkLimit}
       `)
       const rows = r.getRowObjects().reverse()
+      const sparkRows: Array<{ value: number; complete: boolean }> = []
       for (const row of rows) {
         if (row.prb_avg != null) {
-          sparkline.push(Math.round(Number(row.prb_avg) * 10) / 10)
+          const value = Math.round(Number(row.prb_avg) * 10) / 10
+          sparkline.push(value)
           sparklineDates.push(String(row.period_start))
+          sparkRows.push({ value, complete: Boolean(row.complete) })
         }
       }
-      if (sparkline.length > 0) curVal = sparkline[sparkline.length - 1]
-      if (sparkline.length > 1) prevVal = sparkline[sparkline.length - 2]
+      const curRow = latestComplete(sparkRows)
+      const prevRow = previousComplete(sparkRows, curRow)
+      if (curRow) curVal = curRow.value
+      if (prevRow) prevVal = prevRow.value
 
       const ncR = await conn.runAndReadAll(`
         SELECT count(DISTINCT cell_id) AS nc_count
@@ -3018,22 +3026,28 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
     } else {
       const numKpiId = Number(def.kpiId)
       const r = await conn.runAndReadAll(`
-        SELECT d.week_start, avg(w.avg_value) AS avg_val
+        SELECT d.week_start, avg(w.avg_value) AS avg_val, ${completeSql('weekly')} AS complete
         FROM agg_cell_kpi_weekly w
         JOIN dim_date d ON d.week_start = w.week_start
+        ${periodCoverageJoin('weekly', 'd.week_start')}
         WHERE w.kpi_id = ${numKpiId}
-        GROUP BY d.week_start
+        GROUP BY d.week_start, pc.is_complete, pc.days_with_data, pc.days_in_period
         ORDER BY d.week_start DESC LIMIT ${sparkLimit}
       `)
       const rows = r.getRowObjects().reverse()
+      const sparkRows: Array<{ value: number; complete: boolean }> = []
       for (const row of rows) {
         if (row.avg_val != null) {
-          sparkline.push(Math.round(Number(row.avg_val) * 100) / 100)
+          const value = Math.round(Number(row.avg_val) * 100) / 100
+          sparkline.push(value)
           sparklineDates.push(String(row.week_start))
+          sparkRows.push({ value, complete: Boolean(row.complete) })
         }
       }
-      if (sparkline.length > 0) curVal = sparkline[sparkline.length - 1]
-      if (sparkline.length > 1) prevVal = sparkline[sparkline.length - 2]
+      const curRow = latestComplete(sparkRows)
+      const prevRow = previousComplete(sparkRows, curRow)
+      if (curRow) curVal = curRow.value
+      if (prevRow) prevVal = prevRow.value
 
       if (def.target != null) {
         const breachCond = def.worseIsHigher ? `w.avg_value > ${Number(def.target)}` : `w.avg_value < ${Number(def.target)}`

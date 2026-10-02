@@ -14,6 +14,7 @@ import type {
   ReportSectionId, ReportSnapshot, ReportType, CellIntelligenceRow, CellKpiValue
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, REPORT_SECTIONS } from '../../../shared/api'
+import { latestComplete } from '../../../shared/periods'
 
 type JSZipLike = {
   loadAsync(data: Uint8Array | Buffer): Promise<{
@@ -95,7 +96,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
       ['Weekly NC cells', fmtK(s?.weeklyNcCells)],
       ['Ruleset version', s?.rulesetVersion ?? null]
     ]
-    const latest = h.network[h.network.length - 1]
+    const latest = latestComplete(h.network)
     if (latest) {
       rows.push(['Network health score', latest.score])
       rows.push(['Health components (cap/thr/avail/nc/growth)', `${latest.capacity} / ${latest.throughput} / ${latest.availability} / ${latest.ncRecurrence} / ${latest.growth}`])
@@ -223,11 +224,13 @@ async function matrixSection(
   title: string
 ): Promise<SectionTable> {
   const m = await getHealthMatrix(scope, { limit: 30 })
-  const last = m.weeks[m.weeks.length - 1]?.slice(5)
+  const i = m.weeksComplete.lastIndexOf(true)
+  const at = i >= 0 ? i : m.weeks.length - 1
+  const last = m.weeks[at]?.slice(5)
   return {
     title,
     columns: ['Name', `Score (${last ?? 'latest'})`, 'Cells'],
-    rows: m.rows.map((r) => [r.name, r.scores[r.scores.length - 1]?.toFixed(1) ?? null, '—']),
+    rows: m.rows.map((r) => [r.name, r.scores[at]?.toFixed(1) ?? null, '—']),
     note: 'Rolled up from cell health; worst first.'
   }
 }
@@ -536,8 +539,10 @@ async function buildExcelCharts(sections: SectionData[], charts: ReportChartConf
     for (const b of barScopes) {
       if (!byId.has(b.sheetName === 'Region Analysis' ? 'region-analysis' : b.sheetName === 'District Analysis' ? 'district-analysis' : 'site-analysis') || !b.enabled) continue
       const m = await getHealthMatrix(b.scope, { limit: 30 })
+      const bi = m.weeksComplete.lastIndexOf(true)
+      const bAt = bi >= 0 ? bi : m.weeks.length - 1
       const labels = m.rows.map((r) => r.name)
-      const values = m.rows.map((r) => r.scores[r.scores.length - 1])
+      const values = m.rows.map((r) => r.scores[bAt])
       if (labels.length >= 2) {
         const svg = svgHBarChart({
           title: `${b.scope.charAt(0).toUpperCase() + b.scope.slice(1)} health scores — latest week, worst first`,
@@ -551,7 +556,7 @@ async function buildExcelCharts(sections: SectionData[], charts: ReportChartConf
     }
     if (byId.has('executive-summary') && charts.executive.enabled) {
       const h = await getHealth()
-      const latest = h.network[h.network.length - 1]
+      const latest = latestComplete(h.network)
       if (latest) {
         const svg = svgVBarChart({
           title: `Network health components — ${latest.asOf}`,
@@ -1004,7 +1009,7 @@ async function renderPptx(
 async function buildSnapshot(): Promise<ReportSnapshot> {
   const s = await getSummary()
   const rules = await getRulesCurrent()
-  const latestHealth = (await getHealth()).network.slice(-1)[0]
+  const latestHealth = latestComplete((await getHealth()).network)
   const nc = await getNcLifecycle()
   return {
     scope: 'network',

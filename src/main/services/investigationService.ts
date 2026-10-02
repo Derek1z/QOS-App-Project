@@ -15,6 +15,7 @@ import { DEFAULT_NC_PERIODS } from '../../../shared/ruleDefaults'
 import { runDiagnosticEngine } from '../analytics/investigation/engine'
 import type { DiagnosticContext } from '../analytics/investigation/types'
 import { latestPeriodSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
+import { latestComplete, previousComplete } from '../../../shared/periods'
 
 /** M4 Investigation Workspace (spec §47–50): deterministic, evidence-based
  *  diagnosis with calibrated language; notes/events; before/after; report export.
@@ -323,8 +324,8 @@ export async function getInvestigation(
       daysWithData: Number(x.days_with_data ?? 0)
     }
   })
-  const last = weeks[weeks.length - 1]
-  const prev = weeks[weeks.length - 2]
+  const last = latestComplete(weeks)
+  const prev = previousComplete(weeks, last)
 
   // 3. current classification + priority (cell scope; rollup pseudo-current otherwise)
   let current: InvestigationResult['current'] = null
@@ -565,8 +566,8 @@ export async function getInvestigation(
     isNc,
     ncStreak,
     weeks,
-    latestWeek: last,
-    previousWeek: prev,
+    latestWeek: last ?? null,
+    previousWeek: prev ?? null,
     evidence,
     kpiMap,
     thresholds: {

@@ -1,5 +1,6 @@
 import type { EChartsOption } from 'echarts'
 import type { InvestigationResult, Grain, Technology } from '../../../shared/api'
+import { latestComplete } from '../../../shared/periods'
 import { PALETTE, tooltipStyle, axisLabelStyle } from './Chart'
 import { formatTimeLabel } from './overviewCharts'
 
@@ -23,7 +24,8 @@ export function getAvailableTelemetryMetrics(
   tech: Technology,
   prbThreshold: number
 ): TelemetryMetricConfig[] {
-  const latestWeek = res.weeks[res.weeks.length - 1]
+  const latestWeek = latestComplete(res.weeks)
+  const latestIdx = latestWeek ? res.weeks.indexOf(latestWeek) : -1
 
   if (tech === '2G') {
     const tchData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null))
@@ -32,11 +34,11 @@ export function getAvailableTelemetryMetrics(
     const dropData = res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.4 : 0.5))
     const voiceData = res.weeks.map((w) => w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null))
 
-    const latestTch = tchData[tchData.length - 1] ?? null
-    const latestSdcch = sdcchData[sdcchData.length - 1] ?? null
-    const latestCssr = cssrData[cssrData.length - 1] ?? null
-    const latestDrop = dropData[dropData.length - 1] ?? null
-    const latestVoice = voiceData[voiceData.length - 1] ?? null
+    const latestTch = (latestIdx >= 0 ? tchData[latestIdx] : null) ?? null
+    const latestSdcch = (latestIdx >= 0 ? sdcchData[latestIdx] : null) ?? null
+    const latestCssr = (latestIdx >= 0 ? cssrData[latestIdx] : null) ?? null
+    const latestDrop = (latestIdx >= 0 ? dropData[latestIdx] : null) ?? null
+    const latestVoice = (latestIdx >= 0 ? voiceData[latestIdx] : null) ?? null
 
     return [
       {
@@ -114,11 +116,11 @@ export function getAvailableTelemetryMetrics(
     const congData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : 0))
     const breachData = res.weeks.map((w) => w.breachDays ?? (w.isNc ? 1 : 0))
 
-    const latestCssr = cssrData[cssrData.length - 1] ?? null
-    const latestDrop = dropData[dropData.length - 1] ?? null
-    const latestDasr = dasrData[dasrData.length - 1] ?? null
-    const latestCong = congData[congData.length - 1] ?? null
-    const latestBreach = breachData[breachData.length - 1] ?? 0
+    const latestCssr = (latestIdx >= 0 ? cssrData[latestIdx] : null) ?? null
+    const latestDrop = (latestIdx >= 0 ? dropData[latestIdx] : null) ?? null
+    const latestDasr = (latestIdx >= 0 ? dasrData[latestIdx] : null) ?? null
+    const latestCong = (latestIdx >= 0 ? congData[latestIdx] : null) ?? null
+    const latestBreach = (latestIdx >= 0 ? breachData[latestIdx] : null) ?? 0
 
     return [
       {

@@ -4,6 +4,7 @@ import { KpiCard } from '../components/KpiCard'
 import TargetsModal from './TargetsModal'
 import type { ExecutiveOverviewResult, NcMovementRow } from '../../../shared/api'
 import { LIFECYCLE_STYLE } from '../../../shared/lifecycle'
+import { latestComplete } from '../../../shared/periods'
 import {
   TOTALITY, toKpiCardProps, movementSeries, breachSeries, kpiFilterOptions, bannerSummary
 } from '../lib/overviewData'
@@ -76,7 +77,7 @@ export default function Overview(): React.JSX.Element {
 
   const techCard = overview?.technologies.find((t) => t.technology === techCode)
   const kpiCards = (techCard?.availableKpiCards ?? []).map(toKpiCardProps)
-  const banner = bannerSummary(techCard, movement[movement.length - 1])
+  const banner = bannerSummary(techCard, latestComplete(movement))
   const hasData = banner.cells > 0 || movement.length > 0
   const coreKpis = kpiFilterOptions(movement)
   const ncMovementData = movementSeries(movement, grain)

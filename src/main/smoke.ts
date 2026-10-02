@@ -550,11 +550,17 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   if (inv.current?.lifecycle !== 'Healthy') throw new Error('inv lifecycle ' + inv.current?.lifecycle)
   if (inv.evidence.length < 6) throw new Error('inv evidence ' + inv.evidence.length)
+  // Both of ACC-001-A's weeks (Jun29-Jul5 and Jul6-Jul12) are partial in this
+  // fixture (only 3 of 7, then 1 of 7, days imported), so there is no complete
+  // previous period to compare against: trend/previous is NULL (spec §3.4).
   const invPrb = inv.evidence.find((e: any) => e.metric === 'prb')!
-  if (invPrb.current !== 89 || Math.abs((invPrb.previous ?? 0) - 84.67) > 0.01) {
+  if (invPrb.current !== 89 || invPrb.previous !== null) {
     throw new Error('inv prb evidence wrong: ' + JSON.stringify(invPrb))
   }
-  if (inv.findings.length < 2) throw new Error('inv findings ' + inv.findings.length)
+  // The only period-over-period finding here was 'PRB rose N% period-over-period',
+  // driven by the now-NULL delta above (spec §3.4); the deterministic 'conclusion'
+  // finding still always fires, so at least 1 finding is expected, not 2.
+  if (inv.findings.length < 1) throw new Error('inv findings ' + inv.findings.length)
   if (inv.hypotheses.length < 5) throw new Error('inv hypotheses ' + inv.hypotheses.length)
   for (const h of inv.hypotheses) {
     if (h.score < 5 || h.score > 95) throw new Error('inv hypo score OOB ' + h.score)

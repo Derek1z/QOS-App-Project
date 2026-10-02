@@ -102,11 +102,13 @@ export default function Overview(): React.JSX.Element {
 
   const techCard = overview?.technologies.find((t) => t.technology === techCode)
   const kpiCards = (techCard?.availableKpiCards ?? []).map(toKpiCardProps)
-  const banner = bannerSummary(techCard, latestComplete(movement))
+  const latestMovement = latestComplete(movement)
+  const banner = bannerSummary(techCard, latestMovement)
   const hasData = banner.cells > 0 || movement.length > 0
   const coreKpis = kpiFilterOptions(movement)
   const ncMovementData = movementSeries(movement, grain)
   const kpiBreachData = breachSeries(movement, selectedKpiKey, grain)
+  const periodWord = grain === 'monthly' ? 'month' : grain === 'daily' ? 'day' : 'week'
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -352,7 +354,7 @@ export default function Overview(): React.JSX.Element {
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
                 Active scope: <strong style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{grain}</strong> grain · {banner.cells} Total Cells · {banner.ncCells} Non-Compliant ({banner.newNc} New NC, {banner.recurring} Recurring, {banner.intermittent} Intermittent, {banner.persistent} Persistent, {banner.chronic} Chronic) · {banner.recovering} Recovering
-                {overview?.periodComplete === false ? ' (partial week — no complete week yet)' : ''}
+                {latestMovement?.complete === false ? ` (partial ${periodWord} — no complete ${periodWord} yet)` : ''}
               </p>
             </div>
           </div>

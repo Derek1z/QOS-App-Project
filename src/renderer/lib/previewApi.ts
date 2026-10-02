@@ -28,6 +28,7 @@ import type {
 import { DEFAULT_CHARTS, FIELD_ORDER, PRIORITY_MODES, REPORT_SECTIONS, REPORT_TYPES } from '../../../shared/api'
 import { emptyLifecycleCounts } from '../../../shared/lifecycle'
 import { DEFAULT_NC_PERIODS, DEFAULT_DISTRICT_NC_PCT, DEFAULT_PRIORITY_WEIGHTS } from '../../../shared/ruleDefaults'
+import { latestComplete, previousComplete, periodLabel } from '../../../shared/periods'
 import { weekLabel, formatTimeLabel } from './overviewCharts'
 
 /** Browser-only stub installed when the renderer runs outside Electron
@@ -708,10 +709,14 @@ function demoNcMovement(limit = 8): NcMovementRow[] {
   const rec = [6, 7, 8, 7, 9, 8, 8, 4]
   const per = [2, 3, 3, 4, 4, 4, 4, 3]
   const recov = [4, 5, 6, 4, 7, 5, 6, 8]
-  return weeks.slice(-limit).map((weekStart, i) => {
+  const sliced = weeks.slice(-limit)
+  return sliced.map((weekStart, i) => {
     const j = weeks.length - limit + i
     const nc = newNc[j] + rec[j] + per[j]
     const total = 240
+    // The newest week is partial (spec §3.2, fix wave 2026-10-01 final
+    // review item 8) — the mock otherwise never shows a provisional period.
+    const isLast = i === sliced.length - 1
     return {
       weekStart,
       newNc: newNc[j],
@@ -723,8 +728,8 @@ function demoNcMovement(limit = 8): NcMovementRow[] {
       ncCells: nc,
       totalCells: total,
       ncRate: Math.round((nc / total) * 1000) / 10,
-      complete: true,
-      daysWithData: 7
+      complete: !isLast,
+      daysWithData: isLast ? 3 : 7
     }
   })
 }
@@ -877,8 +882,9 @@ function demoCellDetail(cellId: number, _grain?: Grain, technology: Technology =
       isNc,
       lifecycle: isNc ? base.lifecycle : i >= 11 && base.lifecycle === 'Recovering' ? 'Recovering' : 'Healthy',
       severity: isNc ? base.severity : 'Normal',
-      complete: true,
-      daysWithData: 7
+      // The newest week is partial (fix wave 2026-10-01 final review item 8).
+      complete: i !== 11,
+      daysWithData: i === 11 ? 3 : 7
     }
   })
   return {
@@ -1946,7 +1952,7 @@ async function rSection(id: ReportSectionId): Promise<{ id: ReportSectionId; tab
           ['Weekly NC cells', rfmtK(s?.weeklyNcCells)],
           ['Ruleset version', s?.rulesetVersion ?? null]
         ]
-        const latest = h?.network?.[h.network.length - 1]
+        const latest = h?.network ? latestComplete(h.network) : undefined
         if (latest) {
           rows.push(['Network health score', latest.score])
           rows.push(['Health components (cap/thr/avail/nc/growth)', `${latest.capacity} / ${latest.throughput} / ${latest.availability} / ${latest.ncRecurrence} / ${latest.growth}`])
@@ -2074,10 +2080,13 @@ async function rSection(id: ReportSectionId): Promise<{ id: ReportSectionId; tab
 
 async function rMatrix(scope: 'region' | 'district' | 'site', title: string): Promise<{ id: ReportSectionId; table: RptTable }> {
   const m = await getAnalyticsApi().healthMatrix(scope, { limit: 30 })
-  const last = m.weeks[m.weeks.length - 1]?.slice(5)
+  // Latest = latest complete week (spec §3.1), not just the newest column.
+  const completeIdx = m.weeksComplete.lastIndexOf(true)
+  const latestIdx = completeIdx >= 0 ? completeIdx : m.weeks.length - 1
+  const last = m.weeks[latestIdx]?.slice(5)
   return {
     id: (scope === 'region' ? 'region-analysis' : scope === 'district' ? 'district-analysis' : 'site-analysis') as ReportSectionId,
-    table: { title, columns: ['Name', `Score (${last ?? 'latest'})`, 'Cells'], rows: m.rows.map((r) => [r.name, r.scores[r.scores.length - 1]?.toFixed(1) ?? null, '—']), note: 'Rolled up from cell health; worst first.' }
+    table: { title, columns: ['Name', `Score (${last ?? 'latest'})`, 'Cells'], rows: m.rows.map((r) => [r.name, r.scores[latestIdx]?.toFixed(1) ?? null, '—']), note: 'Rolled up from cell health; worst first.' }
   }
 }
 
@@ -2252,7 +2261,7 @@ async function demoReportPack(opts: ReportOpts = {}): Promise<ReportPack> {
       totalUsers: s?.totalUsers ?? null,
       totalVolumeMb: s?.totalVolumeMb ?? null,
       avgAvailability: s?.avgAvailability ?? null,
-      healthScore: h?.network?.[h.network.length - 1]?.score ?? null
+      healthScore: (h?.network ? latestComplete(h.network) : undefined)?.score ?? null
     },
     classifications: nc.byLifecycle,
     ncCount: nc.ncCells,
@@ -2553,8 +2562,10 @@ function demoInvestigation(
         dataAccess: dasr3g,
         dataFailure: isNc ? 2.6 : 0.8,
         speedMbps: is3G ? hsdpaSpeed : Math.round((throughputKbps / 1024) * 10) / 10,
-        complete: true,
-        daysWithData: 7
+        // The newest week is partial (fix wave 2026-10-01 final review item 8);
+        // daily is unaffected (spec §2).
+        complete: grain === 'daily' || i !== stepCount - 1,
+        daysWithData: grain === 'daily' || i !== stepCount - 1 ? 7 : 3
       }
     })
 
@@ -2595,14 +2606,17 @@ function demoInvestigation(
         dataAccess: avg('dataAccess'),
         dataFailure: avg('dataFailure'),
         speedMbps: avg('speedMbps'),
-        complete: true,
-        daysWithData: 7
+        // Every cell in the group shares the same date range, so the group's
+        // completeness follows any one member's (fix wave 2026-10-01 final
+        // review item 8).
+        complete: ws[0]?.complete ?? true,
+        daysWithData: ws[0]?.daysWithData ?? 7
       }
     })
   }
 
-  const last = weeks[weeks.length - 1]
-  const prev = weeks[weeks.length - 2]
+  const last = latestComplete(weeks)
+  const prev = previousComplete(weeks, last)
   const base = scope === 'cell' ? group[0] : null
   const current: InvestigationResult['current'] =
     scope === 'cell' && base
@@ -3135,7 +3149,7 @@ function demoHealthMatrix(
   return {
     scope,
     weeks,
-    weeksComplete: weeks.map(() => true),
+    weeksComplete: weeks.map((_, i) => i < weeks.length - 1),
     rows: rows.map((r, i) => ({
       id: r.id,
       name: r.name,
@@ -3151,6 +3165,8 @@ function demoHealth(): HealthResult {
   const scores = [74.1, 73.5, 71.9, 72.8, 71.2, 70.4, 69.8, 72.5]
   const network = weeks.map((asOf, i) => {
     const s = scores[i]
+    // The newest week is partial (fix wave 2026-10-01 final review item 8).
+    const isLast = i === weeks.length - 1
     return {
       asOf,
       score: s,
@@ -3159,8 +3175,8 @@ function demoHealth(): HealthResult {
       availability: 99.6,
       ncRecurrence: Math.round((100 - 4.6 * 3 - (i % 2)) * 10) / 10,
       growth: Math.round((s - 15 + (i % 5)) * 10) / 10,
-      complete: true,
-      daysWithData: 7
+      complete: !isLast,
+      daysWithData: isLast ? 3 : 7
     }
   })
   const cells: HealthResult['cells'] = demoNcLifecycle().cells

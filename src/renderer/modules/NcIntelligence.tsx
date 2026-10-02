@@ -264,6 +264,7 @@ export default function NcIntelligence(): React.JSX.Element {
   const recurringCount = count('Recurring NC') + count('Intermittent NC')
   const recoveringCount = count('Recovering')
   const totalBreaches = NC_LIFECYCLES.reduce((s, l) => s + count(l), 0)
+  const periodWord = grain === 'monthly' ? 'month' : grain === 'daily' ? 'day' : 'week'
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -447,7 +448,7 @@ export default function NcIntelligence(): React.JSX.Element {
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px', margin: '4px 0 0 0' }}>
               Active scope: <strong style={{ color: 'var(--text)' }}>{grain}</strong> grain · {persistentCount} Persistent/Chronic, {recurringCount} Recurring/Intermittent, {newCount} New, {recoveringCount} Recovering
-              {nc?.periodComplete === false ? ' (partial week — no complete week yet)' : ''}
+              {nc?.periodComplete === false ? ` (partial ${periodWord} — no complete ${periodWord} yet)` : ''}
             </p>
           </div>
         </div>

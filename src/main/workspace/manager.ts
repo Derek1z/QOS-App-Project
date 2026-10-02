@@ -10,6 +10,7 @@ import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
 import { repairDuplicateDimensions } from '../services/dimRepair'
 import { migrateLegacyTargets } from './migrateTargets'
 import { recomputeNcLifecycle } from '../analytics/nc'
+import { periodCoverageViewSql } from '../analytics/periods'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
@@ -401,6 +402,18 @@ export async function openWorkspace(
           }
         } catch (e) {
           console.error('[dimRepair] failed (workspace still opens): ' + (e instanceof Error ? e.message : String(e)))
+        }
+      } else {
+        // A pre-feature workspace opened read-only never gets period_coverage
+        // backfilled (ensureUpgradeSchema runs on writable opens only, above)
+        // — every weekly/monthly screen would otherwise throw a catalog error
+        // (fix wave 2026-10-01 final review, item 3). DuckDB allows a TEMP
+        // VIEW on a READ_ONLY database, so stand one in when the table is
+        // missing.
+        try {
+          await connection.run(`SELECT 1 FROM period_coverage LIMIT 0`)
+        } catch {
+          await connection.run(periodCoverageViewSql())
         }
       }
       const info = await describe(connection)

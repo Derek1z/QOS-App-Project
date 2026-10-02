@@ -27,7 +27,7 @@ import { getPrbTarget } from '../analytics/targets'
 import { recomputeNcLifecycle } from '../analytics/nc'
 import { forecastSeries, forecastTrajectory, classifyRisk } from '../analytics/forecast'
 import { listKpiDefs, workspaceTechnology } from './kpiService'
-import { latestPeriodSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
+import { latestPeriodSql, latestIsCompleteSql, latestWeekEndDateIdSql, periodCoverageJoin, completeSql, daysWithDataSql } from '../analytics/periods'
 import { latestComplete, previousComplete } from '../../../shared/periods'
 
 /** Spec §64: UI modules call centralized analytics interfaces, not raw SQL. */
@@ -349,7 +349,7 @@ export async function getNcLifecycle(grain: Grain = 'weekly'): Promise<NcLifecyc
     if (c.isNc) ncCells++
   }
   const pcR = await conn.runAndReadAll(
-    `SELECT ${safeGrain === 'daily' ? 'true' : `coalesce((SELECT is_complete FROM period_coverage WHERE grain = '${safeGrain}' AND period_start = ${latestPeriodSql(safeGrain)}), true)`} AS c`
+    `SELECT ${latestIsCompleteSql(safeGrain)} AS c`
   )
   const periodComplete = Boolean(pcR.getRowObjects()[0]?.c ?? true)
   return {
@@ -888,10 +888,12 @@ export async function getPerformance(opts?: {
     // ignore
   }
 
+  // Latest = latest complete period for weekly/monthly (spec §3.1); daily is unaffected.
+  const latestBound = grain === 'daily' ? '' : ` AND ${dateCol} <= ${latestPeriodSql(grain)}`
   const wkR = await conn.runAndReadAll(
     `SELECT CAST(COALESCE(
-       (SELECT max(${dateCol}) FROM ${kpiAggTable} k JOIN kpi_defs kd ON kd.kpi_id = k.kpi_id WHERE kd.technology = '${tech}'),
-       (SELECT max(${dateCol}) FROM ${aggTable})
+       (SELECT max(${dateCol}) FROM ${kpiAggTable} k JOIN kpi_defs kd ON kd.kpi_id = k.kpi_id WHERE kd.technology = '${tech}'${latestBound}),
+       (SELECT max(${dateCol}) FROM ${aggTable} WHERE true${latestBound})
      ) AS VARCHAR) AS week_start`
   )
   const weekStart = String(wkR.getRowObjects()[0]?.week_start ?? '')
@@ -1434,12 +1436,33 @@ export async function getComparison(opts: {
     }
   })
 
-  const wkR = await conn.runAndReadAll(
-    `SELECT DISTINCT CAST(${dateCol} AS VARCHAR) AS date_val FROM ${aggTable} ORDER BY ${dateCol} DESC LIMIT 2`
-  )
-  const weeks = wkR.getRowObjects().map((x) => String(x.date_val))
-  const a = weeks[0] ?? '' // latest
-  const b = weeks[1] ?? '' // previous (period mode only)
+  // Comparisons pair complete periods only (spec §3.1): weekly/monthly take
+  // the latest period (newest complete, else newest partial, per
+  // latestPeriodSql) as `a`, and the newest *complete* period before it as
+  // `b`, falling back to the chronologically previous period when none of
+  // that grain is complete yet. Daily has no completeness concept.
+  let a = ''
+  let b = ''
+  if (grain === 'daily') {
+    const wkR = await conn.runAndReadAll(
+      `SELECT DISTINCT CAST(${dateCol} AS VARCHAR) AS date_val FROM ${aggTable} ORDER BY ${dateCol} DESC LIMIT 2`
+    )
+    const weeks = wkR.getRowObjects().map((x) => String(x.date_val))
+    a = weeks[0] ?? '' // latest
+    b = weeks[1] ?? '' // previous (period mode only)
+  } else {
+    const r = await conn.runAndReadAll(
+      `SELECT CAST(${latestPeriodSql(grain)} AS VARCHAR) AS a_val,
+              CAST(coalesce(
+                (SELECT max(period_start) FROM period_coverage
+                 WHERE grain = '${grain}' AND is_complete AND period_start < ${latestPeriodSql(grain)}),
+                (SELECT max(${dateCol}) FROM ${aggTable} WHERE ${dateCol} < ${latestPeriodSql(grain)})
+              ) AS VARCHAR) AS b_val`
+    )
+    const row = r.getRowObjects()[0]
+    a = row?.a_val != null ? String(row.a_val) : ''
+    b = row?.b_val != null ? String(row.b_val) : ''
+  }
 
   const SCOPE: Record<CompareScope, { id: string; name: string; join: string }> = {
     cell: { id: 'c.cell_id', name: 'c.name', join: '' },
@@ -2936,7 +2959,7 @@ export async function getExecutiveOverview(opts?: { period?: PeriodId; grain?: G
   const latestWk = latestWkR.getRowObjects()[0]?.max_wk ? String(latestWkR.getRowObjects()[0].max_wk) : null
   const asOf = latestWk ?? new Date().toISOString().slice(0, 10)
   const pcR = await conn.runAndReadAll(
-    `SELECT coalesce((SELECT is_complete FROM period_coverage WHERE grain = 'weekly' AND period_start = ${latestPeriodSql('weekly')}), true) AS c`
+    `SELECT ${latestIsCompleteSql('weekly')} AS c`
   )
   const periodComplete = Boolean(pcR.getRowObjects()[0]?.c ?? true)
 

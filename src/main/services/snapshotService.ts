@@ -176,8 +176,18 @@ export async function removeSnapshot(snapshotId: number): Promise<void> {
 // --- snapshot comparison (spec §7) ------------------------------------------
 
 /** KPI summary of one snapshot file, opened read-only (snapshots are static
- *  .qosdb copies — the live workspace never needs to be touched). */
-const SNAPSHOT_KPI_SQL = `
+ *  .qosdb copies — the live workspace never needs to be touched).
+ *  `hasPeriodCoverage` is false for a snapshot taken before the complete-periods
+ *  feature (and its `period_coverage` table) existed — such a file is opened
+ *  directly with DuckDBInstance, bypassing openWorkspace/ensureUpgradeSchema,
+ *  so it never gets the table backfilled. Falling back to the pre-feature
+ *  "latest" expression keeps old snapshots comparable instead of throwing a
+ *  catalog error. */
+function snapshotKpiSql(hasPeriodCoverage: boolean): string {
+  const latestHealthDateId = hasPeriodCoverage
+    ? latestWeekEndDateIdSql()
+    : '(SELECT max(date_id) FROM cell_health_history)'
+  return `
   SELECT
     (SELECT count(*) FROM fact_cell_daily) AS rows,
     (SELECT count(*) FROM dim_cell) AS cells,
@@ -193,8 +203,9 @@ const SNAPSHOT_KPI_SQL = `
     (SELECT avg(availability_pct) FROM fact_cell_daily) AS avg_availability,
     (SELECT max(version) FROM ruleset) AS ruleset_version,
     (SELECT avg(health_score) FROM cell_health_history
-      WHERE date_id = ${latestWeekEndDateIdSql()}) AS health_score
+      WHERE date_id = ${latestHealthDateId}) AS health_score
 `
+}
 
 const SNAPSHOT_KPIS: Array<{ key: string; label: string; unit: string; worseIsHigher: boolean }> = [
   { key: 'rows', label: 'Observed rows', unit: '', worseIsHigher: false },
@@ -209,12 +220,19 @@ const SNAPSHOT_KPIS: Array<{ key: string; label: string; unit: string; worseIsHi
   { key: 'ruleset_version', label: 'Ruleset version', unit: '', worseIsHigher: false }
 ]
 
-async function snapshotKpis(path: string): Promise<Record<string, number | null>> {
+/** Exported for tests: snapshotService's own test file can't reach the app's
+ *  snapshot directory layout, so a legacy-snapshot test calls this directly
+ *  with a standalone .qosdb path instead of going through compareSnapshots. */
+export async function snapshotKpis(path: string): Promise<Record<string, number | null>> {
   const instance = await DuckDBInstance.create(path, { access_mode: 'READ_ONLY' })
   try {
     const conn = await instance.connect()
     try {
-      const r = await conn.runAndReadAll(SNAPSHOT_KPI_SQL)
+      const tableR = await conn.runAndReadAll(
+        `SELECT count(*) AS n FROM information_schema.tables WHERE table_name = 'period_coverage'`
+      )
+      const hasPeriodCoverage = Number(tableR.getRowObjects()[0]?.n ?? 0) > 0
+      const r = await conn.runAndReadAll(snapshotKpiSql(hasPeriodCoverage))
       const row = r.getRowObjects()[0] ?? {}
       const out: Record<string, number | null> = {}
       for (const k of SNAPSHOT_KPIS) out[k.key] = row[k.key] == null ? null : Number(row[k.key])

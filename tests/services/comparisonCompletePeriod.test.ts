@@ -40,10 +40,9 @@ describe('Comparison Lab pairs complete periods only (spec §3.1, fix wave item 
   it('falls back to the chronologically previous period when no earlier period is complete', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('4G')
     await insertCells(ws.conn, ['C1'])
-    // Only two partial weeks ever recorded: 06-29..07-05 complete (7 days),
-    // 07-06..07-08 partial (3 days) — the latest is the partial one since no
-    // complete week exists after it, and there's no complete week before it
-    // either, so b falls back to the previous period in the data.
+    // Only one week ever recorded, 07-06..07-08 (3 of 7 days): no week is
+    // complete, so the latest is that partial week, and with no earlier
+    // period in the data b falls back to nothing.
     await build(ws, '2026-07-06', '2026-07-08')
     const cmp = await getComparison({ type: 'period', scope: 'cell', metric: 'prb', grain: 'weekly' })
     expect(cmp.aLabel).toBe('2026-07-06')

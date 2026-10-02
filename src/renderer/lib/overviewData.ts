@@ -82,9 +82,10 @@ export function breachSeries(
   rows: NcMovementRow[],
   kpiKey: string,
   grain: Grain
-): Array<{ label: string; totalBreaches: number }> {
+): Array<{ label: string; complete: boolean; totalBreaches: number }> {
   return rows.map((r) => ({
     label: periodLabel(formatTimeLabel(r.weekStart, grain), grain, r.weekStart, r),
+    complete: r.complete !== false,
     totalBreaches: kpiKey === TOTALITY.key
       ? Object.values(r.coreKpiNcRates ?? {}).reduce((sum, k) => sum + k.breachedCells, 0)
       : r.coreKpiNcRates?.[kpiKey]?.breachedCells ?? 0

@@ -102,12 +102,12 @@ describe('Overview chart series', () => {
 
   it('sums breached cells over all core KPIs, or takes one KPI', () => {
     expect(breachSeries(MOVEMENT, 'totality', 'weekly')).toEqual([
-      { label: 'W30', totalBreaches: 8 },
-      { label: 'W31', totalBreaches: 7 }
+      { label: 'W30', complete: true, totalBreaches: 8 },
+      { label: 'W31', complete: true, totalBreaches: 7 }
     ])
     expect(breachSeries(MOVEMENT, 'call_setup_success_3g', 'weekly')).toEqual([
-      { label: 'W30', totalBreaches: 3 },
-      { label: 'W31', totalBreaches: 0 }
+      { label: 'W30', complete: true, totalBreaches: 3 },
+      { label: 'W31', complete: true, totalBreaches: 0 }
     ])
   })
 
@@ -122,6 +122,20 @@ describe('Overview chart series', () => {
     expect(rows[0].label).toBe(formatTimeLabel('2026-07-13', 'weekly'))
     expect(rows[1].label).toBe(`${formatTimeLabel('2026-07-20', 'weekly')} · 3 of 7 days`)
     expect(rows[1].complete).toBe(false)
+  })
+
+  it('marks a partial week in the breach series too', () => {
+    const rows = breachSeries(
+      [
+        { ...MOVEMENT[0], weekStart: '2026-07-13', complete: true, daysWithData: 7 },
+        { ...MOVEMENT[1], weekStart: '2026-07-20', complete: false, daysWithData: 3 }
+      ],
+      'totality',
+      'weekly'
+    )
+    expect(rows[0].complete).toBe(true)
+    expect(rows[1].complete).toBe(false)
+    expect(rows[1].label).toBe(`${formatTimeLabel('2026-07-20', 'weekly')} · 3 of 7 days`)
   })
 
   it('offers totality plus every core KPI present in the movement data', () => {

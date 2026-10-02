@@ -22,6 +22,30 @@ import {
   ResponsiveContainer
 } from 'recharts'
 
+/** Dot renderer for the KPI breach area chart: a filled circle for a complete
+ *  period, a hollow (stroke-only) circle for a partial one, same colour either way. */
+function BreachDot(props: {
+  cx?: number
+  cy?: number
+  index?: number
+  payload?: { complete?: boolean }
+}): React.JSX.Element | null {
+  const { cx, cy, index, payload } = props
+  if (cx == null || cy == null) return null
+  const complete = payload?.complete !== false
+  return (
+    <circle
+      key={`breach-dot-${index}`}
+      cx={cx}
+      cy={cy}
+      r={4}
+      fill={complete ? '#ef4444' : 'transparent'}
+      stroke="#ef4444"
+      strokeWidth={complete ? 0 : 2}
+    />
+  )
+}
+
 export default function Overview(): React.JSX.Element {
   const {
     workspace,
@@ -580,7 +604,7 @@ export default function Overview(): React.JSX.Element {
                   <Tooltip
                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#f8fafc' }}
                   />
-                  <Area type="monotone" dataKey="totalBreaches" name="Total KPI Breaches" stroke="#ef4444" strokeWidth={2.5} fillOpacity={1} fill="url(#breachGradient)" />
+                  <Area type="monotone" dataKey="totalBreaches" name="Total KPI Breaches" stroke="#ef4444" strokeWidth={2.5} fillOpacity={1} fill="url(#breachGradient)" dot={<BreachDot />} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

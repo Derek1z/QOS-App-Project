@@ -154,7 +154,7 @@ A target change on a KPI that already has one triggers nothing: risk is read at 
 
 **How**: in the background, after the import has finished and the main process has reopened the workspace, so the app stays usable.
 - Series are read through the app's workspace connection in batches of 5,000 cells (values as doubles plus series lengths; no per-row objects), so memory stays bounded at any network size.
-- The forecasts run in a pool of worker threads (cores − 1). Workers receive plain arrays and import no DuckDB module, so packaging cannot break them (the Windows import failure of 2026-10-02 came from a worker that resolved DuckDB).
+- The forecasts run in a pool of Electron utility processes (cores − 1), the mechanism the import already uses (2026-10-02), so a Windows test of the import also covers the forecast pool. Pool processes receive plain arrays and import no DuckDB module (the Windows import failure of 2026-10-02 came from a worker that resolved DuckDB).
 - Results are written per batch with the DuckDB appender.
 - A new import cancels a running job; the job restarts after that import. An unfinished job (app closed) is redone on next writable open.
 - Progress is published to the renderer; the Forecasting page shows "Forecasts updating — 12,500 of 60,000 cells" and keeps showing the previous stored forecasts, marked with their as-of date, until the new ones are written.
@@ -272,7 +272,7 @@ Written before the code.
 20. Recompute triggers: an import that completes no period and touches no complete period leaves `cell_forecasts` unchanged; a backfill into a complete week recomputes only the touched cells; giving a KPI a target adds its forecasts.
 21. Stored set: KPIs with a target and the capacity fields are stored; a counter without a target is not stored but forecasts on demand at cell scope.
 22. Background job: a second import cancels and restarts it; the page reports progress and shows the previous forecasts meanwhile.
-23. Packaged build (`npm run verify:packaged`): the forecast worker pool runs inside app.asar.
+23. Packaged build (`npm run verify:packaged`): the forecast process pool runs inside app.asar.
 
 **Gate**: `typecheck && vitest && smoke` for every commit, with `app_state.json` restored from `.superpowers/app_state.original.json` afterwards. Recompute cost (§6.4) measured on a real workspace and recorded.
 

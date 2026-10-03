@@ -93,12 +93,12 @@ A horizon the series cannot backtest (§5.2) is disabled with the reason. A hori
 Parameters are fitted only from the data before the forecast origin, at every origin (no look-ahead).
 
 ### 5.2 Backtest
-Rolling origin, expanding window. For each of the last ≤ 20 origins t at which every candidate can fit (t ≥ the model's minimum), fit on points [0, t) and forecast h = 1…H; record the error (actual − forecast) at each h. All candidates are scored on the same origins. A horizon h is backtestable when at least 3 origins have an actual at t + h − 1.
+Rolling origin, expanding window. For each model, the origins are the last ≤ 20 points t at which that model can fit (t ≥ its minimum, §5.1): fit on points [0, t), forecast h = 1…H, record the error (actual − forecast) at each h. Naive is also run on each model's origins, so every model is compared with naive on exactly the same points. A model is a candidate only if it has at least 3 origins with an actual at h = 1. A horizon h is backtestable when naive has at least 3 origins with an actual at t + h − 1.
 
 ### 5.3 Selection
-- Score = mean absolute backtest error over h = 1…H.
+- A model's score = mean absolute backtest error over h = 1…H on its origins.
 - MASE = the model's score ÷ naive's score on the same origins.
-- The best-scoring model is used only if its MASE < 1; otherwise naive is used and labelled "no model beats 'same as last period'". Ties go to the simpler model (order: naive, drift, seasonal naive, damped Holt, Holt-Winters).
+- The candidate with the lowest MASE is used if that MASE < 1; otherwise naive is used and labelled "no model beats 'same as last period'". Ties go to the simpler model (order: naive, drift, seasonal naive, damped Holt, Holt-Winters).
 - The chosen model is refitted on all complete periods to produce the forecast.
 
 ### 5.4 Range

@@ -1213,6 +1213,8 @@ export interface ForecastSeries {
   metric: ForecastMetric
   label: string
   unit: string
+  /** the KPI's decimal precision (kpi_defs) */
+  decimals: number
   worseIsHigher: boolean
   threshold: number | null
   points: ForecastPoint[]
@@ -1261,9 +1263,14 @@ export interface ForecastResult {
   riskExplanation: string
   riskCounts: Record<ForecastRisk, number>
   rcaCounts: Record<string, number>
+  /** risk state → hint category ('No hint' included) → cells, counted from the rows */
+  riskByHint: Record<string, Record<string, number>>
   riskRows: ForecastRiskRow[]
   totalEntities: number
   riskTableNote: string | null
+  /** as-of of the stored per-cell forecasts used for the rows; differs from asOf
+   *  while the background recompute has not caught up */
+  storedAsOf: string | null
   status: ForecastStatus
 }
 

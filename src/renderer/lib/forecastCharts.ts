@@ -7,7 +7,8 @@ export function fmtFc(v: number | null, unit: string, kind: 'axis' | 'text' = 't
   if (unit === 'kbps') return `${(v / 1024).toFixed(kind === 'axis' ? 0 : 1)} Mbps`
   if (unit === 'MB') return `${(v / 1024).toFixed(kind === 'axis' ? 0 : 1)} GB`
   if (unit === '%') return `${v.toFixed(1)}%`
-  return Math.round(v).toLocaleString()
+  // small values keep their decimals (a 2.5 Erl target is not "3")
+  return Math.abs(v) >= 100 ? Math.round(v).toLocaleString('en-US') : String(Math.round(v * 100) / 100)
 }
 
 /** Actual (solid; partial periods hollow and dimmed), forecast (dashed) from
@@ -142,9 +143,10 @@ export function forecastChartOption(series: ForecastSeries): EChartsOption {
   }
 }
 
+/** Inner ring: cells per risk state; outer ring: the hint categories within
+ *  each state — both counted from the risk rows (final review #6). */
 export function rcaSunburstChartOption(
-  riskCounts: Record<string, number>,
-  rcaCounts: Record<string, number>,
+  riskByHint: Record<string, Record<string, number>>,
   selectedFilter: string = ''
 ): EChartsOption {
   const RCA_COLORS: Record<string, string> = {
@@ -156,88 +158,37 @@ export function rcaSunburstChartOption(
     'Normal / Stable': '#10b981',
     'No hint': '#64748b'
   }
-
   const RISK_COLORS: Record<string, string> = {
     'Already Breached': '#ef4444',
     'Likely Breach': '#f97316',
     'At Risk': '#eab308',
-    'Watch': '#38bdf8',
-    'Stable': '#10b981'
+    Watch: '#38bdf8',
+    Stable: '#10b981',
+    Withheld: '#64748b'
   }
-
-  // Sunburst data hierarchy: Root -> Risk Severity -> RCA Category
-  const breachedCount = (riskCounts['Already Breached'] ?? 0) + (riskCounts['Likely Breach'] ?? 0) + (riskCounts['At Risk'] ?? 0) + (riskCounts['Watch'] ?? 0)
-  const stableCount = riskCounts['Stable'] ?? 0
-  const totalCount = breachedCount + stableCount
-
-  const rcaData = Object.entries(rcaCounts)
-    .filter(([_, val]) => val > 0)
-    .map(([cat, val]) => ({
-      name: cat,
-      value: val,
-      itemStyle: {
-        color: RCA_COLORS[cat] ?? '#64748b',
-        borderWidth: selectedFilter === cat ? 3 : 1,
-        borderColor: selectedFilter === cat ? '#ffffff' : 'rgba(255,255,255,0.15)'
+  const ORDER = ['Already Breached', 'Likely Breach', 'At Risk', 'Watch', 'Stable', 'Withheld']
+  const sunburstData = ORDER.filter((risk) => riskByHint[risk] != null)
+    .map((risk) => {
+      const children = Object.entries(riskByHint[risk])
+        .filter(([, n]) => n > 0)
+        .map(([cat, n]) => ({
+          name: cat,
+          value: n,
+          itemStyle: {
+            color: RCA_COLORS[cat] ?? '#64748b',
+            borderWidth: selectedFilter === cat ? 3 : 1,
+            borderColor: selectedFilter === cat ? '#ffffff' : 'rgba(255,255,255,0.15)'
+          }
+        }))
+      return {
+        name: risk,
+        value: children.reduce((s, c) => s + c.value, 0),
+        itemStyle: { color: RISK_COLORS[risk], borderWidth: selectedFilter === risk ? 3 : 1, borderColor: selectedFilter === risk ? '#ffffff' : 'rgba(255,255,255,0.15)' },
+        children
       }
-    }))
-
-  const sunburstData = [
-    {
-      name: 'At-Risk / Breached',
-      itemStyle: { color: '#dc2626' },
-      children: [
-        {
-          name: 'Already Breached',
-          value: riskCounts['Already Breached'] ?? 0,
-          itemStyle: { color: RISK_COLORS['Already Breached'] },
-          children: Object.entries(rcaCounts)
-            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
-            .map(([cat, val]) => ({
-              name: cat,
-              value: Math.max(1, Math.round(val * 0.4)),
-              itemStyle: { color: RCA_COLORS[cat] }
-            }))
-        },
-        {
-          name: 'Likely Breach',
-          value: riskCounts['Likely Breach'] ?? 0,
-          itemStyle: { color: RISK_COLORS['Likely Breach'] },
-          children: Object.entries(rcaCounts)
-            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
-            .map(([cat, val]) => ({
-              name: cat,
-              value: Math.max(1, Math.round(val * 0.35)),
-              itemStyle: { color: RCA_COLORS[cat] }
-            }))
-        },
-        {
-          name: 'At Risk / Watch',
-          value: (riskCounts['At Risk'] ?? 0) + (riskCounts['Watch'] ?? 0),
-          itemStyle: { color: RISK_COLORS['At Risk'] },
-          children: Object.entries(rcaCounts)
-            .filter(([k, v]) => k !== 'Normal / Stable' && v > 0)
-            .map(([cat, val]) => ({
-              name: cat,
-              value: Math.max(1, Math.round(val * 0.25)),
-              itemStyle: { color: RCA_COLORS[cat] }
-            }))
-        }
-      ].filter((x) => x.value > 0)
-    },
-    {
-      name: 'Normal Stable',
-      value: stableCount,
-      itemStyle: { color: RISK_COLORS['Stable'] },
-      children: [
-        {
-          name: 'Operating Norm',
-          value: stableCount,
-          itemStyle: { color: '#059669' }
-        }
-      ]
-    }
-  ].filter((x) => (x.value ?? 0) > 0 || (x.children && x.children.length > 0))
+    })
+    .filter((n) => n.value > 0)
+  const totalCount = sunburstData.reduce((s, n) => s + n.value, 0)
 
   return {
     backgroundColor: 'transparent',
@@ -247,7 +198,7 @@ export function rcaSunburstChartOption(
       formatter: (params: any) => {
         const val = params.value ?? 0
         const pct = totalCount > 0 ? ((val / totalCount) * 100).toFixed(1) : '0'
-        return `<b>${params.name}</b><br/>Entities: <b>${val}</b> (${pct}%)<br/><span style="color:#38bdf8;font-size:10px;">Click slice to filter table</span>`
+        return `<b>${params.name}</b><br/>Cells: <b>${val}</b> (${pct}%)<br/><span style="color:#38bdf8;font-size:10px;">Click slice to filter table</span>`
       }
     },
     series: [
@@ -265,21 +216,15 @@ export function rcaSunburstChartOption(
           {},
           {
             r0: '15%',
-            r: '42%',
+            r: '50%',
             itemStyle: { borderWidth: 2, borderColor: '#0f172a' },
             label: { rotate: 'tangential', fontSize: 10, color: '#f8fafc' }
           },
           {
-            r0: '42%',
-            r: '70%',
-            itemStyle: { borderWidth: 2, borderColor: '#0f172a' },
-            label: { rotate: 'tangential', fontSize: 10, color: '#e2e8f0' }
-          },
-          {
-            r0: '70%',
-            r: '92%',
+            r0: '50%',
+            r: '90%',
             itemStyle: { borderWidth: 1, borderColor: '#0f172a' },
-            label: { position: 'outside', padding: 3, silent: false, fontSize: 9, color: '#94a3b8' }
+            label: { rotate: 'tangential', fontSize: 9, color: '#e2e8f0' }
           }
         ]
       }

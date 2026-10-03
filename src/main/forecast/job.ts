@@ -26,6 +26,18 @@ export interface ForecastJobPlan {
 export interface StoredForecast { asOf: string; forecast: SeriesForecast }
 
 const metaKey = (g: StoredGrain): string => `forecasts_${g}_as_of`
+/** KPI keys whose forecasts were completed for every cell at the stored as-of
+ *  (written with the as-of marker, so a cancelled run never counts). */
+const keysKey = (g: StoredGrain): string => `forecasts_${g}_keys`
+
+/** False for a workspace that still has the pre-feature cell_forecasts shape
+ *  (a read-only open never upgrades it — final review #1). */
+export async function storedForecastsReadable(conn: DuckDBConnection): Promise<boolean> {
+  const r = await conn.runAndReadAll(
+    `SELECT count(*) AS n FROM information_schema.columns WHERE table_name = 'cell_forecasts' AND column_name IN ('kpi_key', 'grain')`
+  )
+  return Number(r.getRowObjects()[0]?.n ?? 0) === 2
+}
 
 /** KPIs stored for every cell: those with a target, and the capacity KPIs. */
 export async function storedForecastKpis(conn: DuckDBConnection, tech: Technology): Promise<ForecastKpi[]> {
@@ -50,11 +62,13 @@ export async function planForecastJob(conn: DuckDBConnection): Promise<ForecastJ
     const asOf = await scalar(conn, `SELECT CAST(${latestCompletePeriodSql(grain)} AS VARCHAR)`)
     if (asOf == null) continue
     const storedAsOf = await scalar(conn, `SELECT value FROM workspace_meta WHERE key = ?`, [metaKey(grain)])
-    const storedKeys = new Set(
-      (await conn.runAndReadAll(`SELECT DISTINCT kpi_key FROM cell_forecasts WHERE grain = ?`, [grain]))
-        .getRowObjects().map((x) => String(x.kpi_key))
-    )
-    const deleteKpiKeys = [...storedKeys].filter((k) => !current.includes(k))
+    // completed keys come from the marker, not the table: a cancelled run may
+    // have written a key for some cells only (final review #2)
+    const keysJson = await scalar(conn, `SELECT value FROM workspace_meta WHERE key = ?`, [keysKey(grain)])
+    const storedKeys = new Set<string>(keysJson ? (JSON.parse(keysJson) as string[]) : [])
+    const inTable = (await conn.runAndReadAll(`SELECT DISTINCT kpi_key FROM cell_forecasts WHERE grain = ?`, [grain]))
+      .getRowObjects().map((x) => String(x.kpi_key))
+    const deleteKpiKeys = inTable.filter((k) => !current.includes(k))
     if (storedAsOf !== asOf) {
       plans.push({ grain, asOf, cellIds: 'all', kpiKeys: current, deleteKpiKeys })
       continue
@@ -127,6 +141,8 @@ export async function runForecastJob(
   opts: {
     onProgress?: (done: number, total: number) => void
     signal?: AbortSignal
+    /** cells per batch (default BATCH_CELLS; tests use smaller) */
+    batchCells?: number
     /** filled with milliseconds spent reading, computing and writing (bench, diagnostics) */
     timings?: { read: number; compute: number; write: number }
   } = {}
@@ -145,9 +161,10 @@ export async function runForecastJob(
   for (const plan of plans) {
     const planKpis = kpis.filter((k) => plan.kpiKeys.includes(k.key))
     const cells = planKpis.length > 0 ? cellsOf(plan) : []
-    for (let lo = 0; lo < cells.length; lo += BATCH_CELLS) {
+    const size = opts.batchCells ?? BATCH_CELLS
+    for (let lo = 0; lo < cells.length; lo += size) {
       if (opts.signal?.aborted) return { cells: done, series, cancelled: true }
-      const batch = cells.slice(lo, lo + BATCH_CELLS)
+      const batch = cells.slice(lo, lo + size)
       let t = Date.now()
       const data = await readCellSeriesBatch(conn, plan.grain, planKpis, batch)
       if (opts.timings) opts.timings.read += Date.now() - t
@@ -227,6 +244,12 @@ export async function runForecastJob(
       `INSERT INTO workspace_meta (key, value) VALUES ('${metaKey(grain)}', '${gp[0].asOf}')
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`
     )
+    const completed = kpis.map((k) => k.key).filter((k) => !del.includes(k))
+    await conn.run(
+      `INSERT INTO workspace_meta (key, value) VALUES ('${keysKey(grain)}', ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      [JSON.stringify(completed)]
+    )
   }
   return { cells: done, series, cancelled: false }
 }
@@ -237,6 +260,7 @@ export async function readStoredForecasts(
 ): Promise<Map<number, StoredForecast>> {
   const out = new Map<number, StoredForecast>()
   if (cellIds !== 'all' && cellIds.length === 0) return out
+  if (!(await storedForecastsReadable(conn))) return out
   const r = await conn.runAndReadAll(
     `SELECT CAST(cell_id AS INTEGER) AS cell_id, CAST(as_of AS VARCHAR) AS as_of, method, CAST(points AS VARCHAR) AS points,
             mase, backtest_origins, quality

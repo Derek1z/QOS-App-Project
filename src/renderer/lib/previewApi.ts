@@ -1653,9 +1653,10 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
     mase: f.mase, betterThanNaivePct: f.method == null ? null : f.method === 'naive' ? 0 : Math.round((1 - (f.mase ?? 1)) * 100),
     backtestOrigins: f.backtestOrigins, withheldReason: f.withheldReason, bandNote: f.bandNote, growthPct: risk.growthPct
   }
-  const series: ForecastSeries = { metric: m.key, label: m.label, unit: m.unit, worseIsHigher: m.worseIsHigher, threshold: m.target, points, forecast: summary }
+  const series: ForecastSeries = { metric: m.key, label: m.label, unit: m.unit, decimals: m.unit === '%' ? 2 : 0, worseIsHigher: m.worseIsHigher, threshold: m.target, points, forecast: summary }
 
   const riskCounts: Record<ForecastRisk, number> = { Stable: 0, Watch: 0, 'At Risk': 0, 'Likely Breach': 0, 'Already Breached': 0, Withheld: 0 }
+  const riskByHint: Record<string, Record<string, number>> = {}
   const rcaCounts: Record<string, number> = { 'Capacity Exhaustion': 0, 'RF Overshoot & Interference': 0, 'Hardware & VSWR': 0, 'Parameter & Handover': 0, 'Traffic Surge': 0, 'Normal / Stable': 0, 'No hint': 0 }
   const smallScope = scope === 'cell' || scope === 'site'
   const riskTableNote = grain === 'daily' && !smallScope ? 'Per-cell daily risk is available for a site or cell — or switch to weekly' : null
@@ -1671,7 +1672,11 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
       : m.key === 'prb_utilization' && pastTarget
         ? { category: 'Capacity Exhaustion' as const, action: 'Activate 64T64R Massive MIMO beamforming or deploy secondary LTE carrier expansion (+10MHz).' }
         : null
-    if (cr.risk) riskCounts[cr.risk]++
+    if (cr.risk) {
+      riskCounts[cr.risk]++
+      const byHint = (riskByHint[cr.risk] ??= {})
+      byHint[hint?.category ?? 'No hint'] = (byHint[hint?.category ?? 'No hint'] ?? 0) + 1
+    }
     rcaCounts[hint?.category ?? 'No hint']++
     return {
       id: c.cellId, name: c.cellName, path: [c.region, c.district, c.site].filter((x): x is string => x != null),
@@ -1686,8 +1691,8 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
     metrics: DEMO_FC_METRICS.map(({ key, label, unit, hasTarget, stored }) => ({ key, label, unit, hasTarget, stored })),
     notImported: [{ key: 'data_service_failure_4g', label: '4G Data Service Access Failure Rate' }],
     series, overTarget: null, horizons,
-    risk: risk.risk, riskExplanation: risk.explanation, riskCounts, rcaCounts,
-    riskRows, totalEntities: riskRows.length, riskTableNote,
+    risk: risk.risk, riskExplanation: risk.explanation, riskCounts, rcaCounts, riskByHint,
+    riskRows, totalEntities: riskRows.length, riskTableNote, storedAsOf: grain === 'monthly' ? '2026-06-01' : '2026-07-13',
     status: { running: false, done: 0, total: 0, asOf: { weekly: '2026-07-13', monthly: '2026-06-01' } }
   }
 }

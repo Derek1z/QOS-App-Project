@@ -54,15 +54,23 @@ async function loop(factory: () => ForecastRunner): Promise<void> {
     rerun = false
     const ws = getCurrent()
     if (!ws || ws.readOnly) return
+    // the controller exists before planning so a cancel during planning
+    // (which scans the fact tables) stops the job too (final review #4)
+    const ctl = new AbortController()
+    controller = ctl
     const plans = await planForecastJob(ws.connection)
+    if (ctl.signal.aborted) {
+      controller = null
+      emit()
+      return
+    }
     if (plans.length === 0) {
+      controller = null
       await readAsOf()
       emit()
       continue
     }
-    const ctl = new AbortController()
     const runner = factory()
-    controller = ctl
     activeRunner = runner
     status.running = true
     status.done = 0

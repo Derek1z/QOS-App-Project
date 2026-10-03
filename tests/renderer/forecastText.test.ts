@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modelLine, updatingLine, METHOD_LABEL } from '../../src/renderer/lib/forecastText'
+import { modelLine, updatingLine, METHOD_LABEL, riskCellText } from '../../src/renderer/lib/forecastText'
 import type { ForecastSummary } from '../../shared/api'
 
 const base: ForecastSummary = {
@@ -39,5 +39,18 @@ describe('forecast page text (spec §9.2)', () => {
 
   it('every method has a label', () => {
     expect(Object.keys(METHOD_LABEL).sort()).toEqual(['damped-holt', 'drift', 'holt-winters', 'naive', 'seasonal-naive'])
+  })
+})
+
+describe('final review fixes in page text', () => {
+  it('#12 MAE uses the KPI decimals: a 0.04 pp error is not shown as 0.0', () => {
+    expect(modelLine({ ...base, maeH: 0.04 }, '%', 4, 'weeks', 2)).toContain('backtest MAE 0.04 pp at 4 weeks')
+  })
+
+  it('#13 the risk cell shows growth for a KPI without a target', () => {
+    expect(riskCellText({ risk: null, growthPct: 25 })).toBe('+25% growth')
+    expect(riskCellText({ risk: null, growthPct: -3.5 })).toBe('-3.5% growth')
+    expect(riskCellText({ risk: 'At Risk', growthPct: null })).toBe('At Risk')
+    expect(riskCellText({ risk: null, growthPct: null })).toBe('—')
   })
 })

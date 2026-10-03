@@ -6,6 +6,7 @@ import { backupsDir } from '../paths'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
 import { purgeRawArchive, rawArchive } from '../import/importer'
+import { cancelForecastRefresh, scheduleForecastRefresh } from '../forecast/scheduler'
 import type { MaintenanceAction, MaintenanceResult } from '../../../shared/api'
 
 /** Workspace maintenance (spec §58). State-altering actions (rebuild, compact)
@@ -68,6 +69,18 @@ async function run(
 }
 
 export async function runMaintenance(action: MaintenanceAction): Promise<MaintenanceResult> {
+  // the background forecast job shares this connection: stop it before a
+  // state-altering action and recompute afterwards (final review #3)
+  const alters = action === 'rebuild' || action === 'compact' || action === 'purge'
+  if (alters) await cancelForecastRefresh()
+  try {
+    return await runAction(action)
+  } finally {
+    if (alters) scheduleForecastRefresh()
+  }
+}
+
+async function runAction(action: MaintenanceAction): Promise<MaintenanceResult> {
   switch (action) {
     case 'integrity':
       return run(action, integrity)

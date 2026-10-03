@@ -5,7 +5,7 @@ import type {
   EntityOption, ForecastHorizon, ForecastMetric, ForecastResult, ForecastRisk,
   ForecastScope, ForecastSeries, ForecastStatus, Technology
 } from '../../../shared/api'
-import { modelLine, updatingLine } from '../lib/forecastText'
+import { modelLine, updatingLine, riskCellText } from '../lib/forecastText'
 import { DEFAULT_HORIZON, PERIOD_NOUN } from '../../../shared/forecast'
 import Chart from '../lib/Chart'
 import { forecastChartOption, rcaSunburstChartOption, fmtFc } from '../lib/forecastCharts'
@@ -227,23 +227,13 @@ export default function Forecasting(): React.JSX.Element {
 
   const sunburstOption: EChartsOption | null = useMemo(() => {
     if (!result) return null
-    return rcaSunburstChartOption(
-      result.riskCounts,
-      result.rcaCounts ?? {},
-      selectedFilter
-    )
+    return rcaSunburstChartOption(result.riskByHint, selectedFilter)
   }, [result, selectedFilter])
 
   const handleSunburstClick = useCallback((params: any) => {
     if (params && params.name) {
       const clickedName = String(params.name)
-      if (clickedName === 'Normal Stable' || clickedName === 'Operating Norm') {
-        setSelectedFilter((prev) => (prev === 'Stable' ? '' : 'Stable'))
-      } else if (clickedName === 'At-Risk / Breached') {
-        setSelectedFilter((prev) => (prev === 'At Risk' ? '' : 'At Risk'))
-      } else {
-        setSelectedFilter((prev) => (prev === clickedName ? '' : clickedName))
-      }
+      setSelectedFilter((prev) => (prev === clickedName ? '' : clickedName))
     }
   }, [])
 
@@ -432,7 +422,7 @@ export default function Forecasting(): React.JSX.Element {
                         <>At {result.horizon} {result.horizon === 1 ? PERIOD_NOUN[grain].one : PERIOD_NOUN[grain].many}: <b>{fmtFc(horizonValue(selSeries), selSeries.unit)}</b>
                           {selSeries.forecast.growthPct != null && ` (${selSeries.forecast.growthPct >= 0 ? '+' : ''}${selSeries.forecast.growthPct}%)`} · </>
                       )}
-                      {modelLine(selSeries.forecast, selSeries.unit, result.horizon, PERIOD_NOUN[grain].many)}
+                      {modelLine(selSeries.forecast, selSeries.unit, result.horizon, PERIOD_NOUN[grain].many, selSeries.decimals)}
                       {selSeries.forecast.bandNote && ` · ${selSeries.forecast.bandNote}`}
                     </div>
                   )}
@@ -498,6 +488,8 @@ export default function Forecasting(): React.JSX.Element {
                 <h3>Per-cell risk · {selSeries?.label ?? ''}</h3>
                 <span className="card-note">
                   {result.totalEntities.toLocaleString('en-US')} cells · {riskRows.length} shown · worst risk first · hints are rules of thumb from imported values
+                  {result.storedAsOf && result.asOf && result.storedAsOf !== result.asOf &&
+                    ` · per-cell forecasts as of ${dmy(result.storedAsOf)} — newer data is included after the background recompute`}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -569,7 +561,7 @@ export default function Forecasting(): React.JSX.Element {
                           {fmtFc(r.forecast, selSeries?.unit ?? '')}
                         </td>
                         <td className="num">{r.threshold == null ? '—' : fmtFc(r.threshold, selSeries?.unit ?? '')}</td>
-                        <td><Chip text={r.risk ?? '—'} tone={riskTone(r.risk)} /></td>
+                        <td><Chip text={riskCellText(r)} tone={riskTone(r.risk)} /></td>
                         <td>
                           {r.hint && (
                             <span className={`rca-badge ${rcaClass(r.hint.category)}`}>

@@ -101,7 +101,7 @@ function forecastDisplay(
 }
 
 function buildSeries(
-  key: string, label: string, unit: string, worseIsHigher: boolean, threshold: number | null,
+  key: string, label: string, unit: string, decimals: number, worseIsHigher: boolean, threshold: number | null,
   display: PeriodValue[], f: SeriesForecast, complete: PeriodValue[], grain: Grain, horizon: number, growthPct: number | null
 ): ForecastSeries {
   const points: ForecastPoint[] = display.map((p) => ({
@@ -124,7 +124,7 @@ function buildSeries(
       })
     }
   }
-  return { metric: key, label, unit, worseIsHigher, threshold, points, forecast: summaryOf(f, horizon, growthPct) }
+  return { metric: key, label, unit, decimals, worseIsHigher, threshold, points, forecast: summaryOf(f, horizon, growthPct) }
 }
 
 async function previousCompletePeriods(conn: DuckDBConnection, grain: Grain, asOf: string, n: number): Promise<string[]> {
@@ -159,7 +159,7 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
       ...base, asOf: null, horizon: opts.horizon ?? DEFAULT_HORIZON[grain], metric: opts.metric ?? '', series: null,
       overTarget: null, horizons: FORECAST_HORIZONS[grain].map((h) => ({ horizon: h, available: false, reason: 'no KPI imported' })),
       risk: null, riskExplanation: 'No KPI has imported values for this scope.', riskCounts: emptyRiskCounts(),
-      riskRows: [], totalEntities: 0, riskTableNote: null
+      riskByHint: {}, riskRows: [], totalEntities: 0, riskTableNote: null, storedAsOf: null
     }
   }
 
@@ -184,14 +184,14 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
     latest: latestAgg, target: kpi.target, worseIsHigher: kpi.worseIsHigher, forecast: main.forecast,
     horizon, label: kpi.label, unit: kpi.unit
   })
-  const series = buildSeries(kpi.key, kpi.label, kpi.unit, kpi.worseIsHigher, kpi.target, display, main.forecast, main.complete, grain, horizon, aggRisk.growthPct)
+  const series = buildSeries(kpi.key, kpi.label, kpi.unit, kpi.decimals, kpi.worseIsHigher, kpi.target, display, main.forecast, main.complete, grain, horizon, aggRisk.growthPct)
 
   let overTarget: ForecastSeries | null = null
   if (scope !== 'cell') {
     const over = await readOverTargetSeries(conn, grain, kpi, scopeRef)
     if (over) {
       const o = forecastDisplay(over, grain, horizon, asOf, null)
-      overTarget = buildSeries(`${kpi.key}:over_target`, `Cells past the ${kpi.label} target`, 'cells', true, null, over, o.forecast, o.complete, grain, horizon, null)
+      overTarget = buildSeries(`${kpi.key}:over_target`, `Cells past the ${kpi.label} target`, 'cells', 0, true, null, over, o.forecast, o.complete, grain, horizon, null)
     }
   }
 
@@ -200,10 +200,15 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
   const rcaCounts = base.rcaCounts
   let riskRows: ForecastRiskRow[] = []
   let riskTableNote: string | null = null
+  let storedAsOf: string | null = null
+  const riskByHint: Record<string, Record<string, number>> = {}
   const smallScope = scope === 'cell' || scope === 'site'
   let perCell: Map<number, SeriesForecast> | null = null
 
-  if (asOf == null) {
+  if (asOf != null && scope === 'cell' && scopeRef.id != null) {
+    // one cell: its row is the chart's forecast, never a second model (final review #7)
+    perCell = main.complete.length > 0 ? new Map([[Number(scopeRef.id), main.forecast]]) : new Map()
+  } else if (asOf == null) {
     riskTableNote = `No complete ${noun.one} yet — per-cell forecasts start once a ${noun.one} is complete`
   } else if (grain === 'daily' && !smallScope) {
     riskTableNote = DAILY_NOTE
@@ -213,6 +218,7 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
     const stored = await readStoredForecasts(conn, grain, kpi.key, cellIds)
     if (stored.size > 0) {
       perCell = new Map([...stored].map(([c, s]) => [c, s.forecast]))
+      storedAsOf = await scalar(conn, `SELECT value FROM workspace_meta WHERE key = 'forecasts_${grain}_as_of'`)
     } else if (cur.readOnly) {
       riskTableNote = NOT_BUILT_NOTE
     } else if (status.running) {
@@ -284,13 +290,28 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
         hint: rca.hint,
         hintNote: rca.hintNote
       })
-      if (cls.risk) riskCounts[cls.risk]++
-      rcaCounts[rca.hint?.category ?? 'No hint'] = (rcaCounts[rca.hint?.category ?? 'No hint'] ?? 0) + 1
+      const category = rca.hint?.category ?? 'No hint'
+      if (cls.risk) {
+        riskCounts[cls.risk]++
+        const byHint = (riskByHint[cls.risk] ??= {})
+        byHint[category] = (byHint[category] ?? 0) + 1
+      }
+      rcaCounts[category] = (rcaCounts[category] ?? 0) + 1
+    }
+    // worst first: risk class, then how far past (or how close to) the target
+    // in the KPI's own direction; no target → fastest growth; nulls last (final review #5)
+    const severity = (r: ForecastRiskRow): number | null => {
+      if (kpi.target == null) return r.growthPct
+      if (r.current == null) return null
+      return kpi.worseIsHigher ? r.current - kpi.target : kpi.target - r.current
     }
     riskRows.sort((a, b) => {
       const d = (a.risk ? RISK_RANK[a.risk] : 9) - (b.risk ? RISK_RANK[b.risk] : 9)
       if (d !== 0) return d
-      return (b.current ?? -Infinity) - (a.current ?? -Infinity)
+      const sa = severity(a)
+      const sb = severity(b)
+      if (sa == null || sb == null) return sa == null ? (sb == null ? 0 : 1) : -1
+      return sb - sa
     })
   }
   const totalEntities = riskRows.length
@@ -308,8 +329,10 @@ export async function getForecast(opts: ForecastOpts = {}): Promise<ForecastResu
     riskExplanation: aggRisk.explanation,
     riskCounts,
     rcaCounts,
+    riskByHint,
     riskRows,
     totalEntities,
-    riskTableNote
+    riskTableNote,
+    storedAsOf
   }
 }

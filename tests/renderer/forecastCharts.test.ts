@@ -51,3 +51,26 @@ describe('forecast chart (spec §3.2 partial periods, §5.4 band)', () => {
     expect(seriesOf(forecastChartOption(series(pts, null))).find((s) => s.name === 'Actual')!.markLine).toBeUndefined()
   })
 })
+
+describe('RCA sunburst (final review #6)', () => {
+  it('draws exactly the risk × hint counts, Withheld included, nothing invented', async () => {
+    const { rcaSunburstChartOption } = await import('../../src/renderer/lib/forecastCharts')
+    const o = rcaSunburstChartOption({
+      'Already Breached': { 'Capacity Exhaustion': 2, 'No hint': 1 },
+      Stable: { 'Normal / Stable': 5 },
+      Withheld: { 'No hint': 1 }
+    })
+    type Node = { name: string; value: number; children?: Node[] }
+    const data = (o.series as Array<{ data: Node[] }>)[0].data
+    expect(data.map((n) => [n.name, n.value])).toEqual([['Already Breached', 3], ['Stable', 5], ['Withheld', 1]])
+    expect(data[0].children!.map((c) => [c.name, c.value])).toEqual([['Capacity Exhaustion', 2], ['No hint', 1]])
+  })
+})
+
+describe('fmtFc keeps decimals for small values (final review #12)', () => {
+  it('2.5 Erl is not rounded to 3', async () => {
+    const { fmtFc } = await import('../../src/renderer/lib/forecastCharts')
+    expect(fmtFc(2.5, 'Erl')).toBe('2.5')
+    expect(fmtFc(1234.5, '')).toBe('1,235')
+  })
+})

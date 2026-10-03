@@ -307,7 +307,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     compareSnapshots(aId, bId)
   )
 
-  ipcMain.handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action).then(afterForecastInput))
+  ipcMain.handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action))
   ipcMain.handle('maintenance:getSchedule', () => getSchedule())
   ipcMain.handle('maintenance:setSchedule', (_e, patch) => setSchedule(patch))
   ipcMain.handle('maintenance:runScheduled', () => runScheduled())

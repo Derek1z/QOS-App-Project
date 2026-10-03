@@ -185,19 +185,9 @@ Primary key (cell_id, kpi_key, grain). `workspace_meta` keys `forecasts_weekly_a
 - Writable: the once-on-open marker (`workspace_meta` key `forecasts`) starts the background build of `cell_forecasts`.
 - Read-only without the new table: aggregate charts forecast; the risk table says "Per-cell forecasts not built — open the workspace writable once".
 
-### 6.4 Cost (benchmark 2026-10-03)
-Measured on this development laptop (8 threads, 4 cores) with a generated 25,000-cell table (52 weeks weekly + 12 months monthly, 8 stored series per cell), using one-pass fitting, batched reads and 7 worker threads: **15 s per full recompute at 25,000 cells** (weekly: read 2.1 s, forecast 8.9 s, write 0.8 s; monthly: 0.5 s, 2.1 s, 0.8 s). Time grows in proportion to cells × stored series:
+### 6.4 Cost
 
-| Cells | Full recompute, 8 series/cell |
-|---|---|
-| 3,000 | ~2 s |
-| 25,000 | ~15 s (measured) |
-| 60,000 | ~36 s (projected) |
-| 150,000 | ~1.5 min (projected) |
-
-Each extra KPI given a target adds about 1/8 of these times. Two years of weekly history makes the weekly part about 1.7× slower. Reads from a real on-disk workspace may be slower than the in-memory benchmark.
-
-Budget: a full recompute at 25,000 cells with 8 stored series finishes in ≤ 20 s on 4 cores. The plan measures it on a real workspace; if it is over, the backtest origin cap (§5.2) is lowered and the new value recorded here. The recompute never blocks the import or the app (§6.1).
+Budget (set at design time from a throwaway in-memory benchmark that projected ~15 s): a full recompute at 25,000 cells with 8 stored series finishes in ≤ 20 s on 4 cores; if it is over, the backtest origin cap (§5.2) is lowered and the new value recorded here. The recompute never blocks the import or the app (§6.1). Time grows in proportion to cells × stored series; each extra KPI given a target adds about 1/8; two years of weekly history makes the weekly part about 1.7× slower.
 
 **Measured 2026-10-03** (`npm run bench:forecast`: a throwaway on-disk 4G workspace, 25,000 cells, 52 weeks, 8 stored series per cell, utility-process pool of 7 on an Intel i7-6820HQ, 4 cores / 8 threads, load average 3–5 from other work):
 
@@ -206,10 +196,14 @@ Budget: a full recompute at 25,000 cells with 8 stored series finishes in ≤ 20
 | First implementation | 69 s | 19 s | 87.6 s |
 | After optimisation, cap 20 | 22.5 s (4.2 / 12.5 / 5.3) | 8.2 s | **30.7 s** |
 | Same, cap 10 | 17.6 s (4.1 / 7.9 / 5.1) | 8.0 s | 25.7 s |
+| Final review re-run, cap 20 | 23.1 s (4.7 / 12.2 / 5.6) | 14.2 s | 37.3 s |
+| Same session, cap 16 | 21.3 s (4.4 / 10.5 / 5.7) | 9.2 s | 30.5 s |
+
+Run-to-run noise on this laptop is larger than the cap's effect (the monthly write alone took 8.6 s in one run and 4.0 s in the next).
 
 Optimisations that kept results identical (tests): dates carried for daily series only; packed typed-array messages to the pool; Holt fits kept only at the ends that are read, with the fit selection cached per end; compact stored JSON. Single-threaded, the engine costs 0.115 ms per 52-week series.
 
-**Ruling (2026-10-03): the cap stays at 20 and the budget is missed (30.7 s).** Lowering it to 10 saves 5 s but leaves 11- and 12-week horizons with no backtest errors on 52 weeks of history (an origin needs an actual 12 weeks later), so the 12-week capacity view would lose its range and accuracy figure. Projected on this laptop: ~74 s at 60,000 cells, ~3 min at 150,000 cells — in the background, only when a period completes.
+**Ruling (2026-10-03, awaiting the user's sign-off): the cap stays at 20 and the budget is missed (30–37 s).** A cap of 16 saves under 2 s of compute; lowering it to 10 saves 5 s but leaves 11- and 12-week horizons with no backtest errors on 52 weeks of history (an origin needs an actual 12 weeks later), so the 12-week capacity view would lose its range and accuracy figure. Projected on this laptop: ~74 s at 60,000 cells, ~3 min at 150,000 cells — in the background, only when a period completes.
 
 ---
 

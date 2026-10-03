@@ -1267,6 +1267,14 @@ export interface ForecastResult {
   totalEntities: number
 }
 
+/** Background recompute of stored per-cell forecasts (honest-forecasting spec §6.1). */
+export interface ForecastStatus {
+  running: boolean
+  done: number
+  total: number
+  asOf: { weekly: string | null; monthly: string | null }
+}
+
 export interface ForecastOpts {
   scope?: ForecastScope
   entityId?: number | null
@@ -1691,6 +1699,8 @@ export interface Api {
     regionDistricts(regionId: number, technology?: Technology, grain?: Grain, period?: PeriodId): Promise<DistrictMapRow[]>
     priorityCenter(opts?: PriorityCenterOpts): Promise<PriorityCenterResult>
     forecast(opts?: ForecastOpts): Promise<ForecastResult>
+    forecastStatus(): Promise<ForecastStatus>
+    onForecastProgress(cb: (s: ForecastStatus) => void): () => void
   }
   rules: {
     get(): Promise<Rules | null>

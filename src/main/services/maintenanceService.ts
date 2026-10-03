@@ -160,6 +160,8 @@ async function rebuild(): Promise<{ ok: boolean; message: string; detail?: unkno
   try {
     await recomputeAllAggregates(cur.connection)
     await refreshAllIntelligence(cur.connection)
+    // stored forecasts are recomputed from the rebuilt aggregates
+    await cur.connection.run(`DELETE FROM workspace_meta WHERE key IN ('forecasts_weekly_as_of', 'forecasts_monthly_as_of')`)
     await cur.connection.run('COMMIT')
   } catch (e) {
     try {

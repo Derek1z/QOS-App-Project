@@ -39,6 +39,7 @@ import {
   seedCurrent, listCurrent, removeCurrent, discoverCurrent
 } from './services/kpiService'
 import { saveKpiTargetsCurrent, resetKpiTargetsCurrent } from './services/targetService'
+import { scheduleForecastRefresh, forecastStatus, onForecastProgress } from './forecast/scheduler'
 import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
@@ -52,6 +53,13 @@ export const WORKSPACE_CHANGED = 'workspace:changed'
 
 export function broadcastWorkspaceChanged(win: BrowserWindow | null): void {
   if (win && !win.isDestroyed()) win.webContents.send(WORKSPACE_CHANGED)
+}
+
+/** A change that can alter which forecasts are stored (targets, restore,
+ *  rebuild): queue the background recompute and pass the result through. */
+function afterForecastInput<T>(result: T): T {
+  scheduleForecastRefresh()
+  return result
 }
 
 export function registerIpc(win: () => BrowserWindow | null): void {
@@ -94,7 +102,11 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
-  ipcMain.handle('workspace:create', (_e, dir: string, name: string, technology?: string) => ws.createWorkspace(dir, name, technology))
+  ipcMain.handle('workspace:create', async (_e, dir: string, name: string, technology?: string) => {
+    const info = await ws.createWorkspace(dir, name, technology)
+    scheduleForecastRefresh()
+    return info
+  })
   ipcMain.handle('workspace:open', async (_e, path: string, opts?: { readOnly?: boolean }) => {
     const info = await ws.openWorkspace(path, opts)
     if (!opts?.readOnly) {
@@ -102,6 +114,8 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       void purgeRawArchive().catch(() => undefined)
       // §58: run a due scheduled-maintenance pass on open (settings-gated)
       void maybeRunScheduled().catch(() => undefined)
+      // stored forecasts: build them for old workspaces, redo an unfinished run
+      scheduleForecastRefresh()
     }
     return info
   })
@@ -111,13 +125,13 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     ws.setWorkspaceTechnology(technology))
 
   ipcMain.handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
-  ipcMain.handle('kpis:save', async (_e, patch: KpiDefPatch) => (await saveKpiTargetsCurrent([patch]))[0])
-  ipcMain.handle('kpis:saveTargets', (_e, patches: KpiDefPatch[]) => saveKpiTargetsCurrent(patches))
+  ipcMain.handle('kpis:save', async (_e, patch: KpiDefPatch) => afterForecastInput((await saveKpiTargetsCurrent([patch]))[0]))
+  ipcMain.handle('kpis:saveTargets', (_e, patches: KpiDefPatch[]) => saveKpiTargetsCurrent(patches).then(afterForecastInput))
   ipcMain.handle('kpis:remove', (_e, kpiId: number) => removeCurrent(kpiId))
   ipcMain.handle('kpis:discover', (_e, headers: string[], technology?: Technology) =>
     discoverCurrent(headers, technology))
   ipcMain.handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
-  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetKpiTargetsCurrent(technology))
+  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetKpiTargetsCurrent(technology).then(afterForecastInput))
 
   ipcMain.handle('derived:list', (_e, technology?: Technology) => {
     const w = ws.getCurrent()
@@ -180,6 +194,20 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   )
   ipcMain.handle('analytics:priorityCenter', (_e, opts?: PriorityCenterOpts) => getPriorityCenter(opts))
   ipcMain.handle('analytics:forecast', (_e, opts?: ForecastOpts) => getForecast(opts))
+  ipcMain.handle('forecast:status', () => forecastStatus())
+  // background recompute progress, at most one event per 250 ms (plus the last)
+  let lastSent = 0
+  let trailing: ReturnType<typeof setTimeout> | null = null
+  onForecastProgress((s) => {
+    const send = (): void => {
+      lastSent = Date.now()
+      const w = win()
+      if (w && !w.isDestroyed()) w.webContents.send('forecast:progress', forecastStatus())
+    }
+    if (trailing) clearTimeout(trailing)
+    if (!s.running || Date.now() - lastSent >= 250) send()
+    else trailing = setTimeout(send, 250)
+  })
   ipcMain.handle('analytics:regionMap', (_e, technology?: Technology, grain?: Grain, period?: PeriodId) =>
     getRegionMap(technology, grain, period)
   )
@@ -272,13 +300,13 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('workspace:snapshotCreate', (_e, name: string, opts?: CreateSnapshotOpts) =>
     createSnapshot(name, opts)
   )
-  ipcMain.handle('workspace:snapshotRestore', (_e, id: number) => restoreSnapshot(id))
+  ipcMain.handle('workspace:snapshotRestore', (_e, id: number) => restoreSnapshot(id).then(afterForecastInput))
   ipcMain.handle('workspace:snapshotRemove', (_e, id: number) => removeSnapshot(id))
   ipcMain.handle('workspace:snapshotCompare', (_e, aId: number, bId: number) =>
     compareSnapshots(aId, bId)
   )
 
-  ipcMain.handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action))
+  ipcMain.handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action).then(afterForecastInput))
   ipcMain.handle('maintenance:getSchedule', () => getSchedule())
   ipcMain.handle('maintenance:setSchedule', (_e, patch) => setSchedule(patch))
   ipcMain.handle('maintenance:runScheduled', () => runScheduled())

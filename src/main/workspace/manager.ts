@@ -97,7 +97,23 @@ function closeHandle(ws: OpenWorkspace): void {
   if (ws.lockHeld) releaseLock(ws.path)
 }
 
-export function closeWorkspace(): void {
+const beforeClose: Array<() => Promise<void>> = []
+
+/** Run `fn` (awaited) before the workspace handle closes — e.g. to stop a
+ *  background job that is using the connection. */
+export function onBeforeClose(fn: () => Promise<void>): void {
+  beforeClose.push(fn)
+}
+
+export async function closeWorkspace(): Promise<void> {
+  if (!current) return
+  for (const fn of beforeClose) {
+    try {
+      await fn()
+    } catch {
+      /* a failing hook never keeps the workspace open */
+    }
+  }
   if (!current) return
   const ws = current
   current = null

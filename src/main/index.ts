@@ -8,6 +8,8 @@ import { ensureDirs } from './paths'
 import { registerIpc, broadcastWorkspaceChanged } from './ipc'
 import { startScheduler, stopScheduler, maybeRunScheduled } from './services/maintenanceScheduler'
 import { runSmokeTest } from './smoke'
+import { setDefaultRunnerFactory } from './forecast/scheduler'
+import { createUtilityRunner } from './forecast/utilityRunner'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -70,6 +72,8 @@ if (!gotLock) {
 }
 
 function bootstrap(): void {
+  // stored forecasts run in a pool of utility processes (honest-forecasting spec §6.1)
+  setDefaultRunnerFactory(() => createUtilityRunner())
   if (isSmokeRun) {
     console.log('[SMOKE] Starting smoke test bootstrap...')
     void runSmokeTest(mkdtempSync(join(tmpdir(), 'qos-smoke-')))

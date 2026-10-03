@@ -2,7 +2,7 @@
 /* Checks that a packaged app's resources folder holds what the import needs at
  * runtime: the DuckDB API and the DuckDB engine for the target platform
  * unpacked next to app.asar, no engines for other platforms, and the import
- * process script (out/main/importWorker-*.js) inside app.asar, with nothing
+ * and forecast process scripts (out/main/*Worker-*.js) inside app.asar, with nothing
  * but the app at its top level. Used by verify-portable.cjs (Windows build)
  * and smoke-packaged.cjs (Linux build).
  *
@@ -36,6 +36,9 @@ function checkPackageLayout(resourcesDir, platform) {
   if (stray.length > 0) problems.push(`app.asar holds files that are not part of the app: ${stray.join(', ')}`)
   if (!files.some((p) => /\/out\/main\/(chunks\/)?importWorker-[^/]+\.js$/.test(p))) {
     problems.push('the import process script (out/main/importWorker-*.js) is not in app.asar')
+  }
+  if (!files.some((p) => /\/out\/main\/(chunks\/)?forecastWorker-[^/]+\.js$/.test(p))) {
+    problems.push('the forecast process script (out/main/forecastWorker-*.js) is not in app.asar')
   }
   return problems
 }

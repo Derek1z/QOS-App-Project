@@ -23,7 +23,7 @@ export async function openRealWorkspace(technology: Technology = '4G'): Promise<
     dir,
     conn: ws.getCurrent()!.connection,
     cleanup: async () => {
-      ws.closeWorkspace()
+      await ws.closeWorkspace()
       rmSync(dir, { recursive: true, force: true })
     }
   }

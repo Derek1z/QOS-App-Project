@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Api, ImportProgress } from '../../shared/api'
+import type { Api, ImportProgress, ForecastStatus } from '../../shared/api'
 
 /** Request/response wrapper for one IPC channel. It forwards every argument:
  *  TypeScript accepts a wrapper that declares fewer parameters than the Api
@@ -72,6 +72,12 @@ const api: Api = {
     explorer: call('analytics:explorer'),
     priorityCenter: call('analytics:priorityCenter'),
     forecast: call('analytics:forecast'),
+    forecastStatus: call('forecast:status'),
+    onForecastProgress: (cb: (s: ForecastStatus) => void) => {
+      const l = (_e: Electron.IpcRendererEvent, s: ForecastStatus) => cb(s)
+      ipcRenderer.on('forecast:progress', l)
+      return () => ipcRenderer.removeListener('forecast:progress', l)
+    },
     executiveOverview: call('analytics:executiveOverview'),
     regionMap: call('analytics:regionMap'),
     regionDistricts: call('analytics:regionDistricts')

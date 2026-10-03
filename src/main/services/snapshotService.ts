@@ -144,6 +144,10 @@ export async function restoreSnapshot(snapshotId: number): Promise<WorkspaceInfo
     throw new Error('Restore failed — a pre-restore backup was written to backups/')
   }
 
+  // stored forecasts are recomputed for the restored data (spec §6.1)
+  await ws.getCurrent()!.connection.run(
+    `DELETE FROM workspace_meta WHERE key IN ('forecasts_weekly_as_of', 'forecasts_monthly_as_of')`
+  )
   try {
     const noteMsg = `Restored snapshot "${row.name}" (${row.path}); pre-restore backup: ${safety}`.replace(/'/g, "''")
     await ws.getCurrent()!.connection.run(

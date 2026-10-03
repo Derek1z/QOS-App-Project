@@ -1,4 +1,4 @@
-import type { RealWorkspace } from './realWorkspace'
+import { openRealWorkspace, insertCells, type RealWorkspace } from './realWorkspace'
 import { recomputeAllAggregates } from '../../src/main/import/aggregates'
 import { refreshAllIntelligence } from '../../src/main/analytics/engine'
 
@@ -43,4 +43,20 @@ export async function setTarget(ws: RealWorkspace, key: string, target: number |
 export async function count(ws: RealWorkspace, sql: string): Promise<number> {
   const r = await ws.conn.runAndReadAll(sql)
   return Number(Object.values(r.getRowObjects()[0] ?? { n: 0 })[0] ?? 0)
+}
+
+/** 3 cells, 10 complete weeks (Mon 04/05 .. Sun 12/07/2026) of PRB, users,
+ *  CSSR (target 98.5) and an untargeted counter. */
+export async function forecastWorkspace(opts: { cell3Until?: string } = {}): Promise<RealWorkspace> {
+  const ws = await openRealWorkspace('4G')
+  await insertCells(ws.conn, ['C1', 'C2', 'C3'])
+  await setTarget(ws, 'call_setup_success_4g', 98.5)
+  await setTarget(ws, 'l_erab_abnormrel', null)
+  for (const id of [1, 2, 3]) {
+    const until = id === 3 && opts.cell3Until ? opts.cell3Until : '2026-07-12'
+    await fillDays(ws, id, '2026-05-04', until, { prb: `50 + i * 0.2`, users: 10 },
+      { call_setup_success_4g: `99.5 - i * 0.01`, l_erab_abnormrel: 3 })
+  }
+  await rebuild(ws)
+  return ws
 }

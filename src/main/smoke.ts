@@ -41,6 +41,10 @@ import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
 import { app } from 'electron'
+import { recomputeAllAggregates } from './import/aggregates'
+import { refreshAllIntelligence } from './analytics/engine'
+import { planForecastJob, runForecastJob } from './forecast/job'
+import { createUtilityRunner } from './forecast/utilityRunner'
 import { overrideDataDirs, dirs } from './paths'
 
 export async function runSmokeTest(dir: string): Promise<void> {
@@ -1456,6 +1460,49 @@ export async function runSmokeTest(dir: string): Promise<void> {
 
   await ws.closeWorkspace()
 
+  // forecast pool (honest-forecasting spec test 23): stored forecasts computed
+  // by the utility-process pool on a scratch workspace with 10 complete weeks
+  console.log('[SMOKE] Testing forecast pool...')
+  const fcDir = join(dir, 'forecast-pool')
+  mkdirSync(fcDir, { recursive: true })
+  await ws.createWorkspace(fcDir, 'forecast-pool', '4G')
+  const fconn = ws.getCurrent()!.connection
+  await fconn.run(`INSERT INTO dim_region VALUES (1, 'R1')`)
+  await fconn.run(`INSERT INTO dim_district VALUES (1, 'D1', 1)`)
+  await fconn.run(`INSERT INTO dim_site VALUES (1, 'S1', 1)`)
+  for (const id of [1, 2, 3]) await fconn.run(`INSERT INTO dim_cell VALUES (?, ?, 1, 1, 1)`, [id, 'FC-' + id])
+  const fcRange = `range(DATE '2026-05-04', DATE '2026-07-13', INTERVAL 1 DAY) r(d), range(1, 4) c(cell)`
+  await fconn.run(
+    `INSERT INTO fact_cell_daily (date_id, cell_id, prb_utilization, data_volume_mb, connected_users,
+       dl_throughput_kbps, availability_pct, source_import_id)
+     SELECT CAST(strftime(d, '%Y%m%d') AS INTEGER), cell, 50 + date_diff('day', DATE '2026-05-04', CAST(d AS DATE)) * 0.2,
+       100, 10, 20000, 99.9, 1 FROM ${fcRange}`
+  )
+  await fconn.run(
+    `INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
+     SELECT CAST(strftime(d, '%Y%m%d') AS INTEGER), cell, k.kpi_id, 99.5 - date_diff('day', DATE '2026-05-04', CAST(d AS DATE)) * 0.01
+     FROM ${fcRange}, kpi_defs k WHERE k.technology = '4G' AND k.kpi_key = 'call_setup_success_4g'`
+  )
+  await fconn.run(`UPDATE kpi_defs SET target = 98.5 WHERE technology = '4G' AND kpi_key = 'call_setup_success_4g'`)
+  await recomputeAllAggregates(fconn)
+  await refreshAllIntelligence(fconn)
+  const pool = createUtilityRunner(2)
+  try {
+    const poolRun = await runForecastJob(fconn, await planForecastJob(fconn), pool)
+    if (poolRun.cancelled) throw new Error('forecast pool run was cancelled')
+  } finally {
+    pool.dispose()
+  }
+  const fcRows = (await fconn.runAndReadAll(
+    `SELECT count(*) AS n, count(*) FILTER (WHERE quality IS NULL) AS nulls,
+            count(*) FILTER (WHERE kpi_key = 'call_setup_success_4g' AND quality <> 'Withheld' AND grain = 'weekly') AS cssr
+     FROM cell_forecasts`
+  )).getRowObjects()[0]
+  if (Number(fcRows.n) < 6 || Number(fcRows.nulls) > 0 || Number(fcRows.cssr) !== 3) {
+    throw new Error('forecast pool rows ' + JSON.stringify(fcRows, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)))
+  }
+  await ws.closeWorkspace()
+
   // file-based success marker for packaged runs: the portable 7z SFX wrapper
   // swallows the child's stdout, so verify-portable checks for this file.
   if (app.isPackaged) {
@@ -1473,6 +1520,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
     'SMOKE_OK ' +
       JSON.stringify({
         createdEmpty: true,
+        forecastPool: true,
         lockFile: true,
         rowCount: 6,
         dims: { regions: 2, districts: 2, sites: 2, cells: 3 },

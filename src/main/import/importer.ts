@@ -19,6 +19,7 @@ import { detectDerivedKpiSuggestions } from '../services/derivedKpiService'
 import { invalidateSummaryCache } from '../services/queryService'
 import { utilityProcess } from 'electron'
 import importWorkerPath from './importWorker?modulePath'
+import { scheduleForecastRefresh } from '../forecast/scheduler'
 import type { ImportCoreJob } from './importCore'
 import type {
   CanonicalField, FileAnalysis, GeoFieldStats, GeoStatsResult, ImportProgress, ImportResult, MappingConfig, PreviewResult,
@@ -255,6 +256,8 @@ export async function runImport(
 
   // freshly imported rows change every aggregate — drop the TTL cache
   invalidateSummaryCache()
+  // stored forecasts recompute in the background (honest-forecasting spec §6.1)
+  scheduleForecastRefresh()
   // cellsAfter is only observable on the fresh main handle
   const cellsAfter = await count(getCurrent()!.connection, `SELECT count(*) n FROM dim_cell`)
   return { ...result!, newCells: Math.max(0, cellsAfter - cellsBefore) }

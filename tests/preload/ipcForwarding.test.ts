@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
 }))
 
 // wrappers that are not request/response IPC calls
-const NOT_INVOKE = new Set(['files.path', 'imports.onProgress', 'workspace.onChanged'])
+const NOT_INVOKE = new Set(['files.path', 'imports.onProgress', 'workspace.onChanged', 'analytics.onForecastProgress'])
 
 describe('preload IPC bridge', () => {
   beforeAll(async () => {

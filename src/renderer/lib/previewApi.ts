@@ -14,7 +14,7 @@ import type {
   InvestigationReport, PriorityCenterResult, PriorityCenterRow, PriorityCenterOpts,
   PriorityBand, ForecastMetric, ForecastRisk, ForecastHorizon, ForecastMethod,
   ForecastQuality, ForecastScope, ForecastResult, ForecastSeries, ForecastPoint,
-  ForecastRiskRow, ForecastOpts, ReportType, ReportSectionId, ReportFormat,
+  ForecastRiskRow, ForecastOpts, ForecastStatus, ReportType, ReportSectionId, ReportFormat,
   ReportPack, ReportOpts, ReportDefinition, ReportHistoryRow, ReportSnapshot,
   ReportSectionDef, DueReport, ImportProgress, RawArchiveResult, RawArchiveRow,
   RawArchiveStatus, WorkspaceSnapshot, CreateSnapshotOpts, SnapshotComparison,
@@ -3462,6 +3462,8 @@ export const previewApi: Api & { demo: true } = {
     priorityCenter: async (opts?: PriorityCenterOpts): Promise<PriorityCenterResult> =>
       demoPriorityCenter(opts),
     forecast: async (opts?: ForecastOpts): Promise<ForecastResult> => demoForecast(opts),
+    forecastStatus: async (): Promise<ForecastStatus> => ({ running: false, done: 0, total: 0, asOf: { weekly: '2026-07-13', monthly: '2026-06-01' } }),
+    onForecastProgress: (_cb: (s: ForecastStatus) => void) => () => {},
     priorityQueue: async (mode: PriorityMode, limit = 10): Promise<PriorityRow[]> =>
       demoPriority(mode).slice(0, limit),
     health: async (_grain?: string): Promise<HealthResult> => demoHealth(),

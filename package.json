@@ -15,6 +15,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "smoke": "node scripts/clean-smoke-temp.cjs && electron-vite build && mkdir -p /tmp/qos-runtime && XDG_RUNTIME_DIR=/tmp/qos-runtime XDG_CONFIG_HOME=/tmp/qos-runtime XDG_CACHE_HOME=/tmp/qos-runtime WAYLAND_DISPLAY= DISPLAY= electron . --smoke --no-sandbox --ozone-platform=headless --headless",
+    "bench:forecast": "electron-vite build && electron . --bench-forecast --no-sandbox --ozone-platform=headless --headless",
     "verify:packaged": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --linux dir --config.directories.output=release-check --config.npmRebuild=false && node scripts/smoke-packaged.cjs release-check/linux-unpacked",
     "preview:web": "vite --config .preview/vite.config.ts",
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",

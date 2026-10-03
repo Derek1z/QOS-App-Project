@@ -8,6 +8,7 @@ import { ensureDirs } from './paths'
 import { registerIpc, broadcastWorkspaceChanged } from './ipc'
 import { startScheduler, stopScheduler, maybeRunScheduled } from './services/maintenanceScheduler'
 import { runSmokeTest } from './smoke'
+import { runForecastBench } from './bench'
 import { setDefaultRunnerFactory } from './forecast/scheduler'
 import { createUtilityRunner } from './forecast/utilityRunner'
 
@@ -39,7 +40,7 @@ function getAppIcon(): Electron.NativeImage | string | undefined {
 // M0 uses an app-level single instance; per-workspace multi-instance arrives later.
 // Skip single-instance lock during smoke runs — the verify-portable script launches
 // the exe headlessly and there may be a stale lock from a previous build session.
-const isSmokeRun = process.argv.includes('--smoke') || process.env.SMOKE_TEST === '1' || process.env.QOS_SMOKE === '1'
+const isSmokeRun = process.argv.includes('--smoke') || process.argv.includes('--bench-forecast') || process.env.SMOKE_TEST === '1' || process.env.QOS_SMOKE === '1'
 if (isSmokeRun) {
   app.disableHardwareAcceleration()
   try {
@@ -74,6 +75,15 @@ if (!gotLock) {
 function bootstrap(): void {
   // stored forecasts run in a pool of utility processes (honest-forecasting spec §6.1)
   setDefaultRunnerFactory(() => createUtilityRunner())
+  if (process.argv.includes('--bench-forecast')) {
+    void runForecastBench()
+      .then(() => app.exit(0))
+      .catch((e) => {
+        console.error('BENCH_FAILED', e)
+        app.exit(1)
+      })
+    return
+  }
   if (isSmokeRun) {
     console.log('[SMOKE] Starting smoke test bootstrap...')
     void runSmokeTest(mkdtempSync(join(tmpdir(), 'qos-smoke-')))

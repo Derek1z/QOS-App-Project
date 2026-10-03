@@ -1,7 +1,7 @@
 # Honest Forecasting Design
 
 **Date**: 2026-10-03
-**Status**: Draft for review
+**Status**: Implemented (2026-10-03)
 **Scope**: the Forecasting page (and its report section) forecasts real imported KPI series with standard models chosen by an out-of-sample backtest; Investigation stops inventing KPI values
 
 ---
@@ -198,6 +198,18 @@ Measured on this development laptop (8 threads, 4 cores) with a generated 25,000
 Each extra KPI given a target adds about 1/8 of these times. Two years of weekly history makes the weekly part about 1.7× slower. Reads from a real on-disk workspace may be slower than the in-memory benchmark.
 
 Budget: a full recompute at 25,000 cells with 8 stored series finishes in ≤ 20 s on 4 cores. The plan measures it on a real workspace; if it is over, the backtest origin cap (§5.2) is lowered and the new value recorded here. The recompute never blocks the import or the app (§6.1).
+
+**Measured 2026-10-03** (`npm run bench:forecast`: a throwaway on-disk 4G workspace, 25,000 cells, 52 weeks, 8 stored series per cell, utility-process pool of 7 on an Intel i7-6820HQ, 4 cores / 8 threads, load average 3–5 from other work):
+
+| Run | Weekly (read / compute / write) | Monthly | Total |
+|---|---|---|---|
+| First implementation | 69 s | 19 s | 87.6 s |
+| After optimisation, cap 20 | 22.5 s (4.2 / 12.5 / 5.3) | 8.2 s | **30.7 s** |
+| Same, cap 10 | 17.6 s (4.1 / 7.9 / 5.1) | 8.0 s | 25.7 s |
+
+Optimisations that kept results identical (tests): dates carried for daily series only; packed typed-array messages to the pool; Holt fits kept only at the ends that are read, with the fit selection cached per end; compact stored JSON. Single-threaded, the engine costs 0.115 ms per 52-week series.
+
+**Ruling (2026-10-03): the cap stays at 20 and the budget is missed (30.7 s).** Lowering it to 10 saves 5 s but leaves 11- and 12-week horizons with no backtest errors on 52 weeks of history (an origin needs an actual 12 weeks later), so the 12-week capacity view would lose its range and accuracy figure. Projected on this laptop: ~74 s at 60,000 cells, ~3 min at 150,000 cells — in the background, only when a period completes.
 
 ---
 

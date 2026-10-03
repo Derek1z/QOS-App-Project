@@ -6,7 +6,7 @@ import PptxGenJS from 'pptxgenjs'
 import { dirs, exportsDir } from '../paths'
 import { getCurrent } from '../workspace/manager'
 import {
-  getSummary, getHealth, getNcMovement, getPriorityQueue, getForecast,
+  getSummary, getHealth, getNcMovement, getPriorityQueue,
   getCellIntelligence, getHealthMatrix, getNcLifecycle, getRulesCurrent
 } from './queryService'
 import type {
@@ -15,6 +15,7 @@ import type {
 } from '../../../shared/api'
 import { DEFAULT_CHARTS, REPORT_SECTIONS } from '../../../shared/api'
 import { latestComplete, periodLabel } from '../../../shared/periods'
+import { getForecast } from './forecastService'
 
 type JSZipLike = {
   loadAsync(data: Uint8Array | Buffer): Promise<{
@@ -185,11 +186,18 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'forecast-risk': async () => {
     const f = await getForecast({})
+    const fc = f.series?.forecast
+    const model = fc == null ? 'no KPI imported' : fc.quality === 'Withheld' ? `withheld (${fc.withheldReason})` : `${fc.method} · ${fc.quality}`
     return {
       title: 'Forecast Risk',
-      columns: ['Cell', 'Path', 'Current', 'Forecast', 'Threshold', 'Risk'],
-      rows: f.riskRows.slice(0, 25).map((r) => [r.name, r.path.join(' › '), r.current, r.forecast, r.threshold, r.risk]),
-      note: `${f.totalEntities} entities; ${f.riskCounts['Already Breached'] ?? 0} already breached, ${f.riskCounts['Likely Breach'] ?? 0} likely to breach within the ${f.horizon} horizon.`
+      columns: ['Cell', 'Path', 'Current', 'Forecast', 'Target', 'Risk', 'Hint'],
+      rows: f.riskRows.slice(0, 25).map((r) => [
+        r.name, r.path.join(' › '), r.current, r.forecast, r.threshold, r.risk ?? '—',
+        r.hint ? `${r.hint.category} (${r.hintNote})` : r.hintNote
+      ]),
+      note: `${f.series?.label ?? 'Forecast'}: ${model}; horizon ${f.horizon} ${f.grain === 'monthly' ? 'months' : f.grain === 'daily' ? 'days' : 'weeks'}. ` +
+        `${f.totalEntities} cells; ${f.riskCounts['Already Breached'] ?? 0} already breached, ${f.riskCounts['Likely Breach'] ?? 0} likely to breach.` +
+        (f.riskTableNote ? ` ${f.riskTableNote}.` : '')
     }
   },
 

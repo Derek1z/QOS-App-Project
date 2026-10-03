@@ -300,3 +300,48 @@ export async function readOverTargetSeries(
     daysWithData: Number(x.days)
   }))
 }
+
+/** Each cell's KPI values at the given periods (complete or not), for current
+ *  values and hint inputs. cell → kpi key → period → value. */
+export async function readCellValuesAt(
+  conn: DuckDBConnection, grain: SeriesGrain, kpis: ForecastKpi[], scope: ScopeRef, periods: string[]
+): Promise<Map<number, Map<string, Map<string, number>>>> {
+  const out = new Map<number, Map<string, Map<string, number>>>()
+  if (kpis.length === 0 || periods.length === 0) return out
+  const t = tables(grain)
+  const inPeriods = `w.${t.period} IN (${periods.map((p) => `DATE '${p}'`).join(',')})`
+  const cells = scopeCellsSql(scope)
+  const put = (cell: number, key: string, day: number, v: number): void => {
+    let m = out.get(cell)
+    if (!m) out.set(cell, (m = new Map()))
+    let k = m.get(key)
+    if (!k) m.set(key, (k = new Map()))
+    k.set(isoFromEpochDay(day), v)
+  }
+  const kpiSrc = kpis.filter((k) => k.source.kind === 'kpi')
+  if (kpiSrc.length > 0) {
+    const keyOf = new Map(kpiSrc.map((k) => [(k.source as { kpiId: number }).kpiId, k.key]))
+    const valueCase = `CASE ${kpiSrc.map((k) => `WHEN w.kpi_id = ${(k.source as { kpiId: number }).kpiId} THEN ${kpiValueSql(k.agg)}`).join(' ')} END`
+    const r = await conn.runAndReadAll(
+      `SELECT CAST(w.cell_id AS INTEGER), CAST(w.kpi_id AS INTEGER), ${epochDaySql(`w.${t.period}`)}, CAST(${valueCase} AS DOUBLE)
+       FROM ${t.kpi} w WHERE ${inPeriods} AND w.cell_id IN (${cells}) AND w.kpi_id IN (${[...keyOf.keys()].join(',')})`
+    )
+    const [c, k, d, v] = r.getColumns() as unknown as [number[], number[], number[], Array<number | null>]
+    for (let i = 0; i < v.length; i++) if (v[i] != null && Number.isFinite(v[i])) put(c[i], keyOf.get(k[i])!, d[i], v[i]!)
+  }
+  const coreSrc = kpis.filter((k) => k.source.kind === 'core')
+  if (coreSrc.length > 0) {
+    const r = await conn.runAndReadAll(
+      `SELECT CAST(w.cell_id AS INTEGER), ${epochDaySql(`w.${t.period}`)}, ${coreSrc.map((k) => `CAST(${valueSql(k)} AS DOUBLE)`).join(', ')}
+       FROM ${t.core} w WHERE ${inPeriods} AND w.cell_id IN (${cells})`
+    )
+    const cols = r.getColumns() as unknown as Array<Array<number | null>>
+    for (let i = 0; i < cols[0].length; i++) {
+      for (let k = 0; k < coreSrc.length; k++) {
+        const v = cols[2 + k][i]
+        if (v != null && Number.isFinite(v)) put(cols[0][i] as number, coreSrc[k].key, cols[1][i] as number, v)
+      }
+    }
+  }
+  return out
+}

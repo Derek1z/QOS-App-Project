@@ -1,3 +1,6 @@
+import { forecastSeries, type UnitDomain } from '../../main/analytics/forecasting/engine'
+import { classifyRisk } from '../../main/analytics/forecasting/risk'
+import { FORECAST_HORIZONS, DEFAULT_HORIZON, PERIOD_NOUN, addPeriods, forecastPeriodLabel } from '../../../shared/forecast'
 import type {
   Api, WorkspaceInfo, FileAnalysis, MappingConfig, PreviewResult, ImportResult, ImportAuditRow,
   CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult, GeoStatsResult, SheetInfo,
@@ -14,7 +17,7 @@ import type {
   InvestigationReport, PriorityCenterResult, PriorityCenterRow, PriorityCenterOpts,
   PriorityBand, ForecastMetric, ForecastRisk, ForecastHorizon, ForecastMethod,
   ForecastQuality, ForecastScope, ForecastResult, ForecastSeries, ForecastPoint,
-  ForecastRiskRow, ForecastOpts, ForecastStatus, ReportType, ReportSectionId, ReportFormat,
+  ForecastRiskRow, ForecastOpts, ForecastStatus, ForecastMetricOption, ReportType, ReportSectionId, ReportFormat,
   ReportPack, ReportOpts, ReportDefinition, ReportHistoryRow, ReportSnapshot,
   ReportSectionDef, DueReport, ImportProgress, RawArchiveResult, RawArchiveRow,
   RawArchiveStatus, WorkspaceSnapshot, CreateSnapshotOpts, SnapshotComparison,
@@ -1601,302 +1604,89 @@ function demoPriorityCenter(opts: PriorityCenterOpts = {}): PriorityCenterResult
   return { total, rows: rows.slice(offset, offset + limit), byStatus, overdue }
 }
 
-// --- forecasting demo (§45–46) ---------------------------------------------
-// Mirrors src/main/analytics/forecast.ts in JS: simple-first methods, holdout
-// quality, and risk classification. 12 weeks of deterministic history per cell
-// ending at the current demo week.
+// --- forecasting demo (honest-forecasting spec) ------------------------------
+// Deterministic demo history run through the real engine and risk rules
+// (src/main/analytics/forecasting), so the preview shows every page state:
+// a backtested forecast, a partial period, an unavailable horizon, a KPI
+// that was not imported, and the daily-at-network risk-table note.
 
-const fcMean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
-
-function fcTrend(xs: number[]): { slope: number; intercept: number } {
-  const n = xs.length
-  const sx = (n * (n - 1)) / 2
-  const sxx = (n * (n - 1) * (2 * n - 1)) / 6
-  const sy = xs.reduce((a, b) => a + b, 0)
-  const sxy = xs.reduce((a, b, i) => a + b * i, 0)
-  const denom = n * sxx - sx * sx
-  if (denom === 0) return { slope: 0, intercept: fcMean(xs) }
-  return { slope: (n * sxy - sx * sy) / denom, intercept: (sy - ((n * sxy - sx * sy) / denom) * sx) / n }
-}
-
-function fcHoldout(xs: number[], predict: (i: number) => number): { mae: number; rmse: number; dir: number | null } {
-  const n = xs.length
-  if (n < 2) return { mae: 0, rmse: 0, dir: null }
-  const errs: number[] = []
-  let hits = 0
-  let dn = 0
-  for (let i = 1; i < n; i++) {
-    const p = predict(i)
-    const a = xs[i]
-    errs.push(Math.abs(p - a))
-    const pm = p - xs[i - 1]
-    const am = a - xs[i - 1]
-    if (pm !== 0 && am !== 0 && Math.sign(pm) === Math.sign(am)) hits++
-    dn++
-  }
-  return {
-    mae: errs.reduce((a, b) => a + b, 0) / errs.length,
-    rmse: Math.sqrt(errs.reduce((a, b) => a + b * b, 0) / errs.length),
-    dir: dn > 0 ? hits / dn : null
-  }
-}
-
-function fcForecast(
-  values: number[],
-  label: string,
-  unit: string
-): { method: string; quality: string; next: number | null; lower: number | null; upper: number | null; confidence: number | null; mae: number | null; rmse: number | null; dir: number | null; explanation: string } {
-  const n = values.length
-  const scale = Math.max(1e-6, Math.abs(fcMean(values)))
-  if (n < 2) {
-    return {
-      method: 'suppressed', quality: 'suppressed', next: null, lower: null, upper: null,
-      confidence: null, mae: null, rmse: null, dir: null,
-      explanation: `Insufficient history (${n} week${n === 1 ? '' : 's'}) for ${label.toLowerCase()} — forecast suppressed (spec §46).`
-    }
-  }
-  let method = 'moving-average'
-  let mae = 0
-  let rmse = 0
-  let dir: number | null = null
-  let next: number | null = null
-  let conf: number | null = null
-  if (n >= 3) {
-    const maE = fcHoldout(values, (i) => (i === n - 1 ? fcMean(values.slice(0, n - 1)) : fcMean(values.slice(0, i + 1))))
-    const lt = fcTrend(values.slice(0, n - 1))
-    const ltE = fcHoldout(values, (i) => (i === n - 1 ? lt.intercept + lt.slope * i : values[i]))
-    if (ltE.mae <= maE.mae) {
-      method = 'linear-trend'; mae = ltE.mae; rmse = ltE.rmse; dir = ltE.dir
-    } else {
-      method = 'moving-average'; mae = maE.mae; rmse = maE.rmse; dir = maE.dir
-    }
-    next = method === 'linear-trend' ? Math.max(0, fcTrend(values).intercept + fcTrend(values).slope * n) : fcMean(values)
-    conf = Math.round(Math.min(92, Math.max(15, 100 - (mae / scale) * 220)))
-    if (n < 4) conf = Math.min(conf, 55)
-  } else {
-    method = 'moving-average'
-    next = fcMean(values)
-    mae = Math.abs(values[1] - values[0])
-    rmse = mae
-    dir = null
-    conf = 40
-  }
-  const band = Math.max(scale * 0.08, Math.abs(fcMean(values) - (next ?? fcMean(values))) * 1.2, mae * 1.5)
-  const lower = next == null ? null : Math.max(0, next - band)
-  const upper = next == null ? null : next + band
-  const quality = n < 3 ? 'low' : mae / scale <= 0.05 ? 'high' : mae / scale <= 0.15 ? 'medium' : 'low'
-  const parts = [`${method === 'linear-trend' ? 'linear trend' : 'moving average'} over ${n} weeks of ${label.toLowerCase()}`]
-  parts.push(`holdout MAE ${mae.toFixed(2)} ${unit}`)
-  parts.push(`RMSE ${rmse.toFixed(2)} ${unit}`)
-  if (dir != null) parts.push(`directional accuracy ${Math.round(dir * 100)}%`)
-  if (n < 4) parts.push('limited history — quality capped')
-  parts.push(`next ${label.toLowerCase()} ≈ ${next?.toFixed(1) ?? '—'} ${unit}`)
-  return { method, quality, next, lower, upper, confidence: conf, mae, rmse, dir, explanation: parts.join('; ') + '.' }
-}
-
-function fcRisk(
-  threshold: number | null, worseIsHigher: boolean, history: number[], forecast: number | null, label: string
-): { risk: ForecastRisk; explanation: string } {
-  const latest = history.length > 0 ? history[history.length - 1] : null
-  if (threshold == null) {
-    if (latest == null || forecast == null || history.length < 2) {
-      return { risk: 'Stable', explanation: `${label}: insufficient data to classify.` }
-    }
-    const growth = Math.abs(forecast - latest) / Math.max(1, Math.abs(latest))
-    if (growth >= 0.15) {
-      return { risk: 'Watch', explanation: `${label} is forecast to move ${forecast - latest >= 0 ? 'up' : 'down'} ${(growth * 100).toFixed(0)}% — monitor for congestion impact.` }
-    }
-    return { risk: 'Stable', explanation: `${label} trajectory is flat.` }
-  }
-  if (latest == null || forecast == null) {
-    return { risk: 'Stable', explanation: `${label}: insufficient data to classify.` }
-  }
-  if (worseIsHigher ? latest >= threshold : latest <= threshold) {
-    return { risk: 'Already Breached', explanation: `${label} is already ${latest.toFixed(1)} vs the ${threshold.toFixed(1)} threshold (${worseIsHigher ? 'at or above' : 'at or below'}).` }
-  }
-  if (worseIsHigher ? forecast >= threshold : forecast <= threshold) {
-    return { risk: 'Likely Breach', explanation: `${label} is ${latest.toFixed(1)} now but forecast at ${forecast.toFixed(1)} crosses the ${threshold.toFixed(1)} threshold within the horizon.` }
-  }
-  const margin = worseIsHigher ? (threshold - forecast) / threshold : (forecast - threshold) / threshold
-  if (margin <= 0.1) return { risk: 'At Risk', explanation: `${label} forecast ${forecast.toFixed(1)} is within 10% of the ${threshold.toFixed(1)} threshold.` }
-  if (margin <= 0.2) return { risk: 'Watch', explanation: `${label} forecast ${forecast.toFixed(1)} is within 20% of the ${threshold.toFixed(1)} threshold.` }
-  return { risk: 'Stable', explanation: `${label} forecast ${forecast.toFixed(1)} is comfortably inside the threshold.` }
-}
-
-const FC_METRICS: Array<{ metric: ForecastMetric; label: string; unit: string; worseIsHigher: boolean }> = [
-  { metric: 'prb', label: 'PRB utilization', unit: '%', worseIsHigher: true },
-  { metric: 'traffic', label: 'Data volume', unit: 'MB', worseIsHigher: false },
-  { metric: 'users', label: 'Connected users', unit: '', worseIsHigher: false },
-  { metric: 'throughput', label: 'DL throughput', unit: 'kbps', worseIsHigher: false },
-  { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false }
+const DEMO_FC_METRICS: Array<ForecastMetricOption & { target: number | null; worseIsHigher: boolean; base: number; slope: number }> = [
+  { key: 'prb_utilization', label: '4G Peak Hour PRB Utilization', unit: '%', hasTarget: true, stored: true, target: 80, worseIsHigher: true, base: 66, slope: 0.9 },
+  { key: 'call_setup_success_4g', label: '4G Call Connection Success Rate', unit: '%', hasTarget: true, stored: true, target: 98.5, worseIsHigher: false, base: 99.3, slope: -0.05 },
+  { key: 'connected_users', label: 'Connected Users', unit: '', hasTarget: false, stored: true, target: null, worseIsHigher: false, base: 120, slope: 2.5 }
 ]
 
-function fcHistory(c: { cellId: number; prbAvg: number | null }, weeksN: number): Record<string, number[]> {
-  // deterministic 12-week walk ending at the current value (NC cells rise toward breach)
-  const idx = c.cellId - 100000
-  const wob = (i: number, salt: number): number => (((i * 7 + idx * 3 + salt) % 9) - 4)
-  const prbCur = c.prbAvg ?? 50
-  const prbStep = 0.4 + ((c.cellId * 7) % 17) / 10
-  const prb = Array.from({ length: weeksN }, (_, i) => Math.min(100, Math.max(18, prbCur - (weeksN - 1 - i) * prbStep + wob(i, 1))))
-  const usrCur = 120 + ((c.cellId * 53) % 900)
-  const usrStep = 1 + ((c.cellId * 11) % 13) / 10
-  const usr = Array.from({ length: weeksN }, (_, i) => Math.max(10, usrCur - (weeksN - 1 - i) * usrStep + wob(i, 2)))
-  const volCur = 8_000 + ((c.cellId * 97) % 60_000)
-  const volStep = 60 + ((c.cellId * 13) % 140)
-  const vol = Array.from({ length: weeksN }, (_, i) => Math.max(100, volCur - (weeksN - 1 - i) * volStep + wob(i, 3) * 40))
-  const thrCur = 14_000 + ((idx * idx * 977) % 12_000)
-  const thrStep = 60 + ((c.cellId * 17) % 120)
-  const thr = Array.from({ length: weeksN }, (_, i) => Math.max(1_000, thrCur - (weeksN - 1 - i) * thrStep + wob(i, 4) * 80))
-  const avCur = 99 + ((c.cellId * 7) % 10) / 10
-  const avStep = 0.02 + ((c.cellId * 5) % 10) / 100
-  const av = Array.from({ length: weeksN }, (_, i) => Math.min(100, Math.max(90, avCur - (weeksN - 1 - i) * avStep + wob(i, 5) * 0.08)))
-  return { prb, traffic: vol, users: usr, throughput: thr, availability: av }
-}
-
 function demoForecast(opts: ForecastOpts = {}): ForecastResult {
+  const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
   const scope: ForecastScope = opts.scope ?? 'network'
-  const metric: ForecastMetric = opts.metric ?? 'prb'
-  const horizon: ForecastHorizon = opts.horizon ?? '4w'
-  const weeksAhead = horizon === '1w' ? 1 : horizon === '2w' ? 2 : horizon === '4w' ? 4 : 6
-  const cells = demoNcLifecycle().cells
-  const prbThreshold = demoRules.prbThresholdPct
-  const threshold = metric === 'prb' ? prbThreshold : metric === 'availability' ? 99.5 : metric === 'throughput' ? 10_000 : null
+  const m = DEMO_FC_METRICS.find((x) => x.key === opts.metric) ?? DEMO_FC_METRICS[0]
+  const noun = PERIOD_NOUN[grain]
+  // complete periods end at asOf; one partial period follows (3 days in)
+  const n = grain === 'monthly' ? 5 : grain === 'daily' ? 56 : 12
+  const asOf = grain === 'monthly' ? '2026-06-01' : grain === 'daily' ? '2026-07-22' : '2026-07-13'
+  const dates = Array.from({ length: n }, (_, i) => addPeriods(asOf, i - (n - 1), grain))
+  const wave = (i: number, k: number): number => Math.sin(i * 1.7 + k) * 0.8 + Math.sin(i * 0.6 + k * 2) * 0.4
+  const valuesFor = (k: number): number[] =>
+    dates.map((_, i) => m.base + m.slope * i + (m.unit === '%' ? wave(i, k) * (m.key === 'prb_utilization' ? 2 : 0.08) : wave(i, k) * 6))
+  const domain: UnitDomain = m.unit === '%' ? 'percent' : 'nonNegative'
+  const maxH = Math.max(0, n - 3)
+  const horizons = FORECAST_HORIZONS[grain].map((h) => ({ horizon: h, available: h <= maxH, reason: h <= maxH ? null : `needs ≥ ${h + 3} complete ${noun.many}` }))
+  const requested = FORECAST_HORIZONS[grain].includes(Number(opts.horizon)) ? Number(opts.horizon) : DEFAULT_HORIZON[grain]
+  const horizon = horizons.find((h) => h.horizon === requested)?.available ? requested : Math.max(...horizons.filter((h) => h.available).map((h) => h.horizon))
 
-  const nameId = (names: string[]): Map<string, number> => {
-    const m = new Map<string, number>()
-    ;[...new Set(names)].sort().forEach((n, i) => m.set(n, i + 1))
-    return m
-  }
-  const regionId = nameId(cells.map((c) => c.region ?? '—'))
-  const districtId = nameId(cells.map((c) => c.district ?? '—'))
-  const siteId = nameId(cells.map((c) => c.site ?? c.cellName))
-  const regionOf = (id: number): string => [...regionId.entries()].find(([, v]) => v === id)?.[0] ?? ''
-  const districtOf = (id: number): string => [...districtId.entries()].find(([, v]) => v === id)?.[0] ?? ''
-  const siteOf = (id: number): string => [...siteId.entries()].find(([, v]) => v === id)?.[0] ?? ''
-
-  // scope → cell filter + entity name/path
-  let inScope = cells
-  let entityName = 'Network'
-  let entityPath = ['Network']
-  if (scope === 'region') {
-    const region = regionOf(opts.entityId ?? 0)
-    inScope = cells.filter((c) => (c.region ?? '—') === region)
-    entityName = region
-    entityPath = ['Network', region]
-  } else if (scope === 'district') {
-    const district = districtOf(opts.entityId ?? 0)
-    inScope = cells.filter((c) => (c.district ?? '—') === district)
-    entityName = district
-    entityPath = ['Network', inScope[0]?.region ?? '—', district]
-  } else if (scope === 'site') {
-    const site = siteOf(opts.entityId ?? 0)
-    inScope = cells.filter((c) => (c.site ?? c.cellName) === site)
-    entityName = site
-    entityPath = ['Network', inScope[0]?.region ?? '—', inScope[0]?.district ?? '—', site]
-  } else if (scope === 'cell') {
-    inScope = cells.filter((c) => c.cellId === opts.entityId)
-    entityName = inScope[0]?.cellName ?? ''
-    entityPath = ['Network', inScope[0]?.region ?? '—', inScope[0]?.district ?? '—', inScope[0]?.site ?? '—', entityName].filter((p) => p !== '—')
-  }
-
-  // 12 Mondays ending at the demo's latest week (2026-07-27)
-  const weekStarts = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(Date.UTC(2026, 4, 11 + i * 7))
-    return d.toISOString().slice(0, 10)
-  })
-  const asOf = weekStarts[weekStarts.length - 1]
-  const addWeeks = (ds: string, w: number): string => {
-    const d = new Date(ds + 'T00:00:00Z')
-    d.setUTCDate(d.getUTCDate() + w * 7)
-    return d.toISOString().slice(0, 10)
-  }
-  const history = new Map<number, Record<string, number[]>>()
-  for (const c of inScope) history.set(c.cellId, fcHistory(c, weekStarts.length))
-
-  const series: ForecastSeries[] = FC_METRICS.map((m) => {
-    const points: ForecastPoint[] = weekStarts.map((ws0, i) => {
-      const vals = inScope.map((c) => history.get(c.cellId)?.[m.metric]?.[i]).filter((v): v is number => v != null)
-      if (vals.length === 0) return { weekStart: ws0, label: formatTimeLabel(ws0, opts.grain ?? 'weekly'), value: null, kind: 'actual' as const, lower: null, upper: null }
-      const value = m.metric === 'users' || m.metric === 'traffic'
-        ? vals.reduce((a, b) => a + b, 0)
-        : vals.reduce((a, b) => a + b, 0) / vals.length
-      return { weekStart: ws0, label: formatTimeLabel(ws0, opts.grain ?? 'weekly'), value: Math.round(value * 100) / 100, kind: 'actual' as const, lower: null, upper: null }
+  const values = valuesFor(0)
+  const f = forecastSeries(values, dates, { grain, horizon, domain, periodNoun: noun.many })
+  const latest = values[values.length - 1]
+  const risk = classifyRisk({ latest, target: m.target, worseIsHigher: m.worseIsHigher, forecast: f, horizon, label: m.label, unit: m.unit })
+  const r2 = (v: number | null): number | null => (v == null ? null : Math.round(v * 100) / 100)
+  const partial = addPeriods(asOf, 1, grain)
+  const points: ForecastPoint[] = [
+    ...dates.map((d, i) => ({ weekStart: d, label: forecastPeriodLabel(d, grain), value: r2(values[i]), kind: 'actual' as const, lower: null, upper: null, complete: true, daysWithData: 7 })),
+    ...(grain === 'daily' ? [] : [{ weekStart: partial, label: periodLabel(forecastPeriodLabel(partial, grain), grain, partial, { complete: false, daysWithData: 3 }), value: r2(latest + m.slope * 0.4), kind: 'actual' as const, lower: null, upper: null, complete: false, daysWithData: 3 }]),
+    ...f.points.filter((p) => p.h <= horizon).map((p) => {
+      const d = addPeriods(asOf, p.h, grain)
+      return { weekStart: d, label: forecastPeriodLabel(d, grain), value: r2(p.value), kind: 'forecast' as const, lower: r2(p.lower), upper: r2(p.upper), complete: true, daysWithData: 0 }
     })
-    const fc = fcForecast(points.map((p) => p.value).filter((v): v is number => v != null), m.label, m.unit)
-    let last = weekStarts[weekStarts.length - 1]
-    for (let i = 1; i <= weeksAhead; i++) {
-      last = addWeeks(last, 1)
-      points.push({
-        weekStart: last,
-        label: formatTimeLabel(last, opts.grain ?? 'weekly'),
-        value: fc.next == null ? null : Math.round(fc.next * 100) / 100,
-        kind: 'forecast',
-        lower: fc.lower == null ? null : Math.round(fc.lower * 100) / 100,
-        upper: fc.upper == null ? null : Math.round(fc.upper * 100) / 100
-      })
-    }
+  ]
+  const summary = {
+    method: f.method, quality: f.quality, maeH1: r2(f.maeByH[0]), maeH: r2(f.maeByH[horizon - 1] ?? null),
+    mase: f.mase, betterThanNaivePct: f.method == null ? null : f.method === 'naive' ? 0 : Math.round((1 - (f.mase ?? 1)) * 100),
+    backtestOrigins: f.backtestOrigins, withheldReason: f.withheldReason, bandNote: f.bandNote, growthPct: risk.growthPct
+  }
+  const series: ForecastSeries = { metric: m.key, label: m.label, unit: m.unit, worseIsHigher: m.worseIsHigher, threshold: m.target, points, forecast: summary }
+
+  const riskCounts: Record<ForecastRisk, number> = { Stable: 0, Watch: 0, 'At Risk': 0, 'Likely Breach': 0, 'Already Breached': 0, Withheld: 0 }
+  const rcaCounts: Record<string, number> = { 'Capacity Exhaustion': 0, 'RF Overshoot & Interference': 0, 'Hardware & VSWR': 0, 'Parameter & Handover': 0, 'Traffic Surge': 0, 'Normal / Stable': 0, 'No hint': 0 }
+  const smallScope = scope === 'cell' || scope === 'site'
+  const riskTableNote = grain === 'daily' && !smallScope ? 'Per-cell daily risk is available for a site or cell — or switch to weekly' : null
+  const cells = demoNcLifecycle().cells.slice(0, smallScope ? 2 : 40)
+  const riskRows: ForecastRiskRow[] = riskTableNote ? [] : cells.map((c, k) => {
+    const v = valuesFor(k + 1).map((x) => x + (m.key === 'prb_utilization' ? (k % 9) * 1.4 - 4 : 0))
+    const cf = forecastSeries(v, dates, { grain, horizon, domain, periodNoun: noun.many })
+    const cr = classifyRisk({ latest: v[v.length - 1], target: m.target, worseIsHigher: m.worseIsHigher, forecast: cf, horizon, label: m.label, unit: m.unit })
+    const hint = cr.risk === 'Stable'
+      ? { category: 'Normal / Stable' as const, action: 'Continue standard performance monitoring.' }
+      : m.key === 'prb_utilization' && cr.risk != null
+        ? { category: 'Capacity Exhaustion' as const, action: 'Activate 64T64R Massive MIMO beamforming or deploy secondary LTE carrier expansion (+10MHz).' }
+        : null
+    if (cr.risk) riskCounts[cr.risk]++
+    rcaCounts[hint?.category ?? 'No hint']++
     return {
-      metric: m.metric,
-      label: m.label,
-      unit: m.unit,
-      worseIsHigher: m.worseIsHigher,
-      threshold: metric === 'prb' ? prbThreshold : metric === 'availability' ? 99.5 : metric === 'throughput' ? 10_000 : null,
-      points,
-      forecast: {
-        method: fc.method as ForecastMethod,
-        quality: fc.quality as ForecastQuality,
-        next: fc.next,
-        lower: fc.lower,
-        upper: fc.upper,
-        confidence: fc.confidence,
-        mae: fc.mae,
-        rmse: fc.rmse,
-        directionalAccuracy: fc.dir == null ? null : Math.round(fc.dir * 100),
-        explanation: fc.explanation
-      }
+      id: c.cellId, name: c.cellName, path: [c.region, c.district, c.site].filter((x): x is string => x != null),
+      current: r2(v[v.length - 1]), forecast: r2(cf.points.filter((p) => p.h <= horizon).pop()?.value ?? null),
+      threshold: m.target, risk: cr.risk, growthPct: cr.growthPct, explanation: cr.explanation,
+      withheld: cf.quality === 'Withheld', hint, hintNote: hint ? 'rule of thumb' : 'No hint — 4G Cell Availability not imported'
     }
   })
-
-  // risk rows: per cell for the selected metric, worst first
-  const mDef = FC_METRICS.find((m) => m.metric === metric)!
-  const riskRows: ForecastRiskRow[] = inScope.map((c) => {
-    const values = history.get(c.cellId)?.[metric] ?? []
-    const fc = fcForecast(values, mDef.label, mDef.unit)
-    const cls = fcRisk(threshold, mDef.worseIsHigher, values, fc.next, mDef.label)
-    const path = [c.region, c.district, c.site].filter((v): v is string => !!v && v !== '—')
-    return {
-      id: c.cellId,
-      name: c.cellName,
-      path,
-      current: values.length > 0 ? Math.round(values[values.length - 1] * 100) / 100 : null,
-      forecast: fc.next == null ? null : Math.round(fc.next * 100) / 100,
-      threshold,
-      risk: cls.risk,
-      explanation: cls.explanation,
-      cells: 1,
-      ncCells: c.isNc ? 1 : 0
-    }
-  })
-  const RISK_RANK: Record<ForecastRisk, number> = { 'Already Breached': 0, 'Likely Breach': 1, 'At Risk': 2, Watch: 3, Stable: 4 }
-  riskRows.sort((a, b) => RISK_RANK[a.risk] - RISK_RANK[b.risk] || (b.current ?? -Infinity) - (a.current ?? -Infinity))
-  const riskCounts: Record<ForecastRisk, number> = { Stable: 0, Watch: 0, 'At Risk': 0, 'Likely Breach': 0, 'Already Breached': 0 }
-  for (const row of riskRows) riskCounts[row.risk]++
-
-  const selSeries = series.find((s) => s.metric === metric)!
-  const selHistory = selSeries.points.filter((p) => p.kind === 'actual').map((p) => p.value).filter((v): v is number => v != null)
-  const entityRisk = fcRisk(threshold, mDef.worseIsHigher, selHistory, selSeries.forecast.next, mDef.label)
-
   return {
-    asOf,
-    horizon,
-    metric,
-    entity: { scope, id: opts.entityId ?? null, name: entityName, path: entityPath.filter((p) => p !== '—') },
-    series,
-    risk: entityRisk.risk,
-    riskExplanation: entityRisk.explanation,
-    riskCounts,
-    riskRows: riskRows.slice(0, 60),
-    totalEntities: inScope.length
+    asOf, grain, horizon, metric: m.key, technology: '4G',
+    entity: { scope, id: opts.entityId ?? null, name: scope === 'network' ? 'Network' : `Demo ${scope}`, path: scope === 'network' ? ['Network'] : ['Demo region', `Demo ${scope}`] },
+    metrics: DEMO_FC_METRICS.map(({ key, label, unit, hasTarget, stored }) => ({ key, label, unit, hasTarget, stored })),
+    notImported: [{ key: 'data_service_failure_4g', label: '4G Data Service Access Failure Rate' }],
+    series, overTarget: null, horizons,
+    risk: risk.risk, riskExplanation: risk.explanation, riskCounts, rcaCounts,
+    riskRows, totalEntities: riskRows.length, riskTableNote,
+    status: { running: false, done: 0, total: 0, asOf: { weekly: '2026-07-13', monthly: '2026-06-01' } }
   }
 }
 

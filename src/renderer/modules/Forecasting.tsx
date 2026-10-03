@@ -3,8 +3,9 @@ import type { EChartsOption } from 'echarts'
 import { useAppStore } from '../store'
 import type {
   EntityOption, ForecastHorizon, ForecastMetric, ForecastResult, ForecastRisk,
-  ForecastScope, Technology
+  ForecastScope, ForecastSeries, Technology
 } from '../../../shared/api'
+import { DEFAULT_HORIZON, PERIOD_NOUN } from '../../../shared/forecast'
 import Chart from '../lib/Chart'
 import { forecastChartOption, rcaSunburstChartOption, fmtFc } from '../lib/forecastCharts'
 
@@ -18,15 +19,14 @@ const SCOPES: Array<{ id: ForecastScope; label: string }> = [
   { id: 'cell', label: 'Cell' }
 ]
 
-const HORIZONS: Array<{ id: ForecastHorizon; label: string }> = [
-  { id: '1w', label: '1 Week' },
-  { id: '2w', label: '2 Weeks' },
-  { id: '4w', label: '4 Weeks' },
-  { id: '6w', label: '6 Weeks' }
-]
+const riskTone = (r: ForecastRisk | null): string =>
+  r === 'Already Breached' ? 'bad' : r === 'Likely Breach' ? 'bad' : r === 'At Risk' ? 'warn' : r === 'Watch' ? 'warn' : r === 'Withheld' || r == null ? 'dim' : 'ok'
 
-const riskTone = (r: ForecastRisk): string =>
-  r === 'Already Breached' ? 'bad' : r === 'Likely Breach' ? 'bad' : r === 'At Risk' ? 'warn' : r === 'Watch' ? 'warn' : 'ok'
+/** The forecast value at the selected horizon (the last forecast point). */
+const horizonValue = (s: ForecastSeries | null): number | null => {
+  const pts = s?.points.filter((p) => p.kind === 'forecast') ?? []
+  return pts.length > 0 ? pts[pts.length - 1].value : null
+}
 
 function rcaClass(cat?: string): string {
   if (!cat) return 'rca-normal'
@@ -75,10 +75,9 @@ export default function Forecasting(): React.JSX.Element {
   const [entity, setEntity] = useState<EntityOption | null>(null)
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<EntityOption[]>([])
-  const [metric, setMetric] = useState<ForecastMetric>(
-    (selectedTech || '4G') === '2G' ? 'tch_cong' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
-  )
-  const [horizon, setHorizon] = useState<ForecastHorizon>('4w')
+  // '' lets the service pick the default KPI (one with a target, NC KPIs first)
+  const [metric, setMetric] = useState<ForecastMetric>('')
+  const [horizon, setHorizon] = useState<ForecastHorizon>(DEFAULT_HORIZON[grain])
   const [result, setResult] = useState<ForecastResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -92,12 +91,13 @@ export default function Forecasting(): React.JSX.Element {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reqSeq = useRef(0)
 
-  // Update default metric when tech changes
+  // KPI keys differ per technology; horizons differ per grain
   useEffect(() => {
-    if (tech === '2G') setMetric('tch_cong')
-    else if (tech === '3G') setMetric('cssr_3g')
-    else setMetric('prb')
+    setMetric('')
   }, [tech])
+  useEffect(() => {
+    setHorizon(DEFAULT_HORIZON[grain])
+  }, [grain])
 
   // Sync selected technology
   useEffect(() => {
@@ -119,10 +119,9 @@ export default function Forecasting(): React.JSX.Element {
       const r = await window.api.analytics.forecast({
         scope,
         entityId: scope === 'network' ? null : entity?.id ?? null,
-        metric,
+        metric: metric || undefined,
         horizon,
         grain,
-        period,
         technology: tech
       })
       if (currentReq === reqSeq.current) {
@@ -138,7 +137,7 @@ export default function Forecasting(): React.JSX.Element {
         setLoading(false)
       }
     }
-  }, [scope, entity, metric, horizon, grain, period, tech])
+  }, [scope, entity, metric, horizon, grain, tech])
 
   useEffect(() => {
     void load()
@@ -200,10 +199,7 @@ export default function Forecasting(): React.JSX.Element {
     setPickerOpen(false)
   }
 
-  const selSeries = useMemo(
-    () => result?.series.find((s) => s.metric === metric) ?? result?.series[0] ?? null,
-    [result, metric]
-  )
+  const selSeries = result?.series ?? null
 
   const lineChartOption: EChartsOption | null = useMemo(
     () => (selSeries ? forecastChartOption(selSeries) : null),
@@ -213,7 +209,7 @@ export default function Forecasting(): React.JSX.Element {
   const sunburstOption: EChartsOption | null = useMemo(() => {
     if (!result) return null
     return rcaSunburstChartOption(
-      result.riskCounts ?? { Stable: 0, Watch: 0, 'At Risk': 0, 'Likely Breach': 0, 'Already Breached': 0 },
+      result.riskCounts,
       result.rcaCounts ?? {},
       selectedFilter
     )
@@ -239,7 +235,7 @@ export default function Forecasting(): React.JSX.Element {
   const riskRows = useMemo(() => {
     let rows = result?.riskRows ?? []
     if (selectedFilter) {
-      rows = rows.filter((r) => r.risk === selectedFilter || r.rcaCategory === selectedFilter)
+      rows = rows.filter((r) => r.risk === selectedFilter || r.hint?.category === selectedFilter)
     }
     if (tableSearch.trim()) {
       const q = tableSearch.trim().toLowerCase()
@@ -254,11 +250,11 @@ export default function Forecasting(): React.JSX.Element {
       <div className="module-head">
         <div>
           <h2>Predictive Early-Warning &amp; RCA Forecasting</h2>
-          <span className="module-workspace">Multi-Technology Holt-Winters &amp; Root Cause Analytics</span>
+          <span className="module-workspace">Backtested forecasts of imported KPIs</span>
         </div>
         {result && (
           <span className="module-workspace" style={{ color: 'var(--accent)' }}>
-            {tech} · {result.entity.path.join(' › ')} · as of {result.asOf}
+            {tech} · {result.entity.path.join(' › ')} · as of {result.asOf ?? 'no complete ' + PERIOD_NOUN[grain].one}
           </span>
         )}
       </div>
@@ -366,20 +362,22 @@ export default function Forecasting(): React.JSX.Element {
 
         {/* Horizon Switcher */}
         <div className="seg">
-          {HORIZONS.map((h) => (
+          {(result?.horizons ?? []).map((h) => (
             <button
-              key={h.id}
-              className={`seg-btn${horizon === h.id ? ' active' : ''}`}
-              onClick={() => setHorizon(h.id)}
+              key={h.horizon}
+              className={`seg-btn${(result?.horizon ?? horizon) === h.horizon ? ' active' : ''}`}
+              disabled={!h.available}
+              title={h.reason ?? undefined}
+              onClick={() => setHorizon(h.horizon)}
             >
-              {h.label}
+              {h.horizon} {h.horizon === 1 ? PERIOD_NOUN[grain].one : PERIOD_NOUN[grain].many}
             </button>
           ))}
         </div>
       </div>
 
       {error && <div className="status-error">{error}</div>}
-      {loading && <div className="status-dim">Generating predictive models &amp; Holt-Winters trajectories…</div>}
+      {loading && <div className="status-dim">Forecasting…</div>}
 
       {!loading && scope !== 'network' && !entity && (
         <div className="notice notice-dim fc-pick-hint">
@@ -398,23 +396,22 @@ export default function Forecasting(): React.JSX.Element {
                   <div className="fc-card-title">
                     <span>📈 {selSeries?.label ?? 'Core Metric'} — Actual vs. Forecast</span>
                   </div>
-                  {selSeries?.forecast.next != null && (
+                  {selSeries && (
                     <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
-                      Horizon Horizon: <b>{fmtFc(selSeries.forecast.next, selSeries.unit)}</b>
-                      {selSeries.forecast.confidence != null && (
-                        <span> · Model Confidence: <b style={{ color: 'var(--accent)' }}>{selSeries.forecast.confidence}%</b></span>
-                      )}
+                      {selSeries.forecast.quality === 'Withheld'
+                        ? selSeries.forecast.withheldReason
+                        : <>At horizon: <b>{fmtFc(horizonValue(selSeries), selSeries.unit)}</b> · {selSeries.forecast.method} · {selSeries.forecast.quality}</>}
                     </div>
                   )}
                 </div>
 
                 {/* Metric Quick Tabs */}
                 <div className="fc-tabs" style={{ flexWrap: 'wrap' }}>
-                  {result.series.map((s) => (
+                  {result.metrics.map((s) => (
                     <button
-                      key={s.metric}
-                      className={`fc-tab-btn${metric === s.metric ? ' active' : ''}`}
-                      onClick={() => setMetric(s.metric)}
+                      key={s.key}
+                      className={`fc-tab-btn${result.metric === s.key ? ' active' : ''}`}
+                      onClick={() => setMetric(s.key)}
                       title={s.label}
                     >
                       {s.label.replace(/^(4G|3G|2G)\s*/, '')}
@@ -443,47 +440,6 @@ export default function Forecasting(): React.JSX.Element {
                 <Chart option={sunburstOption} height={290} onEvents={chartEvents} />
               </div>
             </div>
-          </div>
-
-          {/* Core KPI Prediction Cards */}
-          <div className="fc-kpi-grid">
-            {result.series.map((s) => {
-              const fc = s.forecast
-              const actualPts = s.points.filter((p) => p.kind === 'actual' && p.value != null)
-              const latestActual = actualPts.length > 0 ? actualPts[actualPts.length - 1].value : null
-              const delta = latestActual != null && fc.next != null ? fc.next - latestActual : 0
-              const deltaPct = latestActual != null && latestActual !== 0 ? (delta / latestActual) * 100 : 0
-              const isInc = delta > 0.05
-              const isDec = delta < -0.05
-
-              return (
-                <div
-                  key={s.metric}
-                  className={`fc-kpi-card${metric === s.metric ? ' active' : ''}`}
-                  onClick={() => setMetric(s.metric)}
-                >
-                  <div className="fc-kpi-label">{s.label}</div>
-                  <div className="fc-kpi-val-row">
-                    <span className="fc-kpi-val">{fmtFc(fc.next, s.unit)}</span>
-                    <span className={`fc-kpi-delta ${isInc ? (s.worseIsHigher ? 'fc-delta-inc' : 'fc-delta-dec') : isDec ? (s.worseIsHigher ? 'fc-delta-dec' : 'fc-delta-inc') : 'fc-delta-flat'}`}>
-                      {delta >= 0 ? '+' : ''}{delta.toFixed(1)} ({deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(0)}%)
-                    </span>
-                  </div>
-                  <div className="fc-kpi-sub">
-                    {fc.quality === 'suppressed'
-                      ? 'Suppressed'
-                      : fc.method === 'sarma'
-                      ? 'SARMA Best-Fit'
-                      : fc.method === 'triple-exponential-smoothing' || fc.method === 'seasonal-holt-winters'
-                      ? 'Triple Exp Smoothing'
-                      : fc.method === 'simple-moving-average' || fc.method === 'moving-average'
-                      ? 'Simple Moving Avg'
-                      : 'Linear Regression'}
-                    {fc.confidence != null && ` · ${fc.confidence}% conf`}
-                  </div>
-                </div>
-              )
-            })}
           </div>
 
           {/* At-Risk Entities & Root Cause Diagnostics Table */}
@@ -552,7 +508,7 @@ export default function Forecasting(): React.JSX.Element {
                               <div className="fc-action-title">
                                 <span>🛠️ Field Engineering Remediation Blueprint:</span>
                               </div>
-                              <div>{r.recommendedAction ?? 'Conduct parameter optimization and physical tilt adjustment.'}</div>
+                              <div>{r.hint?.action ?? r.hintNote}</div>
                               <div style={{ marginTop: '4px', color: 'var(--text-dim)' }}>
                                 <i>Diagnostic summary: {r.explanation}</i>
                               </div>
@@ -564,11 +520,15 @@ export default function Forecasting(): React.JSX.Element {
                           {fmtFc(r.forecast, selSeries?.unit ?? '')}
                         </td>
                         <td className="num">{r.threshold == null ? '—' : fmtFc(r.threshold, selSeries?.unit ?? '')}</td>
-                        <td><Chip text={r.risk} tone={riskTone(r.risk)} /></td>
+                        <td><Chip text={r.risk ?? '—'} tone={riskTone(r.risk)} /></td>
                         <td>
-                          <span className={`rca-badge ${rcaClass(r.rcaCategory)}`}>
-                            {rcaIcon(r.rcaCategory)} {r.rcaCategory ?? 'Normal / Stable'}
-                          </span>
+                          {r.hint ? (
+                            <span className={`rca-badge ${rcaClass(r.hint.category)}`}>
+                              {rcaIcon(r.hint.category)} {r.hint.category}
+                            </span>
+                          ) : (
+                            <span className="fc-path">{r.hintNote}</span>
+                          )}
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <button

@@ -1163,38 +1163,13 @@ export interface EntityOption {
 
 // --- forecasting & early warning (§45–46) ----------------------------------
 
-export type ForecastMetric =
-  | 'prb'
-  | 'traffic'
-  | 'users'
-  | 'throughput'
-  | 'availability'
-  | 'cssr_4g'
-  | 'call_drop_4g'
-  | 'data_failure_4g'
-  | 'cssr_3g'
-  | 'call_drop_3g'
-  | 'data_access_3g'
-  | 'traffic_util_3g'
-  | 'throughput_3g'
-  | 'tch_cong'
-  | 'sdcch_cong'
-  | 'cssr_2g'
-  | 'call_drop_2g'
-
-export type ForecastRisk = 'Stable' | 'Watch' | 'At Risk' | 'Likely Breach' | 'Already Breached'
-export type ForecastMethod =
-  | 'sarma'
-  | 'triple-exponential-smoothing'
-  | 'simple-moving-average'
-  | 'linear-regression'
-  | 'moving-average'
-  | 'linear-trend'
-  | 'seasonal-holt-winters'
-  | 'suppressed'
-
-export type ForecastHorizon = '1w' | '2w' | '4w' | '6w'
-export type ForecastQuality = 'high' | 'medium' | 'low' | 'suppressed'
+/** A KPI key from kpi_defs (honest-forecasting spec §4.1). */
+export type ForecastMetric = string
+/** Periods of the selected grain (spec §4.3; see FORECAST_HORIZONS in shared/forecast.ts). */
+export type ForecastHorizon = number
+export type ForecastRisk = 'Stable' | 'Watch' | 'At Risk' | 'Likely Breach' | 'Already Breached' | 'Withheld'
+export type ForecastMethod = 'naive' | 'drift' | 'seasonal-naive' | 'damped-holt' | 'holt-winters'
+export type ForecastQuality = 'Good' | 'Fair' | 'Naive only' | 'Withheld'
 export type ForecastScope = 'network' | 'region' | 'district' | 'site' | 'cell'
 
 export type ForecastRcaCategory =
@@ -1212,19 +1187,24 @@ export interface ForecastPoint {
   kind: 'actual' | 'forecast'
   lower: number | null
   upper: number | null
+  complete: boolean
+  daysWithData: number
 }
 
 export interface ForecastSummary {
-  method: ForecastMethod
+  method: ForecastMethod | null
   quality: ForecastQuality
-  next: number | null
-  lower: number | null
-  upper: number | null
-  confidence: number | null
-  mae: number | null
-  rmse: number | null
-  directionalAccuracy: number | null
-  explanation: string
+  /** backtest MAE at h = 1 and at the selected horizon, in the KPI's unit */
+  maeH1: number | null
+  maeH: number | null
+  mase: number | null
+  /** (1 − MASE) × 100; 0 when naive is used */
+  betterThanNaivePct: number | null
+  backtestOrigins: number
+  withheldReason: string | null
+  bandNote: string | null
+  /** growth over the horizon in %, for KPIs without a target */
+  growthPct: number | null
 }
 
 export interface ForecastSeries {
@@ -1244,27 +1224,45 @@ export interface ForecastRiskRow {
   current: number | null
   forecast: number | null
   threshold: number | null
-  risk: ForecastRisk
+  /** null for a KPI without a target (growthPct instead) */
+  risk: ForecastRisk | null
+  growthPct: number | null
   explanation: string
-  cells: number
-  ncCells: number
-  rcaCategory?: ForecastRcaCategory
-  recommendedAction?: string
+  withheld: boolean
+  hint: { category: ForecastRcaCategory; action: string } | null
+  hintNote: string
+}
+
+export interface ForecastMetricOption {
+  key: string
+  label: string
+  unit: string
+  hasTarget: boolean
+  stored: boolean
 }
 
 export interface ForecastResult {
-  asOf: string
+  /** latest complete period of the grain; null when none is complete */
+  asOf: string | null
+  grain: Grain
   horizon: ForecastHorizon
   metric: ForecastMetric
-  technology?: Technology
+  technology: Technology
   entity: { scope: ForecastScope; id: number | null; name: string; path: string[] }
-  series: ForecastSeries[]
-  risk: ForecastRisk
+  metrics: ForecastMetricOption[]
+  notImported: Array<{ key: string; label: string }>
+  /** null only when no KPI has imported values in scope */
+  series: ForecastSeries | null
+  overTarget: ForecastSeries | null
+  horizons: Array<{ horizon: number; available: boolean; reason: string | null }>
+  risk: ForecastRisk | null
   riskExplanation: string
   riskCounts: Record<ForecastRisk, number>
-  rcaCounts?: Record<string, number>
+  rcaCounts: Record<string, number>
   riskRows: ForecastRiskRow[]
   totalEntities: number
+  riskTableNote: string | null
+  status: ForecastStatus
 }
 
 /** Background recompute of stored per-cell forecasts (honest-forecasting spec §6.1). */
@@ -1281,7 +1279,6 @@ export interface ForecastOpts {
   metric?: ForecastMetric
   horizon?: ForecastHorizon
   grain?: Grain
-  period?: PeriodId
   technology?: Technology
 }
 

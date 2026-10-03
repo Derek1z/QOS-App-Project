@@ -4,10 +4,11 @@ import * as appState from './services/appState'
 import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
-  getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
+  getPriorityCenter, getRulesCurrent, updateRulesCurrent,
   getRegionMap, getRegionDistricts, getKpiOverview, getExecutiveOverview
 } from './services/queryService'
 import { generateSyntheticMultiTechData } from './services/syntheticGenerator'
+import { getForecast } from './services/forecastService'
 import {
   searchEntities, getInvestigation, setInvestigationStatus, addInvestigationNote,
   exportInvestigationReport

@@ -8,7 +8,7 @@ import * as ws from './workspace/manager'
 import {
   getSummary, getNcLifecycle, getNcMovement, getPriorityQueue, getHealth, getHealthMatrix,
   getCellIntelligence, getCellDetail, getPerformance, getComparison, getExplorer,
-  getPriorityCenter, getForecast, getRulesCurrent, updateRulesCurrent,
+  getPriorityCenter, getRulesCurrent, updateRulesCurrent,
   getRegionMap, getRegionDistricts, getKpiOverview, getExecutiveOverview
 } from './services/queryService'
 import { generateSyntheticMultiTechData } from './services/syntheticGenerator'
@@ -45,6 +45,9 @@ import { recomputeAllAggregates } from './import/aggregates'
 import { refreshAllIntelligence } from './analytics/engine'
 import { planForecastJob, runForecastJob } from './forecast/job'
 import { createUtilityRunner } from './forecast/utilityRunner'
+import { inProcessRunner } from './forecast/runner'
+import { cancelForecastRefresh } from './forecast/scheduler'
+import { getForecast } from './services/forecastService'
 import { overrideDataDirs, dirs } from './paths'
 
 export async function runSmokeTest(dir: string): Promise<void> {
@@ -640,57 +643,41 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (pcDist.total < 2) throw new Error('priority center district scope ' + pcDist.total)
   console.log('[SMOKE] 23. Priority center verified.')
 
-  // 24. forecasting & early warning: simple-first methods, risk states
+  // 24. forecasting (honest-forecasting spec): real KPI series; the smoke data
+  // has fewer than 4 complete weeks, so every forecast is withheld with a reason.
+  // The background job is replaced by an in-process run so the step is deterministic.
   console.log('[SMOKE] 24. Testing forecasting & early warning...')
-  const fc = await getForecast({})
-  console.log('[SMOKE] 24. Forecast network entity:', fc.entity.name, 'series:', fc.series.length)
+  await cancelForecastRefresh()
+  const fcConn = ws.getCurrent()!.connection
+  await runForecastJob(fcConn, await planForecastJob(fcConn), inProcessRunner)
+  const fc = await getForecast({ metric: 'prb_utilization' })
   if (fc.entity.scope !== 'network' || fc.entity.name !== 'Network') {
     throw new Error('forecast network entity ' + JSON.stringify(fc.entity))
   }
-  if (fc.series.length < 5) throw new Error('forecast series ' + fc.series.length)
-  const fcPrb = fc.series.find((s) => s.metric === 'prb')!
-  if (fcPrb.threshold !== 90) throw new Error('forecast prb threshold ' + fcPrb.threshold + ' (ruleset v2)')
-  const fcActuals = fcPrb.points.filter((p) => p.kind === 'actual')
-  const fcFc = fcPrb.points.filter((p) => p.kind === 'forecast')
-  if (fcActuals.length !== 2 || fcFc.length !== 4) {
-    throw new Error('forecast points actual/forecast ' + fcActuals.length + '/' + fcFc.length)
+  if (!fc.series || fc.metric !== 'prb_utilization') throw new Error('forecast metric ' + fc.metric)
+  if (fc.series.threshold !== 90) throw new Error('forecast prb threshold ' + fc.series.threshold + ' (set to 90 earlier)')
+  if (fc.series.forecast.quality !== 'Withheld' || !/^needs ≥ 4 complete weeks, has [0-3]$/.test(fc.series.forecast.withheldReason ?? '')) {
+    throw new Error('forecast should be withheld on the smoke history: ' + fc.series.forecast.quality + ' ' + fc.series.forecast.withheldReason)
   }
-  if (fcPrb.forecast.next == null || fcPrb.forecast.quality === 'suppressed') {
-    throw new Error('network prb forecast should run on 2 weeks: ' + fcPrb.forecast.quality)
-  }
-  if (fcPrb.forecast.lower == null || fcPrb.forecast.upper == null || fcPrb.forecast.lower >= fcPrb.forecast.upper) {
-    throw new Error('forecast band invalid: ' + fcPrb.forecast.lower + '..' + fcPrb.forecast.upper)
-  }
+  if (fc.series.points.some((p) => p.kind === 'forecast')) throw new Error('withheld forecast drew forecast points')
   const riskSum = Object.values(fc.riskCounts).reduce((a, b) => a + b, 0)
   if (riskSum !== fc.totalEntities) throw new Error('forecast risk counts sum ' + riskSum + ' != ' + fc.totalEntities)
-  if (fc.riskRows.length !== 4) throw new Error('forecast risk rows ' + fc.riskRows.length + ' (4 cells have weekly history)')
-  if (!fc.riskRows.every((r) => r.risk && r.explanation.length > 10)) throw new Error('forecast risk row missing fields')
-  console.log('[SMOKE] 24. Checking suppressed forecast cell 2002...')
-  // suppressed: KUM-002-A has a single week of history
-  const fcCell = await getForecast({ scope: 'cell', entityId: 2002 })
-  const fcCellPrb = fcCell.series.find((s) => s.metric === 'prb')!
-  if (fcCellPrb.forecast.quality !== 'suppressed' || fcCellPrb.forecast.next !== null) {
-    throw new Error('KUM-002-A single-week forecast should be suppressed: ' + fcCellPrb.forecast.quality)
-  }
+  if (fc.series.points.filter((p) => p.kind === 'actual').length === 0) throw new Error('forecast has no actual points')
+  console.log('[SMOKE] 24. Checking withheld forecast cell 2002...')
+  const fcCell = await getForecast({ scope: 'cell', entityId: 2002, metric: 'prb_utilization' })
+  if (fcCell.series?.forecast.quality !== 'Withheld') throw new Error('KUM-002-A forecast should be withheld')
   console.log('[SMOKE] 24. Checking site scope forecast...')
-  // site scope rolls two cells up; forecast still runs
-  const fcSite = await getForecast({ scope: 'site', entityId: 1 })
+  const fcSite = await getForecast({ scope: 'site', entityId: 1, metric: 'prb_utilization' })
   if (fcSite.entity.name !== 'ACC-001') throw new Error('forecast site entity ' + fcSite.entity.name)
-  if (fcSite.totalEntities !== 2) throw new Error('forecast site cells ' + fcSite.totalEntities)
-  const fcThr = await getForecast({ metric: 'throughput' })
-  const thrSeries = fcThr.series.find((s) => s.metric === 'throughput')!
-  // the series is in Mbps, so the target must be too (it was 10_000, a kbps figure)
-  if (thrSeries.unit !== 'Mbps' || thrSeries.threshold !== 10) {
-    throw new Error('forecast throughput threshold: ' + thrSeries.threshold + ' ' + thrSeries.unit)
+  // the smoke data has no complete week: no per-cell risk, said in words
+  if (fcSite.totalEntities !== 0 || !/^No complete week yet/.test(fcSite.riskTableNote ?? '')) {
+    throw new Error('forecast site cells ' + fcSite.totalEntities + ' note ' + fcSite.riskTableNote)
   }
-  const fcDaily = await getForecast({ grain: 'daily' })
-  if (fcDaily.series.length < 5) throw new Error('forecast daily series count')
-  const fcDailyPrb = fcDaily.series.find((s) => s.metric === 'prb')!
-  const fcDailyPoints = fcDailyPrb.points.filter((p) => p.kind === 'forecast')
-  if (fcDailyPoints.length === 0) throw new Error('forecast daily points empty')
-  const fcMonthly = await getForecast({ grain: 'monthly' })
-  if (fcMonthly.series.length < 5) throw new Error('forecast monthly series count')
-  console.log('[SMOKE] 24. Forecasting (weekly, daily organic, monthly) verified.')
+  for (const g of ['daily', 'monthly'] as const) {
+    const r = await getForecast({ grain: g, metric: 'prb_utilization' })
+    if (!r.series || r.grain !== g) throw new Error('forecast ' + g + ' series missing')
+  }
+  console.log('[SMOKE] 24. Forecasting (withheld weekly, daily, monthly) verified.')
 
   // 25. reporting center: report packs, snapshot, templates, history
   console.log('[SMOKE] 25. Testing reporting center...')

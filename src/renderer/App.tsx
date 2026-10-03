@@ -21,6 +21,7 @@ import InvestigationWorkspace from './modules/InvestigationWorkspace'
 import PriorityCenter from './modules/PriorityCenter'
 import ReportingCenter from './modules/ReportingCenter'
 import KpiDefinitions from './modules/KpiDefinitions'
+import Forecasting from './modules/Forecasting'
 import CellCompareModal from './components/CellCompareModal'
 
 export default function App(): React.JSX.Element {
@@ -77,6 +78,8 @@ export default function App(): React.JSX.Element {
           <ReportingCenter />
         ) : module === 'kpi-definitions' ? (
           <KpiDefinitions />
+        ) : module === 'forecasting' ? (
+          <Forecasting />
         ) : (
           <ModulePlaceholder />
         )}

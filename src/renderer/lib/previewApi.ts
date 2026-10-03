@@ -1,5 +1,5 @@
 import { forecastSeries, type UnitDomain } from '../../main/analytics/forecasting/engine'
-import { classifyRisk } from '../../main/analytics/forecasting/risk'
+import { classifyRisk, RISK_RANK } from '../../main/analytics/forecasting/risk'
 import { FORECAST_HORIZONS, DEFAULT_HORIZON, PERIOD_NOUN, addPeriods, forecastPeriodLabel } from '../../../shared/forecast'
 import type {
   Api, WorkspaceInfo, FileAnalysis, MappingConfig, PreviewResult, ImportResult, ImportAuditRow,
@@ -1664,9 +1664,11 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
     const v = valuesFor(k + 1).map((x) => x + (m.key === 'prb_utilization' ? (k % 9) * 1.4 - 4 : 0))
     const cf = forecastSeries(v, dates, { grain, horizon, domain, periodNoun: noun.many })
     const cr = classifyRisk({ latest: v[v.length - 1], target: m.target, worseIsHigher: m.worseIsHigher, forecast: cf, horizon, label: m.label, unit: m.unit })
+    // same rules as src/main/forecast/rca.ts for what the demo has: PRB past target → capacity
+    const pastTarget = m.target != null && (m.worseIsHigher ? v[v.length - 1] > m.target : v[v.length - 1] < m.target)
     const hint = cr.risk === 'Stable'
       ? { category: 'Normal / Stable' as const, action: 'Continue standard performance monitoring.' }
-      : m.key === 'prb_utilization' && cr.risk != null
+      : m.key === 'prb_utilization' && pastTarget
         ? { category: 'Capacity Exhaustion' as const, action: 'Activate 64T64R Massive MIMO beamforming or deploy secondary LTE carrier expansion (+10MHz).' }
         : null
     if (cr.risk) riskCounts[cr.risk]++
@@ -1677,7 +1679,7 @@ function demoForecast(opts: ForecastOpts = {}): ForecastResult {
       threshold: m.target, risk: cr.risk, growthPct: cr.growthPct, explanation: cr.explanation,
       withheld: cf.quality === 'Withheld', hint, hintNote: hint ? 'rule of thumb' : 'No hint — 4G Cell Availability not imported'
     }
-  })
+  }).sort((a, b) => (a.risk ? RISK_RANK[a.risk] : 9) - (b.risk ? RISK_RANK[b.risk] : 9) || (b.current ?? -Infinity) - (a.current ?? -Infinity))
   return {
     asOf, grain, horizon, metric: m.key, technology: '4G',
     entity: { scope, id: opts.entityId ?? null, name: scope === 'network' ? 'Network' : `Demo ${scope}`, path: scope === 'network' ? ['Network'] : ['Demo region', `Demo ${scope}`] },

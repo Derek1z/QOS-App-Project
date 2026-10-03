@@ -3,8 +3,9 @@ import type { EChartsOption } from 'echarts'
 import { useAppStore } from '../store'
 import type {
   EntityOption, ForecastHorizon, ForecastMetric, ForecastResult, ForecastRisk,
-  ForecastScope, ForecastSeries, Technology
+  ForecastScope, ForecastSeries, ForecastStatus, Technology
 } from '../../../shared/api'
+import { modelLine, updatingLine } from '../lib/forecastText'
 import { DEFAULT_HORIZON, PERIOD_NOUN } from '../../../shared/forecast'
 import Chart from '../lib/Chart'
 import { forecastChartOption, rcaSunburstChartOption, fmtFc } from '../lib/forecastCharts'
@@ -21,6 +22,8 @@ const SCOPES: Array<{ id: ForecastScope; label: string }> = [
 
 const riskTone = (r: ForecastRisk | null): string =>
   r === 'Already Breached' ? 'bad' : r === 'Likely Breach' ? 'bad' : r === 'At Risk' ? 'warn' : r === 'Watch' ? 'warn' : r === 'Withheld' || r == null ? 'dim' : 'ok'
+
+const dmy = (iso: string | null | undefined): string => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—')
 
 /** The forecast value at the selected horizon (the last forecast point). */
 const horizonValue = (s: ForecastSeries | null): number | null => {
@@ -65,7 +68,6 @@ async function searchOptions(scope: ForecastScope, q: string): Promise<EntityOpt
 export default function Forecasting(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const grain = useAppStore((s) => s.grain)
-  const period = useAppStore((s) => s.period)
 
   const selectedTech = useAppStore((s) => s.selectedTech)
   const setSelectedTech = useAppStore((s) => s.setSelectedTech)
@@ -86,6 +88,23 @@ export default function Forecasting(): React.JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [expandedRowId, setExpandedRowId] = useState<number | null>(null)
   const [tableSearch, setTableSearch] = useState('')
+  const [status, setStatus] = useState<ForecastStatus | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  // background recompute of stored forecasts (spec §6.1): progress banner
+  useEffect(() => {
+    let alive = true
+    void window.api.analytics.forecastStatus().then((s) => alive && setStatus(s)).catch(() => undefined)
+    const off = window.api.analytics.onForecastProgress((s) => {
+      setStatus(s)
+      // a finished recompute: reload so the risk table reads the new forecasts
+      if (!s.running) setRefreshTick((t) => t + 1)
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [workspace?.path])
 
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -141,7 +160,7 @@ export default function Forecasting(): React.JSX.Element {
 
   useEffect(() => {
     void load()
-  }, [load, workspace?.path])
+  }, [load, workspace?.path, refreshTick])
 
   const changeScope = async (newScope: ForecastScope) => {
     setScope(newScope)
@@ -254,7 +273,7 @@ export default function Forecasting(): React.JSX.Element {
         </div>
         {result && (
           <span className="module-workspace" style={{ color: 'var(--accent)' }}>
-            {tech} · {result.entity.path.join(' › ')} · as of {result.asOf ?? 'no complete ' + PERIOD_NOUN[grain].one}
+            {tech} · {result.entity.path.join(' › ')} · as of {result.asOf ? dmy(result.asOf) : 'no complete ' + PERIOD_NOUN[grain].one}
           </span>
         )}
       </div>
@@ -376,6 +395,17 @@ export default function Forecasting(): React.JSX.Element {
         </div>
       </div>
 
+      {status && updatingLine(status) && (
+        <div className="notice notice-dim">
+          {updatingLine(status)}
+          {status.asOf[grain === 'monthly' ? 'monthly' : 'weekly'] && ` · showing forecasts as of ${dmy(status.asOf[grain === 'monthly' ? 'monthly' : 'weekly'])}`}
+        </div>
+      )}
+      {result && result.horizons.some((h) => !h.available) && (
+        <div className="status-dim fc-horizon-note">
+          {result.horizons.filter((h) => !h.available).map((h) => `${h.horizon} ${h.horizon === 1 ? PERIOD_NOUN[grain].one : PERIOD_NOUN[grain].many}: ${h.reason}`).join(' · ')}
+        </div>
+      )}
       {error && <div className="status-error">{error}</div>}
       {loading && <div className="status-dim">Forecasting…</div>}
 
@@ -398,9 +428,12 @@ export default function Forecasting(): React.JSX.Element {
                   </div>
                   {selSeries && (
                     <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
-                      {selSeries.forecast.quality === 'Withheld'
-                        ? selSeries.forecast.withheldReason
-                        : <>At horizon: <b>{fmtFc(horizonValue(selSeries), selSeries.unit)}</b> · {selSeries.forecast.method} · {selSeries.forecast.quality}</>}
+                      {selSeries.forecast.quality !== 'Withheld' && (
+                        <>At {result.horizon} {result.horizon === 1 ? PERIOD_NOUN[grain].one : PERIOD_NOUN[grain].many}: <b>{fmtFc(horizonValue(selSeries), selSeries.unit)}</b>
+                          {selSeries.forecast.growthPct != null && ` (${selSeries.forecast.growthPct >= 0 ? '+' : ''}${selSeries.forecast.growthPct}%)`} · </>
+                      )}
+                      {modelLine(selSeries.forecast, selSeries.unit, result.horizon, PERIOD_NOUN[grain].many)}
+                      {selSeries.forecast.bandNote && ` · ${selSeries.forecast.bandNote}`}
                     </div>
                   )}
                 </div>
@@ -420,7 +453,23 @@ export default function Forecasting(): React.JSX.Element {
                 </div>
               </div>
 
+              {result.notImported.length > 0 && (
+                <div className="status-dim" style={{ fontSize: '10px', margin: '2px 0 6px' }}>
+                  Not imported: {result.notImported.map((k) => k.label).join(', ')}
+                </div>
+              )}
               {selSeries && <Chart option={lineChartOption} height={290} />}
+              {result.overTarget && (
+                <>
+                  <div className="fc-card-title" style={{ marginTop: '10px' }}>
+                    <span>{result.overTarget.label}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                    {modelLine(result.overTarget.forecast, '', result.horizon, PERIOD_NOUN[grain].many)}
+                  </div>
+                  <Chart option={forecastChartOption(result.overTarget)} height={180} />
+                </>
+              )}
             </div>
 
             {/* Right: Expandable RCA & Risk Sunburst Chart */}
@@ -446,9 +495,9 @@ export default function Forecasting(): React.JSX.Element {
           <div className="card">
             <div className="card-head-row">
               <div>
-                <h3>At-Risk Sectors &amp; Root Cause Diagnostic Action Blueprint</h3>
+                <h3>Per-cell risk · {selSeries?.label ?? ''}</h3>
                 <span className="card-note">
-                  {riskRows.length} sectors matching current filter · Ranked by breach probability
+                  {result.totalEntities.toLocaleString('en-US')} cells · {riskRows.length} shown · worst risk first · hints are rules of thumb from imported values
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -482,12 +531,12 @@ export default function Forecasting(): React.JSX.Element {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Entity / Hierarchy</th>
+                    <th>Cell / Path</th>
                     <th className="num">Current</th>
-                    <th className="num">Horizon Forecast</th>
-                    <th className="num">Threshold</th>
-                    <th>Risk State</th>
-                    <th>RCA Diagnosis</th>
+                    <th className="num">Forecast</th>
+                    <th className="num">Target</th>
+                    <th>Risk</th>
+                    <th>Hint</th>
                     <th style={{ textAlign: 'center' }}>Action</th>
                   </tr>
                 </thead>
@@ -522,13 +571,12 @@ export default function Forecasting(): React.JSX.Element {
                         <td className="num">{r.threshold == null ? '—' : fmtFc(r.threshold, selSeries?.unit ?? '')}</td>
                         <td><Chip text={r.risk ?? '—'} tone={riskTone(r.risk)} /></td>
                         <td>
-                          {r.hint ? (
+                          {r.hint && (
                             <span className={`rca-badge ${rcaClass(r.hint.category)}`}>
                               {rcaIcon(r.hint.category)} {r.hint.category}
                             </span>
-                          ) : (
-                            <span className="fc-path">{r.hintNote}</span>
                           )}
+                          <div className="fc-path">{r.hintNote}</div>
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <button
@@ -548,7 +596,9 @@ export default function Forecasting(): React.JSX.Element {
                   })}
                   {riskRows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="pc-empty">No entities found for the selected filter or search query.</td>
+                      <td colSpan={7} className="pc-empty">
+                        {result.riskTableNote ?? 'No cells found for the selected filter or search query.'}
+                      </td>
                     </tr>
                   )}
                 </tbody>

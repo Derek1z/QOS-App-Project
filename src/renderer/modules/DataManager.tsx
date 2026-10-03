@@ -1094,7 +1094,7 @@ export default function DataManager(): React.JSX.Element {
                               {has3gDiag || allMappedKeys.has('tch_congestion') || allMappedKeys.has('prb_utilization') ? '✓' : '○'} Root-Cause Diagnostics
                             </span>
                             <span className={`readiness-pill${totalMapped >= 4 ? ' unlocked' : ''}`}>
-                              {totalMapped >= 4 ? '✓' : '○'} 4-Model Tournament Forecast
+                              {totalMapped >= 4 ? '✓' : '○'} Forecast (backtested)
                             </span>
                           </div>
                         </div>

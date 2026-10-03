@@ -32,6 +32,13 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         icon: '🎯',
         milestone: 1,
         blurb: 'Automated priority ranking queue for critical cell remediation.'
+      },
+      {
+        id: 'forecasting',
+        label: 'Forecasting & Early Warning',
+        icon: '🔮',
+        milestone: 1,
+        blurb: 'Backtested forecasts of imported KPIs, per-cell risk against targets, and capacity growth.'
       }
     ]
   },

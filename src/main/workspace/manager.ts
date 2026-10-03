@@ -2,7 +2,7 @@ import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync } from 
 import { join, basename } from 'node:path'
 import os from 'node:os'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
-import { SCHEMA_SQL, AGG_CELL_DAILY_SELECT } from './schema'
+import { SCHEMA_SQL, AGG_CELL_DAILY_SELECT, CELL_FORECASTS_SQL, FORECAST_DIRTY_SQL } from './schema'
 import { acquireLock, releaseLock } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
@@ -107,6 +107,15 @@ export function closeWorkspace(): void {
 /** Backfill schema additions on workspaces created before a given feature
  *  landed. Runs on writable open only; every statement is idempotent. */
 async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> {
+  // cell_forecasts was never written before the honest-forecasting spec; an
+  // old-shape table (metric/horizon columns) is replaced, not migrated
+  const fcCols = await connection.runAndReadAll(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'cell_forecasts'`
+  )
+  const fcNames = fcCols.getRowObjects().map((x) => String(x.column_name))
+  if (fcNames.length > 0 && !fcNames.includes('kpi_key')) await connection.run('DROP TABLE cell_forecasts')
+  await connection.run(CELL_FORECASTS_SQL)
+  await connection.run(FORECAST_DIRTY_SQL)
   await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_kpi_defs START 1`)
   await connection.run(`CREATE TABLE IF NOT EXISTS kpi_defs (
      kpi_id BIGINT DEFAULT nextval('seq_kpi_defs') PRIMARY KEY,

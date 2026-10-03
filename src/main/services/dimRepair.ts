@@ -1,6 +1,7 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { recomputeAggregates, updateCoverage } from '../import/aggregates'
 import { refreshIntelligence } from '../analytics/engine'
+import { CELL_FORECASTS_SQL } from '../workspace/schema'
 
 /**
  * Startup repair for legacy workspaces. Older app versions could commit
@@ -282,24 +283,17 @@ async function rebuildAnomalies(conn: DuckDBConnection): Promise<void> {
   await conn.run('ALTER TABLE cell_anomalies_repair RENAME TO cell_anomalies')
 }
 
-/** Rebuild cell_forecasts with merged cell ids, deduped by (cell_id, metric, horizon, as_of). */
+/** Rebuild cell_forecasts with merged cell ids, deduped by (cell_id, kpi_key, grain). */
 async function rebuildForecasts(conn: DuckDBConnection): Promise<void> {
+  await conn.run(CELL_FORECASTS_SQL.replace('cell_forecasts', 'cell_forecasts_repair'))
   await conn.run(
-    `CREATE TABLE cell_forecasts_repair (
-       cell_id BIGINT, metric VARCHAR, horizon VARCHAR, as_of DATE,
-       method VARCHAR, forecast JSON, lower_bound DOUBLE, upper_bound DOUBLE,
-       mae DOUBLE, rmse DOUBLE, quality VARCHAR, risk VARCHAR,
-       PRIMARY KEY (cell_id, metric, horizon, as_of)
-     )`
-  )
-  await conn.run(
-    `INSERT INTO cell_forecasts_repair (cell_id, metric, horizon, as_of, method, forecast, lower_bound, upper_bound, mae, rmse, quality, risk)
-     SELECT cell_id, metric, horizon, as_of, method, forecast, lower_bound, upper_bound, mae, rmse, quality, risk
+    `INSERT INTO cell_forecasts_repair (cell_id, kpi_key, grain, as_of, method, points, mae_h1, mase, backtest_origins, quality)
+     SELECT cell_id, kpi_key, grain, as_of, method, points, mae_h1, mase, backtest_origins, quality
      FROM (
-       SELECT COALESCE(m.keep_id, a.cell_id) AS cell_id, a.metric, a.horizon, a.as_of, a.method,
-              a.forecast, a.lower_bound, a.upper_bound, a.mae, a.rmse, a.quality, a.risk,
+       SELECT COALESCE(m.keep_id, a.cell_id) AS cell_id, a.kpi_key, a.grain, a.as_of, a.method,
+              a.points, a.mae_h1, a.mase, a.backtest_origins, a.quality,
               row_number() OVER (
-                PARTITION BY COALESCE(m.keep_id, a.cell_id), a.metric, a.horizon, a.as_of
+                PARTITION BY COALESCE(m.keep_id, a.cell_id), a.kpi_key, a.grain
                 ORDER BY a.cell_id
               ) AS rn
        FROM cell_forecasts a

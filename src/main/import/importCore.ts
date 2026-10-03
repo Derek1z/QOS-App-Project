@@ -9,6 +9,7 @@ import {
 } from './mapping'
 import { validateStaged } from './validator'
 import { recomputeAggregates, updateCoverage } from './aggregates'
+import { markForecastDirty } from '../forecast/job'
 import { refreshIntelligence } from '../analytics/engine'
 import { writeQuality } from './quality'
 import { listDerivedKpis, saveDerivedKpi } from '../services/derivedKpiService'
@@ -642,6 +643,11 @@ async function runImportCoreInner(
     onPhase?.('Aggregating', `${dateIds.length} day${dateIds.length === 1 ? '' : 's'}`)
     await recomputeAggregates(conn, dateIds)
     await updateCoverage(conn, dateIds)
+    // cells this import wrote into periods that already have stored forecasts
+    const stagedCells = (await conn.runAndReadAll(
+      `SELECT DISTINCT CAST(c.cell_id AS INTEGER) AS id FROM stg_clean s JOIN dim_cell c ON c.name = s.cell_name`
+    )).getRowObjects().map((x) => Number(x.id))
+    await markForecastDirty(conn, dateIds, stagedCells)
     onPhase?.('Refreshing intelligence')
     await refreshIntelligence(conn, dateIds)
     await conn.run('COMMIT')

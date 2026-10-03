@@ -28,6 +28,22 @@ function aggTable(entity: string, grain: string): string {
 /** Daily cell aggregates straight from fact_cell_daily. Shared by workspace
  *  creation and the rebuild on every writable open. is_nc/breach_days follow
  *  the shared core-KPI rule (analytics/ncRule), like every other grain. */
+/** Stored per-cell forecasts (honest-forecasting spec §6.1): one row per
+ *  cell × KPI × grain; `points` holds the engine result (points, maeByH,
+ *  withheldReason, bandNote). Risk is not stored: it is read against the
+ *  current kpi_defs target. */
+export const CELL_FORECASTS_SQL = `CREATE TABLE IF NOT EXISTS cell_forecasts (
+     cell_id BIGINT, kpi_key VARCHAR, grain VARCHAR, as_of DATE,
+     method VARCHAR, points JSON, mae_h1 DOUBLE, mase DOUBLE,
+     backtest_origins INTEGER, quality VARCHAR,
+     PRIMARY KEY (cell_id, kpi_key, grain)
+   )`
+
+/** Cells whose data changed inside an already-forecast complete period. */
+export const FORECAST_DIRTY_SQL = `CREATE TABLE IF NOT EXISTS forecast_dirty (
+     grain VARCHAR, cell_id BIGINT, PRIMARY KEY (grain, cell_id)
+   )`
+
 export const AGG_CELL_DAILY_SELECT = `
    SELECT
      d.date,
@@ -233,12 +249,8 @@ export const SCHEMA_SQL: string[] = [
      cell_id BIGINT, date_id INTEGER, metric VARCHAR, score DOUBLE, detail JSON,
      PRIMARY KEY (cell_id, date_id, metric)
    )`,
-  `CREATE TABLE IF NOT EXISTS cell_forecasts (
-     cell_id BIGINT, metric VARCHAR, horizon VARCHAR, as_of DATE,
-     method VARCHAR, forecast JSON, lower_bound DOUBLE, upper_bound DOUBLE,
-     mae DOUBLE, rmse DOUBLE, quality VARCHAR, risk VARCHAR,
-     PRIMARY KEY (cell_id, metric, horizon, as_of)
-   )`,
+  CELL_FORECASTS_SQL,
+  FORECAST_DIRTY_SQL,
   `CREATE TABLE IF NOT EXISTS cell_health_history (
      cell_id BIGINT, date_id INTEGER, health_score DOUBLE, components JSON,
      PRIMARY KEY (cell_id, date_id)

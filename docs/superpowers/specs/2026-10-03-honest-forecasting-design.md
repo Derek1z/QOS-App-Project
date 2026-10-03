@@ -44,7 +44,8 @@ When a KPI was not imported, a value is invented: CSSR 96.4 if the cell is NC el
 | RCA hints | Keep the rule table, fed only by imported values, labelled "rule of thumb"; no hint when inputs are missing |
 | Aggregate series | Rate KPIs: plain mean of cell values; `sum` KPIs: total. Plus a second series: number of cells over target |
 | Engine | Standard models (naive, drift, damped Holt, seasonal naive, Holt-Winters), rolling-origin backtest, MASE against naive, empirical bands |
-| Where it runs | Per-cell weekly and monthly forecasts computed after import and stored; daily per-cell on demand at cell/site scope |
+| Where it runs | Per-cell weekly and monthly forecasts computed in the background after import and stored, only when a period completes or past data changes; daily per-cell on demand at cell/site scope |
+| Stored per cell | KPIs with a target (all NC KPIs plus any KPI given a target in Targets) and the capacity fields. Every other KPI is forecast on demand (cell/site scope, aggregate charts) |
 
 ---
 
@@ -55,6 +56,7 @@ When a KPI was not imported, a value is invented: CSSR 96.4 if the cell is NC el
 - Capacity fields from `agg_cell_*`: connected users, data volume, DL throughput, availability. These have no `kpi_defs` target unless one exists for them.
 - A KPI with no imported values in scope is not offered; it is listed as "not imported".
 - A KPI without a target is forecast but has no risk state (§5.6).
+- Every KPI above is forecastable on the page. Which ones are also stored for every cell is set in §6.1.
 
 ### 4.2 Series
 - **Cell series**: the KPI's value per period using its `agg` rule (`avg_value`, `sum_value`, `max_value` or `min_value` from `agg_cell_kpi_*`; the matching column of `agg_cell_*` for capacity fields).
@@ -91,6 +93,8 @@ A horizon the series cannot backtest (§5.2) is disabled with the reason. A hori
 | Holt-Winters, additive weekly season, damped trend | daily | 21 | α, β, φ grids as above, γ ∈ {0.05, 0.1, 0.2, 0.3}; same criterion |
 
 Parameters are fitted only from the data before the forecast origin, at every origin (no look-ahead).
+
+**One-pass fitting.** For a fixed parameter set the smoothing recursion is the same whatever the end point, so one pass over the whole series records, at every t, the one-step squared error so far and the state after y[0..t). Fitting on [0, t) then reads those values at t, which depend only on data before t. This is exact, not an approximation: on 2,000 test series it chose the same model with identical forecasts as refitting at every origin, and was 4–9× faster (benchmark 2026-10-03).
 
 ### 5.2 Backtest
 Rolling origin, expanding window. For each model, the origins are the last ≤ 20 points t at which that model can fit (t ≥ its minimum, §5.1): fit on points [0, t), forecast h = 1…H, record the error (actual − forecast) at each h. Naive is also run on each model's origins, so every model is compared with naive on exactly the same points. A model is a candidate only if it has at least 3 origins with an actual at h = 1. A horizon h is backtestable when naive has at least 3 origins with an actual at t + h − 1.
@@ -138,8 +142,22 @@ Risk is computed when read, from the stored forecast and the current `kpi_defs` 
 
 ## 6. Where it runs
 
-### 6.1 Per-cell forecasts after import
-In the import process (Electron utility process), after aggregates, period coverage and the NC recompute: every cell × forecastable KPI × {weekly, monthly} is forecast to the longest horizon of the grain (12 weeks, 6 months) and stored.
+### 6.1 Per-cell forecasts, stored
+**Which KPIs** (decided 2026-10-03): every KPI with a target — the NC KPIs plus any KPI given a target in Targets — and the capacity fields (users, data volume, DL throughput, availability). For each cell × stored KPI × {weekly, monthly}, the forecast runs to the longest horizon of the grain (12 weeks, 6 months). KPIs without a target (mostly raw counters) are not stored; they are forecast on demand (§6.2).
+
+**When**: after an import, per grain, only if
+1. the latest complete period moved (a week or month completed): every cell, or
+2. the import wrote data into an already-complete period (a backfill or correction): only the cells it touched, or
+3. a KPI gained a target: that KPI, every cell.
+
+A target change on a KPI that already has one triggers nothing: risk is read at query time (§5.6). With daily imports, weekly forecasts are recomputed about once a week and monthly about once a month.
+
+**How**: in the background, after the import has finished and the main process has reopened the workspace, so the app stays usable.
+- Series are read through the app's workspace connection in batches of 5,000 cells (values as doubles plus series lengths; no per-row objects), so memory stays bounded at any network size.
+- The forecasts run in a pool of worker threads (cores − 1). Workers receive plain arrays and import no DuckDB module, so packaging cannot break them (the Windows import failure of 2026-10-02 came from a worker that resolved DuckDB).
+- Results are written per batch with the DuckDB appender.
+- A new import cancels a running job; the job restarts after that import. An unfinished job (app closed) is redone on next writable open.
+- Progress is published to the renderer; the Forecasting page shows "Forecasts updating — 12,500 of 60,000 cells" and keeps showing the previous stored forecasts, marked with their as-of date, until the new ones are written.
 
 `cell_forecasts` is dropped and recreated (it has never been written):
 
@@ -156,18 +174,30 @@ In the import process (Electron utility process), after aggregates, period cover
 | backtest_origins | INTEGER |
 | quality | VARCHAR |
 
-Primary key (cell_id, kpi_key, grain). Rebuild aggregates and snapshot restore recompute it. `dimRepair` merges it like the other cell tables.
+Primary key (cell_id, kpi_key, grain). `workspace_meta` keys `forecasts_weekly_as_of` and `forecasts_monthly_as_of` record what is stored. Rebuild aggregates and snapshot restore mark both stale. `dimRepair` merges the table like the other cell tables.
 
 ### 6.2 On demand
 - Aggregate series (two per KPI) are computed when the page asks for them.
+- KPIs without a target, per cell: computed on demand at cell and site scope.
 - Daily per-cell forecasts are computed on demand at cell and site scope. At district, region and network scope on the daily grain, the aggregate charts forecast and the risk table says "Per-cell daily risk is available for a site or cell — or switch to weekly". No cell is marked Stable without a forecast.
 
 ### 6.3 Old and read-only workspaces
-- Writable: the once-on-open marker (`workspace_meta` key `forecasts`) builds `cell_forecasts`.
+- Writable: the once-on-open marker (`workspace_meta` key `forecasts`) starts the background build of `cell_forecasts`.
 - Read-only without the new table: aggregate charts forecast; the risk table says "Per-cell forecasts not built — open the workspace writable once".
 
-### 6.4 Cost
-Import time added by §6.1 is measured on a 3,000-cell dataset. Budget: ≤ 3 s. If over, the backtest origin cap (§5.2) is lowered and the new value recorded in this spec.
+### 6.4 Cost (benchmark 2026-10-03)
+Measured on this development laptop (8 threads, 4 cores) with a generated 25,000-cell table (52 weeks weekly + 12 months monthly, 8 stored series per cell), using one-pass fitting, batched reads and 7 worker threads: **15 s per full recompute at 25,000 cells** (weekly: read 2.1 s, forecast 8.9 s, write 0.8 s; monthly: 0.5 s, 2.1 s, 0.8 s). Time grows in proportion to cells × stored series:
+
+| Cells | Full recompute, 8 series/cell |
+|---|---|
+| 3,000 | ~2 s |
+| 25,000 | ~15 s (measured) |
+| 60,000 | ~36 s (projected) |
+| 150,000 | ~1.5 min (projected) |
+
+Each extra KPI given a target adds about 1/8 of these times. Two years of weekly history makes the weekly part about 1.7× slower. Reads from a real on-disk workspace may be slower than the in-memory benchmark.
+
+Budget: a full recompute at 25,000 cells with 8 stored series finishes in ≤ 20 s on 4 cores. The plan measures it on a real workspace; if it is over, the backtest origin cap (§5.2) is lowered and the new value recorded here. The recompute never blocks the import or the app (§6.1).
 
 ---
 
@@ -205,6 +235,7 @@ Import time added by §6.1 is measured on a 3,000-cell dataset. Budget: ≤ 3 s.
 - At aggregate scope, a second chart: cells over target, with its forecast.
 - KPIs without a target show growth % over the horizon.
 - "Not imported" KPIs listed under the KPI picker.
+- While a background recompute runs: "Forecasts updating — N of M cells", with the stored forecasts shown and their as-of date.
 
 ### 9.3 Other consumers
 - Report section "Forecast Risk" (`reportingService`) uses the new risk rows and states the model and quality.
@@ -237,8 +268,13 @@ Written before the code.
 16. Old workspace builds `cell_forecasts` on first writable open; read-only shows the not-built message.
 17. Investigation with CSSR not imported: `null` values, no CSSR finding, a "Not assessed" line.
 18. RCA hint: fires from real PRB ≥ target; "No hint — … not imported" when inputs are missing.
+19. One-pass fitting equals refitting at every origin (same model, same values) on a set of seeded series.
+20. Recompute triggers: an import that completes no period and touches no complete period leaves `cell_forecasts` unchanged; a backfill into a complete week recomputes only the touched cells; giving a KPI a target adds its forecasts.
+21. Stored set: KPIs with a target and the capacity fields are stored; a counter without a target is not stored but forecasts on demand at cell scope.
+22. Background job: a second import cancels and restarts it; the page reports progress and shows the previous forecasts meanwhile.
+23. Packaged build (`npm run verify:packaged`): the forecast worker pool runs inside app.asar.
 
-**Gate**: `typecheck && vitest && smoke` for every commit, with `app_state.json` restored from `.superpowers/app_state.original.json` afterwards. Import cost (§6.4) measured once and recorded.
+**Gate**: `typecheck && vitest && smoke` for every commit, with `app_state.json` restored from `.superpowers/app_state.original.json` afterwards. Recompute cost (§6.4) measured on a real workspace and recorded.
 
 ---
 

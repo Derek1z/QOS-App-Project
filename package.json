@@ -49,6 +49,11 @@
       ],
       "signAndEditExecutable": false,
       "files": [
+        "out/**/*",
+        "package.json",
+        "build/icon.ico",
+        "build/icon.png",
+        "build/favicon.png",
         "!**/node_modules/@duckdb/node-bindings-linux*/**",
         "!**/node_modules/@duckdb/node-bindings-darwin*/**",
         "!**/node_modules/@duckdb/node-bindings-win32-arm64/**"
@@ -60,6 +65,11 @@
         "AppImage"
       ],
       "files": [
+        "out/**/*",
+        "package.json",
+        "build/icon.ico",
+        "build/icon.png",
+        "build/favicon.png",
         "!**/node_modules/@duckdb/node-bindings-win32*/**",
         "!**/node_modules/@duckdb/node-bindings-darwin*/**",
         "!**/node_modules/@duckdb/node-bindings-linux-arm64*/**",

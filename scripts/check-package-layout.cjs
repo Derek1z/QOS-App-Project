@@ -2,7 +2,8 @@
 /* Checks that a packaged app's resources folder holds what the import needs at
  * runtime: the DuckDB API and the DuckDB engine for the target platform
  * unpacked next to app.asar, no engines for other platforms, and the import
- * process script (out/main/importWorker-*.js) inside app.asar. Used by verify-portable.cjs (Windows build)
+ * process script (out/main/importWorker-*.js) inside app.asar, with nothing
+ * but the app at its top level. Used by verify-portable.cjs (Windows build)
  * and smoke-packaged.cjs (Linux build).
  *
  *   node scripts/check-package-layout.cjs <resourcesDir> <win32|linux>  */
@@ -10,6 +11,8 @@ const { existsSync, readdirSync } = require('node:fs')
 const { join } = require('node:path')
 
 const ENGINE = { win32: 'node-bindings-win32-x64', linux: 'node-bindings-linux-x64' }
+// the only top-level entries app.asar may hold (build.files plus node_modules)
+const ASAR_TOP_LEVEL = new Set(['build', 'out', 'package.json', 'node_modules'])
 
 /** Problems found, as readable sentences; empty when the layout is good. */
 function checkPackageLayout(resourcesDir, platform) {
@@ -27,6 +30,10 @@ function checkPackageLayout(resourcesDir, platform) {
   if (foreign.length > 0) problems.push(`engines for other platforms are packaged: ${foreign.join(', ')}`)
   const { listPackage } = require('@electron/asar')
   const files = listPackage(asar).map((p) => p.replace(/\\/g, '/'))
+  // a platform `files` list replaces the top-level one, so a list of only
+  // exclusions packs the whole project (sources, workspaces, backups, notes)
+  const stray = [...new Set(files.map((p) => p.split('/')[1]))].filter((top) => !ASAR_TOP_LEVEL.has(top))
+  if (stray.length > 0) problems.push(`app.asar holds files that are not part of the app: ${stray.join(', ')}`)
   if (!files.some((p) => /\/out\/main\/(chunks\/)?importWorker-[^/]+\.js$/.test(p))) {
     problems.push('the import process script (out/main/importWorker-*.js) is not in app.asar')
   }

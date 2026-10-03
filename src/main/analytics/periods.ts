@@ -57,6 +57,13 @@ export function latestPeriodSql(grain: Grain): string {
            FROM period_coverage WHERE grain = '${grain}')`
 }
 
+/** Newest complete period of `grain`, NULL when none is complete (forecasting
+ *  fits complete periods only — honest-forecasting spec §4.2). */
+export function latestCompletePeriodSql(grain: Grain): string {
+  if (grain === 'daily') return latestPeriodSql('daily')
+  return `(SELECT max(period_start) FILTER (WHERE is_complete) FROM period_coverage WHERE grain = '${grain}')`
+}
+
 /** Whether the latest period of `grain` (§2) is itself complete. A workspace
  *  with no coverage record yet counts as complete (fix wave 2026-10-01 final
  *  review, item 7: shared by the two inline copies of this expression). */

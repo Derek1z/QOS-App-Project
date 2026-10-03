@@ -95,6 +95,18 @@ export async function markForecastDirty(conn: DuckDBConnection, dateIds: number[
   }
 }
 
+/** Stored `points` JSON, compact (compact JSON halved the write cost, bench
+ *  2026-10-03): p = [[value, lower, upper] per h], m = MAE per h, w = withheld
+ *  reason, b = band note. Values rounded to 4 decimals (the page shows 2). */
+const r4 = (v: number | null): number | null => (v == null ? null : Math.round(v * 1e4) / 1e4)
+function packPoints(f: SeriesForecast): string {
+  return JSON.stringify({ p: f.points.map((x) => [r4(x.value), r4(x.lower), r4(x.upper)]), m: f.maeByH.map(r4), w: f.withheldReason, b: f.bandNote })
+}
+function unpackPoints(json: string): Pick<SeriesForecast, 'points' | 'maeByH' | 'withheldReason' | 'bandNote'> {
+  const o = JSON.parse(json) as { p: Array<[number, number | null, number | null]>; m: Array<number | null>; w: string | null; b: string | null }
+  return { points: o.p.map(([value, lower, upper], i) => ({ h: i + 1, value, lower, upper })), maeByH: o.m, withheldReason: o.w, bandNote: o.b }
+}
+
 const dmy = (iso: string): string => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
 const epochDay = (iso: string): number => Math.round(Date.parse(iso + 'T00:00:00Z') / 86400000)
 
@@ -112,7 +124,12 @@ export async function runForecastJob(
   conn: DuckDBConnection,
   plans: ForecastJobPlan[],
   runner: ForecastRunner,
-  opts: { onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {}
+  opts: {
+    onProgress?: (done: number, total: number) => void
+    signal?: AbortSignal
+    /** filled with milliseconds spent reading, computing and writing (bench, diagnostics) */
+    timings?: { read: number; compute: number; write: number }
+  } = {}
 ): Promise<{ cells: number; series: number; cancelled: boolean }> {
   if (plans.length === 0) return { cells: 0, series: 0, cancelled: false }
   const tech = await workspaceTechnology(conn)
@@ -131,7 +148,9 @@ export async function runForecastJob(
     for (let lo = 0; lo < cells.length; lo += BATCH_CELLS) {
       if (opts.signal?.aborted) return { cells: done, series, cancelled: true }
       const batch = cells.slice(lo, lo + BATCH_CELLS)
+      let t = Date.now()
       const data = await readCellSeriesBatch(conn, plan.grain, planKpis, batch)
+      if (opts.timings) opts.timings.read += Date.now() - t
       const jobs: SeriesJob[] = []
       const slots: Array<{ cell: number; kpi: ForecastKpi; job: number | null; stale: string | null }> = []
       for (const cell of batch) {
@@ -152,12 +171,19 @@ export async function runForecastJob(
           })
         }
       }
+      t = Date.now()
       const results = await runner.run(jobs)
+      if (opts.timings) opts.timings.compute += Date.now() - t
+      t = Date.now()
       if (opts.signal?.aborted) return { cells: done, series, cancelled: true }
 
       const keyList = planKpis.map((k) => `'${k.key.replace(/'/g, "''")}'`).join(',')
+      // a contiguous batch (every 'all' plan: ids in order) deletes by range
+      const contiguous = batch[batch.length - 1] - batch[0] === batch.length - 1
       await conn.run(
-        `DELETE FROM cell_forecasts WHERE grain = '${plan.grain}' AND kpi_key IN (${keyList}) AND cell_id IN (${batch.join(',')})`
+        `DELETE FROM cell_forecasts WHERE grain = '${plan.grain}' AND kpi_key IN (${keyList}) AND ${
+          contiguous ? `cell_id BETWEEN ${batch[0]} AND ${batch[batch.length - 1]}` : `cell_id IN (${batch.join(',')})`
+        }`
       )
       const app = await conn.createAppender('cell_forecasts')
       const asOfDay = dateValue(epochDay(plan.asOf))
@@ -169,7 +195,7 @@ export async function runForecastJob(
         app.appendDate(asOfDay)
         if (f.method == null) app.appendNull()
         else app.appendVarchar(f.method)
-        app.appendVarchar(JSON.stringify({ points: f.points, maeByH: f.maeByH, withheldReason: f.withheldReason, bandNote: f.bandNote }))
+        app.appendVarchar(packPoints(f))
         const mae1 = f.maeByH[0]
         if (mae1 == null) app.appendNull()
         else app.appendDouble(mae1)
@@ -180,6 +206,7 @@ export async function runForecastJob(
         app.endRow()
       }
       app.closeSync()
+      if (opts.timings) opts.timings.write += Date.now() - t
       series += slots.length
       done += batch.length
       opts.onProgress?.(done, total)
@@ -218,7 +245,7 @@ export async function readStoredForecasts(
     [grain, kpiKey]
   )
   for (const x of r.getRowObjects()) {
-    const p = JSON.parse(String(x.points)) as Pick<SeriesForecast, 'points' | 'maeByH' | 'withheldReason' | 'bandNote'>
+    const p = unpackPoints(String(x.points))
     out.set(Number(x.cell_id), {
       asOf: String(x.as_of),
       forecast: {

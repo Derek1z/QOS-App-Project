@@ -2,7 +2,7 @@ import os from 'node:os'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import forecastWorkerPath from './forecastWorker?modulePath'
 import type { SeriesForecast } from '../analytics/forecasting/engine'
-import type { ForecastRunner, SeriesJob } from './runner'
+import { packJobs, unpackResults, type ForecastRunner, type PackedResults, type SeriesJob } from './runner'
 
 /** A pool of Electron utility processes running the forecast engine — the
  *  mechanism the import uses (2026-10-02), so a packaged build resolves the
@@ -22,12 +22,12 @@ export function createUtilityRunner(size = Math.max(1, os.cpus().length - 1)): F
     if (pool) return pool
     pool = Array.from({ length: size }, () => {
       const child = utilityProcess.fork(forecastWorkerPath, [], { serviceName: 'QoS forecast', stdio: 'inherit' })
-      child.on('message', (msg: { id: number; results?: SeriesForecast[]; error?: string }) => {
+      child.on('message', (msg: { id: number; results?: PackedResults; error?: string }) => {
         const p = pending.get(msg.id)
         if (!p) return
         pending.delete(msg.id)
         if (msg.error != null) p.reject(new Error(msg.error))
-        else p.resolve(msg.results ?? [])
+        else p.resolve(msg.results ? unpackResults(msg.results) : [])
       })
       child.on('exit', (code) => {
         if (pool) failAll(new Error(`Forecast process exited with code ${code}`))
@@ -41,7 +41,7 @@ export function createUtilityRunner(size = Math.max(1, os.cpus().length - 1)): F
     new Promise((resolve, reject) => {
       const id = nextId++
       pending.set(id, { resolve, reject })
-      child.postMessage({ id, jobs })
+      child.postMessage({ id, jobs: packJobs(jobs) })
     })
 
   return {

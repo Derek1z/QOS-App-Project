@@ -27,39 +27,65 @@ function dampSum(phi: number, h: number): number {
   return s
 }
 
+const HOLT_COMBOS: Array<[number, number, number]> = []
+for (const a of ALPHAS) for (const b of BETAS) for (const p of PHIS) HOLT_COMBOS.push([a, b, p])
+const HW_COMBOS: Array<[number, number, number, number]> = []
+for (const a of ALPHAS) for (const b of BETAS) for (const p of PHIS) for (const g of GAMMAS) HW_COMBOS.push([a, b, p, g])
+
+/** slot[end] = index into the recorded states, or -1 when `end` is not read. */
+function slotsFor(n: number, ends: number[] | undefined): { slot: Int32Array; count: number } {
+  const slot = new Int32Array(n + 1).fill(-1)
+  let count = 0
+  for (const e of ends ?? Array.from({ length: n + 1 }, (_, i) => i)) {
+    if (e >= 0 && e <= n && slot[e] < 0) slot[e] = count++
+  }
+  return { slot, count }
+}
+
 /** Damped-trend Holt over every (α, β, φ); the returned function gives the
- *  best fit on y[0..end) (lowest one-step squared error). Needs end ≥ 8. */
-export function holtGrid(y: number[]): (end: number) => HoltState {
+ *  best fit on y[0..end) (lowest one-step squared error). Needs end ≥ 8.
+ *  `ends` limits which fits are kept (the backtest origins and n); asking for
+ *  another end throws. */
+export function holtGrid(y: number[], ends?: number[]): (end: number) => HoltState {
   const n = y.length
-  const combos: Array<[number, number, number]> = []
-  for (const a of ALPHAS) for (const b of BETAS) for (const p of PHIS) combos.push([a, b, p])
-  const w = n + 1
-  const sse = new Float64Array(combos.length * w)
-  const lv = new Float64Array(combos.length * w)
-  const tr = new Float64Array(combos.length * w)
-  for (let c = 0; c < combos.length; c++) {
-    const [a, b, p] = combos[c]
-    const o = c * w
+  const C = HOLT_COMBOS.length
+  const { slot, count } = slotsFor(n, ends)
+  const sse = new Float64Array(C * count)
+  const lv = new Float64Array(C * count)
+  const tr = new Float64Array(C * count)
+  for (let c = 0; c < C; c++) {
+    const [a, b, p] = HOLT_COMBOS[c]
+    const o = c * count
     let l = y[0]
     let t = y[1] - y[0]
     let s = 0
-    lv[o + 1] = l
-    tr[o + 1] = t
+    if (slot[1] >= 0) {
+      lv[o + slot[1]] = l
+      tr[o + slot[1]] = t
+    }
     for (let i = 1; i < n; i++) {
       const e = y[i] - (l + p * t)
       s += e * e
       const nl = a * y[i] + (1 - a) * (l + p * t)
       t = b * (nl - l) + (1 - b) * p * t
       l = nl
-      sse[o + i + 1] = s
-      lv[o + i + 1] = l
-      tr[o + i + 1] = t
+      const k = slot[i + 1]
+      if (k >= 0) {
+        sse[o + k] = s
+        lv[o + k] = l
+        tr[o + k] = t
+      }
     }
   }
+  const chosen: Array<HoltState | undefined> = new Array(count)
   return (end: number): HoltState => {
+    const k = slot[end]
+    if (k == null || k < 0) throw new Error(`holtGrid: end ${end} was not requested`)
+    const cached = chosen[k]
+    if (cached) return cached
     let best = 0
-    for (let c = 1; c < combos.length; c++) if (sse[c * w + end] < sse[best * w + end]) best = c
-    return { level: lv[best * w + end], trend: tr[best * w + end], phi: combos[best][2] }
+    for (let c = 1; c < C; c++) if (sse[c * count + k] < sse[best * count + k]) best = c
+    return (chosen[k] = { level: lv[best * count + k], trend: tr[best * count + k], phi: HOLT_COMBOS[best][2] })
   }
 }
 
@@ -71,7 +97,7 @@ export function holtForecast(s: HoltState, h: number): number {
  *  (α, β, φ, γ). Initial level and trend come from the first two seasons, the
  *  initial seasonals from both seasons' deviations from their means; the error
  *  is counted from index 14 (after that window). Needs end ≥ 21. */
-export function holtWintersGrid(y: number[]): (end: number) => HoltWintersState {
+export function holtWintersGrid(y: number[], ends?: number[]): (end: number) => HoltWintersState {
   const n = y.length
   const m = SEASON
   const mean = (from: number): number => {
@@ -82,14 +108,12 @@ export function holtWintersGrid(y: number[]): (end: number) => HoltWintersState 
   const m1 = mean(0)
   const m2 = mean(m)
   const init = Array.from({ length: m }, (_, j) => ((y[j] - m1) + (y[j + m] - m2)) / 2)
-  const combos: Array<[number, number, number, number]> = []
-  for (const a of ALPHAS) for (const b of BETAS) for (const p of PHIS) for (const g of GAMMAS) combos.push([a, b, p, g])
-  const w = n + 1
+  const combos = HW_COMBOS
+  const { slot, count: w } = slotsFor(n, ends)
   const sse = new Float64Array(combos.length * w)
   const lv = new Float64Array(combos.length * w)
   const tr = new Float64Array(combos.length * w)
-  // seasonal state after y[0..t): s[(t * m + j)] per combo would be large; store
-  // the season vector only where it is read (every t), as a flat array per combo
+  // the season vector is kept only at the requested ends
   const se = new Float64Array(combos.length * w * m)
   for (let c = 0; c < combos.length; c++) {
     const [a, b, p, g] = combos[c]
@@ -106,24 +130,32 @@ export function holtWintersGrid(y: number[]): (end: number) => HoltWintersState 
       t = b * (nl - l) + (1 - b) * p * t
       s[i % m] = g * (y[i] - nl) + (1 - g) * si
       l = nl
-      sse[o + i + 1] = acc
-      lv[o + i + 1] = l
-      tr[o + i + 1] = t
-      const so = (o + i + 1) * m
-      for (let j = 0; j < m; j++) se[so + j] = s[j]
+      const k = slot[i + 1]
+      if (k >= 0) {
+        sse[o + k] = acc
+        lv[o + k] = l
+        tr[o + k] = t
+        const so = (o + k) * m
+        for (let j = 0; j < m; j++) se[so + j] = s[j]
+      }
     }
   }
+  const chosen: Array<HoltWintersState | undefined> = new Array(w)
   return (end: number): HoltWintersState => {
+    const k = slot[end]
+    if (k == null || k < 0) throw new Error(`holtWintersGrid: end ${end} was not requested`)
+    const cached = chosen[k]
+    if (cached) return cached
     let best = 0
-    for (let c = 1; c < combos.length; c++) if (sse[c * w + end] < sse[best * w + end]) best = c
-    const so = (best * w + end) * m
-    return {
-      level: lv[best * w + end],
-      trend: tr[best * w + end],
+    for (let c = 1; c < combos.length; c++) if (sse[c * w + k] < sse[best * w + k]) best = c
+    const so = (best * w + k) * m
+    return (chosen[k] = {
+      level: lv[best * w + k],
+      trend: tr[best * w + k],
       phi: combos[best][2],
       seasonal: Array.from(se.subarray(so, so + m)),
       end
-    }
+    })
   }
 }
 

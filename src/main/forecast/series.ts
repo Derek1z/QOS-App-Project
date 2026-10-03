@@ -27,7 +27,9 @@ export interface ForecastKpi {
 
 export interface ScopeRef { scope: 'network' | 'region' | 'district' | 'site' | 'cell'; id: number | null }
 export interface PeriodValue { period: string; value: number | null; complete: boolean; daysWithData: number }
-export interface CellSeries { values: number[]; dates: string[]; lastComplete: string | null }
+/** `dates` is filled for daily series only (the engine reads dates just for
+ *  weekday seasonality); `lastComplete` is always set. */
+export interface CellSeries { values: number[]; dates: string[]; lastComplete: string | null; lastDay: number }
 
 export const CAPACITY_KEYS: Record<Technology, string[]> = {
   '4G': ['connected_users', 'data_volume', 'dl_throughput', 'availability'],
@@ -199,15 +201,15 @@ export async function readCellSeriesBatch(
   const ids = cellIds.join(',')
   const complete =
     grain === 'daily' ? '' : `JOIN period_coverage pc ON pc.grain = '${grain}' AND pc.period_start = w.${t.period} AND pc.is_complete`
+  const daily = grain === 'daily'
   const push = (cell: number, key: string, day: number, v: number): void => {
     let m = out.get(cell)
     if (!m) out.set(cell, (m = new Map()))
     let s = m.get(key)
-    if (!s) m.set(key, (s = { values: [], dates: [], lastComplete: null }))
-    const iso = isoFromEpochDay(day)
+    if (!s) m.set(key, (s = { values: [], dates: [], lastComplete: null, lastDay: day }))
     s.values.push(v)
-    s.dates.push(iso)
-    s.lastComplete = iso
+    if (daily) s.dates.push(isoFromEpochDay(day))
+    s.lastDay = day
   }
 
   // KPI-source series: one query, numeric columns, ordered by cell, kpi, period
@@ -248,6 +250,7 @@ export async function readCellSeriesBatch(
       }
     }
   }
+  for (const m of out.values()) for (const s of m.values()) s.lastComplete = isoFromEpochDay(s.lastDay)
   return out
 }
 

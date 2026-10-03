@@ -29,8 +29,8 @@ function aggTable(entity: string, grain: string): string {
  *  creation and the rebuild on every writable open. is_nc/breach_days follow
  *  the shared core-KPI rule (analytics/ncRule), like every other grain. */
 /** Stored per-cell forecasts (honest-forecasting spec §6.1): one row per
- *  cell × KPI × grain; `points` holds the engine result (points, maeByH,
- *  withheldReason, bandNote). Risk is not stored: it is read against the
+ *  cell × KPI × grain; `points` holds the rest of the engine result as compact
+ *  JSON (see packPoints in forecast/job.ts). Risk is not stored: it is read against the
  *  current kpi_defs target. */
 export const CELL_FORECASTS_SQL = `CREATE TABLE IF NOT EXISTS cell_forecasts (
      cell_id BIGINT, kpi_key VARCHAR, grain VARCHAR, as_of DATE,

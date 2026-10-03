@@ -53,7 +53,9 @@ export function maxBacktestableHorizon(n: number): number {
 /** Forecaster for one model over one series: fit on [0, end), forecast h. */
 type Forecaster = (end: number, h: number) => number
 
-function forecasterFor(model: ModelId, y: number[]): Forecaster {
+/** `ends`: the training ends the caller will ask for (backtest origins and n);
+ *  omitted, every end is available (slower; used by backtestForecastAt). */
+function forecasterFor(model: ModelId, y: number[], ends?: number[]): Forecaster {
   switch (model) {
     case 'naive':
       return (end) => naiveForecast(y, end)
@@ -62,11 +64,11 @@ function forecasterFor(model: ModelId, y: number[]): Forecaster {
     case 'seasonal-naive':
       return (end, h) => seasonalNaiveForecast(y, end, h)
     case 'damped-holt': {
-      const fit = holtGrid(y)
+      const fit = holtGrid(y, ends)
       return (end, h) => holtForecast(fit(end), h)
     }
     case 'holt-winters': {
-      const fit = holtWintersGrid(y)
+      const fit = holtWintersGrid(y, ends)
       return (end, h) => holtWintersForecast(fit(end), h)
     }
   }
@@ -163,7 +165,7 @@ export function forecastSeries(values: number[], dates: string[], opts: Forecast
   let chosenBt = backtest(y, 'naive', naive, naive, H)
 
   for (const m of candidatesFor(n, d, opts.grain)) {
-    const fc = forecasterFor(m, y)
+    const fc = forecasterFor(m, y, [...originsFor(n, m), n])
     const bt = backtest(y, m, fc, naive, H)
     if (bt.errorsByH[0].length < MIN_ORIGINS) continue
     // naive error 0 on these origins: nothing can be shown to beat it

@@ -76,9 +76,13 @@ describe('forecast series data layer (spec §4)', () => {
     const batch = await readCellSeriesBatch(ws.conn, 'weekly', [cssr, prb], [1])
     for (const k of [cssr, prb]) {
       const s = batch.get(1)!.get(k.key)!
-      expect(s.dates).toEqual(['2026-06-29', '2026-07-06', '2026-07-13'])
+      expect(s.values).toHaveLength(3) // weeks 29/06, 06/07, 13/07
       expect(s.lastComplete).toBe('2026-07-13')
+      expect(s.dates).toEqual([]) // dates are carried for daily series only
     }
+    const daily = (await readCellSeriesBatch(ws.conn, 'daily', [cssr], [1])).get(1)!.get(cssr.key)!
+    expect(daily.dates[0]).toBe('2026-06-29')
+    expect(daily.dates).toHaveLength(daily.values.length)
     expect(batch.get(1)!.get('call_setup_success_4g')!.values).toEqual([99, 99, 99])
   })
 

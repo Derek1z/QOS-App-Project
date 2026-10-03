@@ -75,7 +75,11 @@ for (const f of ['app_state.json']) {
 if (ok) {
   const { statSync } = require('node:fs')
   const portableSizeMb = (statSync(exe).size / (1024 * 1024)).toFixed(2)
-  console.log(`verify-portable: SMOKE_OK — Portable binary verified (${exe}, ${portableSizeMb} MB)`)
+  if (process.platform === 'win32') {
+    console.log(`verify-portable: SMOKE_OK — Portable binary verified (${exe}, ${portableSizeMb} MB)`)
+  } else {
+    console.log(`verify-portable: layout OK, smoke NOT run — cross-built on ${process.platform}; run the .exe on Windows to verify (${exe}, ${portableSizeMb} MB)`)
+  }
 } else {
   console.error('verify-portable: FAILED — smoke test did not pass on ' + targetExe + ' (exit code ' + r.status + ')')
   if (out.trim()) console.error(out.slice(-2000))

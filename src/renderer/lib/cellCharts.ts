@@ -353,7 +353,7 @@ export function cellDetailOption(
             type: 'line' as const,
             xAxisIndex: 0,
             yAxisIndex: 0,
-            data: weekPoints(detail.weeks, (w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null)),
+            data: weekPoints(detail.weeks, (w) => w.tchCong ?? null),
             smooth: 0.25,
             symbol: 'circle',
             symbolSize: 5,

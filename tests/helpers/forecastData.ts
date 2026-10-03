@@ -7,7 +7,7 @@ import { refreshAllIntelligence } from '../../src/main/analytics/engine'
  *  expression of `d` (the date) and `i` (days since `from`) for trends. */
 export async function fillDays(
   ws: RealWorkspace, cellId: number, from: string, to: string,
-  core: { prb?: number | string; users?: number | string; volume?: number | string },
+  core: { prb?: number | string; users?: number | string; volume?: number | string; thr?: number | string },
   kpis: Record<string, number | string>, technology = '4G'
 ): Promise<void> {
   const range = `range(DATE '${from}', DATE '${to}' + INTERVAL 1 DAY, INTERVAL 1 DAY) r(d)`
@@ -17,7 +17,7 @@ export async function fillDays(
     `INSERT INTO fact_cell_daily (date_id, cell_id, prb_utilization, data_volume_mb, connected_users,
        dl_throughput_kbps, availability_pct, source_import_id)
      SELECT CAST(strftime(d, '%Y%m%d') AS INTEGER), ${cellId}, ${e(core.prb)}, ${e(core.volume)},
-       ${e(core.users)}, NULL, NULL, 1 FROM ${range}`
+       ${e(core.users)}, ${e(core.thr)}, NULL, 1 FROM ${range}`
   )
   for (const [key, v] of Object.entries(kpis)) {
     await ws.conn.run(

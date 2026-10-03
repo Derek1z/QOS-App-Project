@@ -28,11 +28,12 @@ export function getAvailableTelemetryMetrics(
   const latestIdx = latestWeek ? res.weeks.indexOf(latestWeek) : -1
 
   if (tech === '2G') {
-    const tchData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : null))
-    const sdcchData = res.weeks.map((w) => w.sdcchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 6) * 10) / 10 : null))
-    const cssrData = res.weeks.map((w) => w.cssr ?? (w.isNc ? 96.2 : 99.4))
-    const dropData = res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.4 : 0.5))
-    const voiceData = res.weeks.map((w) => w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null))
+    // imported values only (honest-forecasting spec §8): a KPI that was not imported is a gap
+    const tchData = res.weeks.map((w) => w.tchCong ?? null)
+    const sdcchData = res.weeks.map((w) => w.sdcchCong ?? null)
+    const cssrData = res.weeks.map((w) => w.cssr ?? null)
+    const dropData = res.weeks.map((w) => w.callDrop ?? null)
+    const voiceData = res.weeks.map((w) => w.voiceTraffic ?? null)
 
     const latestTch = (latestIdx >= 0 ? tchData[latestIdx] : null) ?? null
     const latestSdcch = (latestIdx >= 0 ? sdcchData[latestIdx] : null) ?? null
@@ -110,17 +111,18 @@ export function getAvailableTelemetryMetrics(
   }
 
   if (tech === '3G') {
-    const cssrData = res.weeks.map((w) => w.cssr ?? (w.isNc ? 94.2 : 99.1))
-    const dropData = res.weeks.map((w) => w.callDrop ?? (w.isNc ? 2.3 : 0.4))
-    const dasrData = res.weeks.map((w) => w.dasr ?? (w.isNc ? 95.8 : 99.4))
-    const congData = res.weeks.map((w) => w.tchCong ?? (w.prbAvg != null ? Math.round((w.prbAvg / 5) * 10) / 10 : 0))
-    const breachData = res.weeks.map((w) => w.breachDays ?? (w.isNc ? 1 : 0))
+    const cssrData = res.weeks.map((w) => w.cssr ?? null)
+    const dropData = res.weeks.map((w) => w.callDrop ?? null)
+    const dasrData = res.weeks.map((w) => w.dataAccess ?? w.dasr ?? null)
+    // the column the user mapped to "PRB / Traffic Utilization (%)" at import
+    const congData = res.weeks.map((w) => w.trafficUtil ?? w.prbAvg ?? null)
+    const breachData = res.weeks.map((w) => w.breachDays ?? null)
 
     const latestCssr = (latestIdx >= 0 ? cssrData[latestIdx] : null) ?? null
     const latestDrop = (latestIdx >= 0 ? dropData[latestIdx] : null) ?? null
     const latestDasr = (latestIdx >= 0 ? dasrData[latestIdx] : null) ?? null
     const latestCong = (latestIdx >= 0 ? congData[latestIdx] : null) ?? null
-    const latestBreach = (latestIdx >= 0 ? breachData[latestIdx] : null) ?? 0
+    const latestBreach = (latestIdx >= 0 ? breachData[latestIdx] : null) ?? null
 
     return [
       {
@@ -164,8 +166,8 @@ export function getAvailableTelemetryMetrics(
       },
       {
         id: 'cong_3g',
-        label: '3G Power & CE Congestion (%)',
-        shortLabel: 'Congestion',
+        label: '3G Peak Traffic Utilization (%)',
+        shortLabel: 'Traffic Util',
         unit: '%',
         target: null,
         targetLabel: null,
@@ -185,7 +187,7 @@ export function getAvailableTelemetryMetrics(
         color: '#94a3b8',
         areaColor: 'rgba(148, 163, 184, 0.15)',
         currentValue: latestBreach,
-        formattedCurrent: `${latestBreach} Days`,
+        formattedCurrent: latestBreach != null ? `${latestBreach} Days` : '—',
         data: breachData
       }
     ]

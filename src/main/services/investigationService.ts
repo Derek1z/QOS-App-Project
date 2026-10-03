@@ -94,27 +94,31 @@ function valueOf(w: InvestigationWeek | undefined, m: string): number | null {
       return w.volumeMb
     case 'availability':
       return w.availability
+    // imported values only (honest-forecasting spec §8): a KPI that was not
+    // imported is null — never a constant, never a formula of another KPI
     case 'tch_cong':
-      return w.tchCong ?? (w.prbAvg != null ? Math.min(20, round2(w.prbAvg / 5)) : null)
+      return w.tchCong ?? null
     case 'sdcch_cong':
-      return w.sdcchCong ?? (w.prbAvg != null ? Math.min(15, round2(w.prbAvg / 6)) : null)
+      return w.sdcchCong ?? null
     case 'cssr_2g':
     case 'cssr_3g':
     case 'cssr_4g':
-      return w.cssr ?? (w.isNc ? 96.4 : 99.2)
+      return w.cssr ?? null
     case 'call_drop_2g':
     case 'call_drop_3g':
     case 'call_drop_4g':
-      return w.callDrop ?? (w.isNc ? 2.3 : 0.5)
+      return w.callDrop ?? null
     case 'voice_traffic':
-      return w.voiceTraffic ?? (w.users != null ? Math.round(w.users * 0.45) : null)
+      return w.voiceTraffic ?? null
     case 'traffic_util_3g':
+      // the column the user mapped to "PRB / Traffic Utilization (%)" at import
       return w.trafficUtil ?? w.prbAvg
     case 'data_access_3g':
-      return w.dataAccess ?? (w.isNc ? 95.5 : 99.0)
+      return w.dataAccess ?? null
     case 'data_failure_4g':
-      return w.dataFailure ?? (w.isNc ? 2.5 : 0.4)
+      return w.dataFailure ?? null
     case 'throughput_3g':
+      // same counter, kbps → Mbps
       return w.speedMbps ?? (w.throughputKbps != null ? round2(w.throughputKbps / 1024) : null)
     case 'nc':
       return w.isNc ? 1 : 0
@@ -391,6 +395,10 @@ export async function getInvestigation(
     }
   })
   const kpi = (m: string): EvidenceKpi | undefined => evidence.find((e) => e.metric === m)
+  // every rule reading a KPI that was not imported is skipped and said so
+  const notAssessed = evidence
+    .filter((e) => e.metric !== 'nc' && e.current == null)
+    .map((e) => `Not assessed: ${e.label} not imported`)
 
   // 5. Technology-aware deterministic findings with calibrated language (§48)
   const findings: DiagnosisFinding[] = []
@@ -747,6 +755,7 @@ export async function getInvestigation(
     current,
     evidence,
     findings,
+    notAssessed,
     hypotheses,
     events,
     status,

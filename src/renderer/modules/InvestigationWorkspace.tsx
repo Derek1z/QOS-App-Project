@@ -928,6 +928,11 @@ export default function InvestigationWorkspace(): React.JSX.Element {
       {/* Sub-Tab 2: Root Cause Analysis */}
       {activeTab === 'rca' && result && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+          {result.notAssessed.length > 0 && (
+            <div style={{ gridColumn: '1 / -1', background: 'var(--bg-card)', padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '12px', color: 'var(--text-dim)' }}>
+              {result.notAssessed.map((t) => <div key={t}>{t}</div>)}
+            </div>
+          )}
           {result.hypotheses.map((h, i) => (
             <div key={i} style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>

@@ -2805,6 +2805,7 @@ function demoInvestigation(
     current,
     evidence,
     findings,
+    notAssessed: evidence.filter((e) => e.metric !== 'nc' && e.current == null).map((e) => `Not assessed: ${e.label} not imported`),
     hypotheses,
     events: events.slice(0, 40),
     status: stored.status,

@@ -1137,6 +1137,8 @@ export interface InvestigationResult {
   } | null
   evidence: EvidenceKpi[]
   findings: DiagnosisFinding[]
+  /** "Not assessed: <KPI> not imported" for every rule skipped for missing data */
+  notAssessed: string[]
   hypotheses: Hypothesis[]
   events: InvestigationEvent[]
   status: InvestigationStatus

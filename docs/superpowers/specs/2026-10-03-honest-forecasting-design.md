@@ -203,7 +203,7 @@ Run-to-run noise on this laptop is larger than the cap's effect (the monthly wri
 
 Optimisations that kept results identical (tests): dates carried for daily series only; packed typed-array messages to the pool; Holt fits kept only at the ends that are read, with the fit selection cached per end; compact stored JSON. Single-threaded, the engine costs 0.115 ms per 52-week series.
 
-**Ruling (2026-10-03, awaiting the user's sign-off): the cap stays at 20 and the budget is missed (30–37 s).** A cap of 16 saves under 2 s of compute; lowering it to 10 saves 5 s but leaves 11- and 12-week horizons with no backtest errors on 52 weeks of history (an origin needs an actual 12 weeks later), so the 12-week capacity view would lose its range and accuracy figure. Projected on this laptop: ~74 s at 60,000 cells, ~3 min at 150,000 cells — in the background, only when a period completes.
+**Ruling (2026-10-03, approved by the user 2026-10-03): the cap stays at 20 and the budget is missed (30–37 s).** A cap of 16 saves under 2 s of compute; lowering it to 10 saves 5 s but leaves 11- and 12-week horizons with no backtest errors on 52 weeks of history (an origin needs an actual 12 weeks later), so the 12-week capacity view would lose its range and accuracy figure. Projected on this laptop: ~74 s at 60,000 cells, ~3 min at 150,000 cells — in the background, only when a period completes.
 
 ---
 

@@ -1,222 +1,178 @@
-# 📡 2G/3G/4G QoS Network Intelligence Workstation
+# 2G/3G/4G QoS Network Intelligence Workstation
 
-> **Portable, multi-technology telecom QoS analytics and regulatory compliance workstation built on Electron, React 19, and embedded DuckDB.**
+A portable desktop app for analysing 2G, 3G and 4G cell KPIs against regulatory targets: which cells are non-compliant (NC), for how long, which to fix first, and where things are heading. Built on Electron, React 19 and an embedded DuckDB database; everything runs offline on one machine.
+
+> **Status:** active development on branch `v2`. Checks run on Linux; the Windows portable build has not yet been verified on Windows since the October 2026 changes (import process, DuckDB packaging).
 
 ---
 
-## 📸 Application Snapshots & Gallery
+## Screenshots
 
-| 📊 Executive Overview & Multi-Tech Dynamic Cards | 🕵️ 3G/4G Investigation Workspace & Diagnostic Cards |
+These were taken on 29/08/2026 and predate the October changes (NC periods, complete periods, forecasting).
+
+| Executive Overview | Investigation Workspace |
 | :---: | :---: |
 | ![Executive Overview](docs/screenshots/executive_overview.png) | ![Investigation Workspace](docs/screenshots/investigation_workspace.png) |
-| *Executive KPI strip, breach count toggles & dynamic cards* | *5-Panel multi-grid telemetry, 3G diagnostic counters & RCA* |
 
-| 🗺️ Ghana GIS Regional Choropleth Map | 📥 Multi-Vendor Data Import & Quality Engine |
+| Ghana Health Matrix | Data Manager |
 | :---: | :---: |
-| ![Ghana GIS Map Analytics](docs/screenshots/ghana_map_analytics.png) | ![Data Manager Import](docs/screenshots/data_manager_import.png) |
-| *16-Region GeoJSON map with 253 district drill-down* | *Drag-and-drop CSV/XLSX parser with auto-alias detection* |
+| ![Ghana map](docs/screenshots/ghana_map_analytics.png) | ![Data Manager import](docs/screenshots/data_manager_import.png) |
 
 ---
 
-## 🚀 Current Application State (100% Production Ready)
+## What goes in
 
-The workstation is fully built, hardened, and verified across all **13 core analytics modules**, featuring an offline embedded **DuckDB** columnar data engine, automated **National Communications Authority (NCA)** regulatory rule evaluation, multi-vendor counter auto-mapping (Huawei, Ericsson, Nokia), and 1-click executive slide deck and native Excel chart exports.
+**Files:** `.xlsx` workbooks (every sheet is read, so per-technology or multi-week sheets work; first row = headers) and comma-separated `.csv` / `.txt`. Legacy `.xls` is rejected with a message to save it as `.xlsx` or CSV. Semicolon- or tab-separated text is not supported.
 
-### Verification Status
-* **TypeScript Compiler**: `0 errors` (`npm run typecheck`)
-* **Automated Test Suite**: `25/25 suites passed` (`npm run smoke` $\to$ `SMOKE_OK`)
-* **Windows Portable Executable**: `release/2G_3G_4G_QoS.exe` (119.48 MB, standalone)
-* **Windows Portable Folder Archive**: `release/2G_3G_4G_QoS_Portable_Folder.zip` (225.59 MB, portable `.zip`)
+**Columns:** the importer suggests a mapping from the column names (Huawei-style headers such as `4G Peak Hour Traffic Utilization_NCA(%)` or `RRC Connected UEs (Avg)`) and remembers your mapping per file layout. Every KPI the technology defines can be mapped; the core columns are date, cell, site, district, region, PRB/utilisation, users, data volume, throughput and availability.
 
----
+**Dates:** day-first (`07/05/2026` is 7 May).
 
-## 🛠️ Complete Module Map (13 Interactive Modules)
-
-### 1. 📊 Executive Overview
-* **Interactive Ghana GIS Choropleth**: 16-Region GeoJSON map with 1-click drill-down into 253 District boundaries. Automatically reverses color scales for non-compliance metrics (higher PRB/NC = darker red) while keeping health scores standard. Clicking any region/district filters the workstation or opens its investigation.
-* **Network Health Score Line Chart**: Multi-week health trend with Watch threshold mark and component tooltip breakdown.
-* **NC Movement Stacked Area**: Live tracking of weekly lifecycle transitions (`New NC`, `Recurring NC`, `Persistent NC`, `Chronic NC`, `Recovering`).
-* **Top Priorities Preview**: Real-time top-8 priority queue preview powered by the 6-component priority scoring engine.
-
-### 2. 🛡️ NC Intelligence (Regulatory Non-Compliance)
-* **Lifecycle Distribution**: Categorizes cells into `Healthy`, `New NC`, `Recurring NC`, `Persistent NC`, `Chronic NC`, or `Recovering`.
-* **Trajectory Radar**: Evaluates multi-signal trend trajectory (`Improving`, `Stable`, `Worsening`).
-* **Severity Matrix**: Four-tier urgency rating (`Normal`, `Watch`, `High`, `Critical`).
-* **Interactive Triage Filter Bar**: Keyboard-accessible click-to-filter pills for rapid queue isolation.
-* **Ruleset Versioning Editor**: Modifying thresholds creates a versioned audit trail and triggers transactional recomputation without altering raw facts.
-
-### 3. 🎯 Priority Center (Cross-Scope Workflow Queue)
-* **Unified Workflow Queue**: Joins cells, sites, and districts with 0–100 priority scores and active `entity_action_status`.
-* **SLA Overdue Tracking**: Automatically flags entities past target review dates (excluding `Resolved` / `Deferred`).
-* **Workflow Status Assignment**: Assigns entities across 7 workflow states (`Unreviewed`, `Investigating`, `Escalated`, `Optimization in progress`, `Monitoring`, `Resolved`, `Deferred`) with owner tag and external ticket ID.
-
-### 4. 📱 Cell Intelligence
-* **Searchable Cell Table**: Paginated DuckDB server-side search by cell name, site, district, region, lifecycle, trend, severity, PRB, breach days, and priority score.
-* **Detail Drawer**: Slide-out drawer rendering an aligned 5-grid multi-chart (PRB + threshold mark, throughput, users, volume on shared ISO-week axes with linked cursors) and weekly NC timeline strip.
-
-### 5. 📈 Performance Analysis
-* **Percentile Distribution Curves**: P0–P100 percentile plots with P50/P90 threshold markers for PRB, throughput, and payload.
-* **PRB-vs-Throughput 4-Quadrant Scatter**: Categorizes cells into engineering quadrants based on active ruleset thresholds.
-* **Correlation Matrix**: Color-coded Pearson correlation matrix between traffic, users, PRB, availability, and drops.
-
-### 6. 🔬 Comparison Lab
-* **Period-vs-Period Delta View**: Latest vs previous ISO week delta comparison across Cell, Site, District, and Region scopes.
-* **Region-vs-Region Delta View**: Regional performance vs network baseline.
-* **Visualization Modes**: Toggle between `Actual`, `Indexed`, and `Delta` views with ▲/▼ delta badges colored by impact (direction-aware).
-* **Difference Ranking Table**: Ranks worst-degrading cells first with transition tags (`Still NC`, `New NC`, `Recovered`).
-
-### 7. 🌐 Network Explorer
-* **Hierarchical Navigation**: Region $\to$ District $\to$ Site $\to$ Cell drill-down with interactive breadcrumbs.
-* **Health Rollups**: Entity nodes roll up health scores directly from cell health history. Leaf cell clicks open the detail drawer.
-
-### 8. 🔍 Investigation Workspace
-* **Calibrated Language Diagnosis**: Generates findings in evidence-calibrated language (`consistent with`, `suggests`, `evidence supports`).
-* **5-Hypothesis Support Engine**: Evaluates 5 root-cause hypotheses (Radio Link Drop, Iub/Transport Congestion, CE/Power Exhaustion, Interference, Hardware Fault) with supporting and contradicting evidence lists.
-* **Before / After Intervention Analysis**: Compares up to 8 weeks before vs after an optimization date with direction-aware badges.
-* **Audit Timeline & Notes**: Combines user notes with system-audited lifecycle, severity, and status changes. Exports formatted Markdown reports.
-
-### 9. 🔮 Forecasting & Early Warning
-* **4-Model Tournament Engine**: Runs a holdout tournament between 4 time-series algorithms:
-  1. **SARMA** (Seasonal Auto-Regressive Moving Average)
-  2. **Triple Exponential Smoothing** (Holt-Winters)
-  3. **Simple Moving Average** (SMA)
-  4. **Simple Linear Regression**
-* **Best-Fit Selection**: Selects optimal model based on minimum RMSE and AIC with 1 to 6-week horizon projections.
-* **Early-Warning Risk Classification**: Classifies entities into `Stable`, `Watch`, `At Risk`, `Likely Breach`, or `Already Breached`.
-* **Sparse Data Suppression**: Suppresses forecasts with explicit reasons if fewer than 2 observations exist.
-
-### 10. 📄 Reporting Center
-* **Report Pack Generator**: Generates 5 template types (*Executive*, *Engineering*, *Investigation*, *Capacity Watch*, *Custom*).
-* **Multi-Format Export**: Markdown, CSV, styled dark-theme HTML, printToPDF, native OOXML 13-sheet Excel (`.xlsx`), and editable PowerPoint (`.pptx`).
-* **Native OOXML Excel Charts**: Injects real editable chart objects (`xl/charts/*.xml`) into the Excel zip container so KPI trends, region bar charts, and summary charts remain natively editable in Microsoft Excel.
-* **Saved Templates & Schedules**: Automates report generation on weekly, monthly, or quarterly schedules with open-time overdue banners.
-
-### 11. 🌡️ Health Matrix
-* **Scope Heatmap**: Multi-week entity heatmap (Cell, Site, District, Region) across 4 to 26-week windows, sorted worst-first or A–Z.
-
-### 12. 📥 Data Manager (Import Hub & Quality Engine)
-* **Multi-Tech CSV/XLSX Ingestion Hub**: Drag-and-drop file analyzer with column alias auto-detection (Huawei, Ericsson, Nokia headers).
-* **Starter CSV Template Generator**: 1-click creation of starter CSV files for 2G GSM, 3G UMTS, 4G LTE, and Combined datasets.
-* **Derived KPI Formula Detection**: Auto-detects and constructs 3G Downlink Power Congestion, Uplink/Downlink CE Congestion, Code Blocking, Iub/TNL Failures, Physical Channel Failures, and Inter-RAT HO Drops.
-* **Atomic Worker Pipeline**: Background worker thread handles staging $\to$ validation $\to$ merge $\to$ aggregate refresh with automatic rollback on error. Deduplicates on Date+Cell (oldest wins).
-* **Raw-Source 90-Day Archive**: Gzip copies stored in `workspaces/<name>.qosdb.raw/` with 90-day retention auto-purge.
-
-### 13. 🗄️ Workspace & Maintenance
-* **Workspace Lifecycle**: Create, open, validate, close, and auto-restore `.qosdb` DuckDB workspaces.
-* **Read-Only & Write Lock**: Prevents multi-instance corruption via per-workspace write locks and read-only fallback mode.
-* **Point-in-Time Snapshots**: Create, restore, and diff point-in-time workspace snapshots.
-* **Workspace Maintenance Tools**: Data Manager tab providing `Integrity Check`, `Optimize` (checkpoint), `Compact` (rebuild database), `Rebuild Intelligence`, and `Purge Expired Raw`.
+**Duplicates:** one row per cell per day. A row for a cell and day that is already in the workspace is kept and the new one ignored.
 
 ---
 
-## 📡 Technology KPI Reference & Derived Formulas
+## Non-compliance (NC)
 
-### Core & High-Level KPIs
-| Tech | Metric Key | Label | Unit | Target Threshold | Direction |
-| :---: | :--- | :--- | :---: | :---: | :---: |
-| **2G** | `call_setup_success_2g` | 2G CSSR | % | $\ge 95.0\%$ | Higher is better |
-| **2G** | `tch_drop_rate` | 2G TCH Drop Rate | % | $\le 1.0\%$ | Lower is better |
-| **3G** | `call_setup_success_3g` | 3G Call Connection Success Rate | % | $\ge 95.0\%$ | Higher is better |
-| **3G** | `call_drop_rate_3g` | 3G Call Drop Rate | % | $\le 1.0\%$ | Lower is better |
-| **3G** | `data_access_success_3g` | 3G Data Access Success Rate | % | $\ge 98.0\%$ | Higher is better |
-| **3G** | `availability_3g` | 3G Cell Availability | % | $\ge 99.5\%$ | Higher is better |
-| **3G** | `hsdpa_throughput` | HSDPA User Speed | kbps | $\ge 2000\text{ kbps}$ | Higher is better |
-| **4G** | `prb_utilization` | 4G PRB Utilization | % | $\le 80.0\%$ | Lower is better |
-| **4G** | `volte_cssr` | VoLTE Call Setup Success Rate | % | $\ge 98.0\%$ | Higher is better |
-| **4G** | `volte_cdr` | VoLTE Call Drop Rate | % | $\le 0.5\%$ | Lower is better |
-| **4G** | `dl_throughput` | 4G Downlink Speed | kbps | $\ge 10000\text{ kbps}$ | Higher is better |
+NC is judged on the regulatory KPIs of each technology, against targets you can edit (**Targets → KPI Targets**, or **KPI Definitions**):
 
-### Auto-Derived Diagnostic Formulas
-* **3G Downlink Power Congestion (`3g_dl_power_congestion`)**:  
-  `VS.RRC.Rej.DLPower.Cong` + `VS.RAB.FailEstabPS.DLPower.Cong` + `VS.RAB.FailEstabCS.DLPower.Cong`
-* **3G Uplink CE Congestion (`3g_ul_ce_congestion`)**:  
-  `VS.RRC.Rej.ULCE.Cong` + `VS.RAB.FailEstabPS.ULCE.Cong` + `VS.RAB.FailEstabCS.ULCE.Cong`
-* **3G Downlink CE Congestion (`3g_dl_ce_congestion`)**:  
-  `VS.RRC.Rej.DLCE.Cong` + `VS.RAB.FailEstabPS.DLCE.Cong` + `VS.RAB.FailEstabCS.DLCE.Cong`
-* **3G Downlink Code Congestion (`3g_dl_code_congestion`)**:  
-  `VS.RRC.Rej.Code.Cong` + `VS.RAB.FailEstabCS.Code.Cong`
-* **3G Iub Transport Congestion & Link Failures (`3g_iub_tn_congestion`)**:  
-  `VS.RRC.Rej.TNL.Fail` + `VS.RAB.FailEstabCS.TNL` + `VS.RAB.FailEstabCS.IubFail` + `VS.RAB.FailEstabPS.IubFail`
-* **3G Physical Channel Failures (`3g_phych_failures`)**:  
-  `VS.RAB.FailEstabPS.PhyChFail` + `VS.FailRBRecfg.PhyChFail` + `VS.FailRBSetup.PhyChFail`
-* **3G PS Inter-RAT Handover Drops (`3g_irat_ho_failures`)**:  
-  `VS.IRATHO.FailOutPS`
+| Technology | NC KPIs (default target) |
+| :---: | :--- |
+| 2G | Call Connection Success Rate (≥ 95%), Call Drop Rate (≤ 1%), TCH Congestion (≤ 1%), SDCCH Congestion (≤ 1%) |
+| 3G | Call Connection Success Rate (≥ 95%), Call Drop Rate (≤ 1%), Data Access Success Rate (≥ 95%) |
+| 4G | Call Connection Success Rate (≥ 95%), Call Drop Rate (≤ 1%), Data Service Access Failure (≤ 1%), Peak Hour PRB Utilization (≤ 80%) |
 
----
+A day is bad when any NC KPI misses its target. A week is NC with ≥ 1 bad day, a month with ≥ 3 bad days (both editable).
 
-## 🛠️ Multi-Platform Native Bindings & Architecture
+### NC periods
 
-To support cross-compilation of portable Windows executables from Linux hosts, DuckDB native binaries are managed via a dedicated script:
+Each cell gets one label per day, week and month (first match wins). Defaults, all editable under **Targets → NC Periods**; daily values are the weekly ones × 7:
 
-* **Native Binding Script**: [`scripts/ensure-duckdb-bindings.cjs`](scripts/ensure-duckdb-bindings.cjs)
-* **Supported Platforms**:
-  * Windows x64: `node_modules/@duckdb/node-bindings-win32-x64/duckdb.node` & `duckdb.dll`
-  * Linux x64: `node_modules/@duckdb/node-bindings-linux-x64/duckdb.node` & `libduckdb.so`
-* **ASAR Unpacking**: Specified in `package.json` under `build.asarUnpack` (`**/*.node`, `**/*.dll`, `**/*.so`, `**/node_modules/@duckdb/**`) so Electron loads native drivers directly without temporary file extraction errors.
+| Label | Meaning | Weekly | Monthly |
+| --- | --- | --- | --- |
+| Chronic NC | NC for a long unbroken run | ≥ 7 weeks | ≥ 3 months |
+| Persistent NC | NC for a shorter unbroken run | ≥ 3 weeks | ≥ 2 months |
+| Intermittent NC | NC again and again with gaps | 3 runs in 7 weeks | 3 runs in 6 months |
+| Recurring NC | NC again soon after the last run ended | within 3 weeks | within 2 months |
+| New NC | NC, none of the above | | |
+| Recovering | not NC, but was recently | ≤ 3 weeks ago | ≤ 2 months ago |
+| Healthy | not NC recently (or never) | | |
+
+A week counts for the month(s) its bad days fall in, so a chronic run found in daily data is visible in weekly and monthly too. Full rules: [`docs/superpowers/specs/2026-09-29-nc-lifecycle-design.md`](docs/superpowers/specs/2026-09-29-nc-lifecycle-design.md).
+
+### Complete periods
+
+"Latest week" or "latest month" always means the newest **complete** one (every day imported). A week still in progress is shown, marked `W40 · 3 of 7 days`, but never treated as the current period or compared with full ones. Details: [`docs/superpowers/specs/2026-10-01-complete-periods-design.md`](docs/superpowers/specs/2026-10-01-complete-periods-design.md).
 
 ---
 
-## 🚀 Commands & Development Workflow
+## Screens
+
+In the sidebar:
+
+| Screen | What it shows |
+| --- | --- |
+| **Executive Overview** | Network health and NC summary for the selected technology, the imported KPI cards, NC movement over time, KPI target-breach telemetry |
+| **NC & Breach Analytics** | NC labels, trend (Improving / Stable / Worsening), severity (Normal / Watch / High / Critical) across daily, weekly and monthly views |
+| **Smart Priority Queue** | Cells, sites and districts ranked 0–100 (bands Critical 90+, High 75+, Medium 50+, Watch 25+, Low); workflow status, owner, ticket and review date per entity, with overdue flags |
+| **Forecasting & Early Warning** | Backtested forecasts of imported KPIs, per-cell risk against targets, capacity growth — see below |
+| **Cell Investigation** | One cell, site or district: KPI history, rule-based findings in calibrated language, root-cause hypotheses, before/after comparison around an intervention date, notes, Markdown export |
+| **Network Explorer** | Region → district → site → cell drill-down with health roll-ups |
+| **Ghana Health Matrix** | 16-region map with 253-district drill-down, and a 4–26-week health heatmap |
+| **Performance Analysis** | Distributions, a PRB-vs-throughput quadrant scatter and a correlation matrix |
+| **Data Manager** | Import (analyse → map → preview → import), starter CSV templates, import history and data quality, raw-file archive, maintenance |
+| **KPI Definitions & Derived** | Per-technology KPI catalogue (targets, direction, aggregation, aliases) and derived KPIs |
+| **Workspace Settings** | Workspace info and recent workspaces |
+
+Also: **Reports** (top bar → Export Packs) and **Comparison Lab** (command palette → Compare Periods or Regions).
+
+### Priority score
+
+Six components weighted 25 / 20 / 15 / 15 / 15 / 10 (PRB severity, persistence, user impact, traffic impact, throughput degradation, worsening trend), plus 20% for how far the cell's KPIs miss their targets. Four alternative modes (customer impact, congestion, persistence, deterioration) re-weight the six.
+
+### Reports
+
+Executive, Engineering, Investigation, Capacity Watch and Custom packs, as Markdown, CSV, HTML, PDF, Excel (`.xlsx`, with native editable charts) or PowerPoint (`.pptx`). Saved report definitions can be scheduled weekly, monthly or quarterly; the app flags overdue ones when it opens (it does not run in the background when closed).
+
+### Derived KPIs
+
+Eight built-in 3G formulas from Huawei counters are suggested when their source columns are present: DL Power, UL CE, DL CE and Downlink Code congestion, Iub transport congestion, physical-channel failures, PS IRAT handover failures and radio-link sync-loss drops. You can define your own (sum, average or ratio) under KPI Definitions.
+
+---
+
+## Forecasting
+
+Every number on the Forecasting screen is an imported value, a forecast from imported values, or an accuracy figure measured on data the model did not see. Full design: [`docs/superpowers/specs/2026-10-03-honest-forecasting-design.md`](docs/superpowers/specs/2026-10-03-honest-forecasting-design.md).
+
+- **Models:** naive (next = last), drift, damped-trend Holt; for daily data also seasonal naive and Holt-Winters with a weekly season.
+- **Backtest:** each model is refitted at up to 20 past points using only earlier data, and scored against naive (MASE). A model is used only if it beats naive; otherwise the screen says *no model beats 'same as last period'*.
+- **Range:** the 80% band comes from those past errors; with fewer than 5 it is not drawn.
+- **Quality:** Good, Fair, Naive only, or Withheld (fewer than 4 complete periods, or a cell with no data in the latest complete period).
+- **Risk:** Already Breached, Likely Breach, At Risk, Watch, Stable — read against the current target, so changing a target updates risk immediately. KPIs without a target show growth instead.
+- **Horizons:** 1–12 weeks, 1–6 months, 7–28 days; a horizon longer than the history can test is disabled with the reason.
+- **Per-cell forecasts** for KPIs with a target and the capacity KPIs are stored and recomputed in the background (a pool of helper processes) when a week or month completes. Measured on a 4-core laptop (Intel i7-6820HQ): 30–37 s for 25,000 cells. The app stays usable meanwhile.
+- **Hints** in the risk table (capacity, RF, hardware, parameters, traffic surge) are rules of thumb from imported values, and say so; with no data to judge by they say what is missing.
+
+---
+
+## Workspaces and data safety
+
+- A workspace is one `.qosdb` DuckDB file. Opening it takes a write lock; a second copy of the app can open it read-only.
+- Each import runs in a separate process on its own connection, backs the workspace up first, and rolls back on error.
+- The original import files are kept gzip-compressed in `<workspace>.qosdb.raw/` for 90 days.
+- Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.
+- Workspace snapshots (create, compare, restore) exist in the backend but have no screen yet.
+
+---
+
+## Development
+
+Developed with Node.js 22 and npm.
 
 ```bash
-# Install dependencies and ensure multi-platform DuckDB binaries exist
-npm install
-
-# Launch local development server with Vite HMR + Electron
-npm run dev
-
-# Run TypeScript compiler checks across Node main and Web renderer
+npm install              # also fetches the DuckDB engines for Windows and Linux
+npm run dev              # Electron + Vite with hot reload
+npm run preview:web      # the UI in a browser on demo data (no Electron)
 npm run typecheck
-
-# Run the 25-suite headless Electron smoke test
-npm run smoke
-
-# Compile production Vite assets
-npm run build
-
-# Package portable single-file Windows executable (release/2G_3G_4G_QoS.exe)
-npm run dist:portable
-
-# Package portable Windows ZIP archive folder (release/2G_3G_4G_QoS_Portable_Folder.zip)
-npm run dist:zip
+npm test                 # vitest, real DuckDB workspaces
+npm run smoke            # headless end-to-end run of the app
+npm run verify:packaged  # packages a Linux build and runs the smoke test inside it
+npm run bench:forecast   # times a full forecast recompute on 25,000 generated cells
+npm run dist:portable    # Windows portable .exe in release/
+npm run dist:zip         # Windows portable folder as a .zip
 ```
 
----
+Each platform build ships only its own DuckDB engine (`build.win.files` / `build.linux.files` in `package.json`); `scripts/check-package-layout.cjs` fails a build that packs the wrong engine, misses the import or forecast process scripts, or packs anything outside the app. On Linux, `dist:portable` can only check that layout — run the `.exe` on Windows to verify it.
 
-## 📂 Source Code Structure
+### Layout
 
 ```text
-├── build/                      # Generated multi-size application icons (icon.ico, icon.png, favicon.png)
-├── scripts/                    # Build, icon, and native binding scripts
-│   ├── ensure-duckdb-bindings.cjs
-│   ├── generate-icon.cjs
-│   ├── zip-portable-folder.cjs
-│   ├── clean-build-headroom.cjs
-│   └── verify-portable.cjs
-├── shared/
-│   └── api.ts                  # Shared TypeScript interfaces, IPC channel names, derived KPI definitions
-├── src/
-│   ├── main/                   # Electron Main Process (Node.js)
-│   │   ├── index.ts            # Main process entrypoint, window initialization, icon resolution
-│   │   ├── ipc.ts              # IPC channel router connecting UI to query and background services
-│   │   ├── smoke.ts            # Headless 25-suite validation pipeline
-│   │   ├── analytics/          # NC logic, classification, priority score, investigation rules
-│   │   ├── import/             # Worker thread importer, CSV/XLSX parser, atomic merge
-│   │   ├── services/           # Analytics query engine, KPI service, forecasting, reporting, snapshots
-│   │   └── workspace/          # DuckDB DDL database schema, workspace manager, write locking
-│   ├── preload/                # ContextBridge preload script isolating renderer from Node.js
-│   └── renderer/               # React 19 Frontend UI
-│       ├── App.tsx             # Main desktop application frame & navigation shell
-│       ├── components/         # AppLogo vector branding component, Chip badges, modals
-│       ├── lib/                # ECharts options, Ghana GeoJSON maps, forecast algorithms, preview API
-│       ├── modules/            # 13 Interactive Analytics and Management Modules
-│       └── styles.css          # Dark engineering theme, focus-visible accessibility, prefers-reduced-motion
-├── package.json
-└── tsconfig.json
+shared/             types and rules shared by both processes (API, NC labels, periods, forecast horizons)
+src/main/
+  analytics/        NC periods, complete periods, priority, health, forecasting engine and risk rules
+  forecast/         forecast data layer, stored forecasts, background scheduler and process pool
+  import/           file reading, mapping, the import process, aggregates
+  services/         query, forecast, investigation, reporting, KPI, snapshot and maintenance services
+  workspace/        schema, workspace manager, write lock
+  smoke.ts, bench.ts
+src/preload/        the IPC bridge exposed to the UI
+src/renderer/       React UI: modules (screens), shell, charts and helpers, demo data for preview:web
+scripts/            build, packaging and verification scripts
+tests/              vitest suites
+docs/superpowers/   specs and plans for the 2026 changes
 ```
+
+`4G_QoS_Network_Intelligence_Master_Design_Spec.md` and `IMPLEMENTATION_PLAN.md` are the original design documents and describe the first version, not the app as it is now.
 
 ---
 
-## ⚖️ License
+## Known limits
 
-Private & Confidential. Copyright © 2026. All rights reserved.
+- Legacy `.xls`, `.xlsb`, `.ods` and non-comma CSV are not imported.
+- Report schedules only run while the app is open.
+- Workspace snapshots have no screen yet.
+- The Windows build since the October 2026 changes is untested on Windows.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

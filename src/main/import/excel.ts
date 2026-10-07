@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs'
-import * as XLSX from 'xlsx'
 import { createWriteStream, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,16 +6,23 @@ import { randomUUID } from 'node:crypto'
 import type { CsvSample } from './csv'
 import { readExcelSampleFast } from './xlsxFast'
 
-/** True for Excel workbooks (.xlsx and legacy .xls). NCA dashboards ship as
- *  Excel workbooks, so the import pipeline converts the first sheet to the same
- *  CSV shape it already handles. */
+/** True for Excel workbooks. NCA dashboards ship as Excel workbooks, so the
+ *  import pipeline converts their sheets to the same CSV shape it already
+ *  handles. A legacy .xls still counts as Excel (so it is never mistaken for
+ *  CSV) but is rejected by every reader: imports are .xlsx or CSV. */
 export function isExcelPath(path: string): boolean {
   return /\.(xlsx|xls)$/i.test(path)
 }
 
-/** True only for legacy binary .xls workbooks (read via SheetJS, not exceljs). */
-function isLegacyXls(path: string): boolean {
-  return /\.xls$/i.test(path)
+export const LEGACY_XLS_MESSAGE =
+  'Legacy .xls workbooks are not supported — open the file in Excel and save it as .xlsx, or export it as CSV (comma delimited).'
+export const UNREADABLE_WORKBOOK_MESSAGE =
+  'This workbook could not be read — open it in Excel and save it as .xlsx, or export it as CSV (comma delimited).'
+
+/** Throws the user-facing message for a legacy .xls (SheetJS, the only .xls
+ *  reader, was removed: xlsx 0.18.5 on npm is unpatched). */
+export function assertSupportedWorkbook(path: string): void {
+  if (/\.xls$/i.test(path)) throw new Error(LEGACY_XLS_MESSAGE)
 }
 
 function normalizeHeader(h: string): string {
@@ -110,46 +116,8 @@ async function emitAllSheets(
   const wb = new ExcelJS.Workbook()
   try {
     await wb.xlsx.readFile(path)
-  } catch {
-    // Fallback using SheetJS for legacy .xls or non-standard .xlsx
-    if (isLegacyXls(path) || true) {
-      const sheetWb = XLSX.readFile(path, { cellDates: false })
-      let firstGlobalHeader: string[] | null = null
-      for (const sheetName of sheetWb.SheetNames) {
-        const ws = sheetWb.Sheets[sheetName]
-        if (!ws) continue
-        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as Array<Array<unknown>>
-        if (aoa.length === 0) continue
-        let headerLen = -1
-        let dateCols = new Set<number>()
-        let firstInSheet = true
-        let emittedInSheet = 0
-
-        for (const row of aoa) {
-          if (firstInSheet) {
-            const h = row.map((c) => String(c ?? '').trim())
-            headerLen = h.length
-            dateCols = dateColumnIndexes(h)
-            if (!firstGlobalHeader) {
-              firstGlobalHeader = h
-              emit(h)
-            } else if (firstGlobalHeader.join(',') !== h.join(',')) {
-              // Different sheet columns - still emit if single sheet or matching width
-              // (If different KPI sheets, headers will be aligned)
-            }
-            firstInSheet = false
-            continue
-          }
-          if (row.length === 1 && String(row[0] ?? '').trim() === '') continue
-          const line: string[] = new Array(firstGlobalHeader?.length ?? headerLen).fill('')
-          for (let i = 0; i < line.length; i++) line[i] = renderCell(row[i], i, dateCols) ?? ''
-          emit(line)
-          emittedInSheet++
-          if (maxRowsPerSheet != null && emittedInSheet >= maxRowsPerSheet) break
-        }
-      }
-      return
-    }
+  } catch (e) {
+    throw new Error(UNREADABLE_WORKBOOK_MESSAGE, { cause: e })
   }
 
   let globalHeader: string[] | null = null
@@ -182,61 +150,10 @@ async function emitAllSheets(
   }
 }
 
-/** Legacy .xls path: read all worksheets with SheetJS (BIFF) and emit plain text rows. */
-function emitAllXlsSheets(
-  path: string,
-  emit: (cells: string[]) => void,
-  maxRowsPerSheet?: number
-): void {
-  const wb = XLSX.readFile(path, { cellDates: false })
-  let globalHeader: string[] | null = null
-  for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName]
-    if (!ws) continue
-    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as Array<Array<unknown>>
-    if (aoa.length === 0) continue
-    let dateCols = new Set<number>()
-    let firstInSheet = true
-    let emitted = 0
-
-    for (const row of aoa) {
-      if (firstInSheet) {
-        const h = row.map((c) => String(c ?? '').trim())
-        dateCols = dateColumnIndexes(h)
-        if (!globalHeader) {
-          globalHeader = h
-          emit(h)
-        }
-        firstInSheet = false
-        continue
-      }
-      if (row.length === 1 && String(row[0] ?? '').trim() === '') continue
-      const len = globalHeader?.length ?? row.length
-      const line: string[] = new Array(len).fill('')
-      for (let i = 0; i < len; i++) line[i] = renderCell(row[i], i, dateCols) ?? ''
-      emit(line)
-      emitted++
-      if (maxRowsPerSheet != null && emitted >= maxRowsPerSheet) break
-    }
-  }
-}
-
 /** Read the header plus up to `maxRows` data rows from an
  *  Excel workbook across worksheets (mirror of readCsvSample for the same pipeline). */
 export async function readExcelSample(path: string, maxRows = 30): Promise<CsvSample> {
-  if (isLegacyXls(path)) {
-    const header: string[] = []
-    const rows: string[][] = []
-    emitAllXlsSheets(
-      path,
-      (cells) => {
-        if (header.length === 0) header.push(...cells)
-        else rows.push(cells)
-      },
-      maxRows
-    )
-    return { header, rows }
-  }
+  assertSupportedWorkbook(path)
   // fast path: read only the first rows from the raw zip (milliseconds even
   // for 20MB+ workbooks); falls back to full load on multi-sheet or complex workbooks
   try {
@@ -273,16 +190,11 @@ export async function excelToCsvFile(path: string, dest: string): Promise<void> 
     }
   }
 
+  assertSupportedWorkbook(path)
   try {
-    if (isLegacyXls(path)) {
-      emitAllXlsSheets(path, (cells) => {
-        writeBuffered(cells.map(csvField).join(','))
-      })
-    } else {
-      await emitAllSheets(path, (cells) => {
-        writeBuffered(cells.map(csvField).join(','))
-      })
-    }
+    await emitAllSheets(path, (cells) => {
+      writeBuffered(cells.map(csvField).join(','))
+    })
     if (buffer.length > 0) {
       writer.write(buffer)
       buffer = ''
@@ -300,7 +212,7 @@ export async function excelToCsvFile(path: string, dest: string): Promise<void> 
   }
 }
 
-/** Convert an .xlsx/.xls into a temp CSV file on disk so the
+/** Convert an .xlsx into a temp CSV file on disk so the
  *  DuckDB staging step can read it with read_csv (header = true). Returns the
  *  temp path; the caller is responsible for deleting it. */
 export async function excelToTempCsv(path: string): Promise<string> {

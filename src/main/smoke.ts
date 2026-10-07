@@ -1,7 +1,6 @@
 import { openSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import ExcelJS from 'exceljs'
-import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
 import { excelToCsvFile } from './import/excel'
 import * as ws from './workspace/manager'
@@ -1045,30 +1044,38 @@ export async function runSmokeTest(dir: string): Promise<void> {
   const daRes = await runImport(da.id, { columns: da.suggestedMapping }, { backupDir: join(dir, 'backups') })
   if (daRes.insertedRows !== 6) throw new Error('dmy import inserted ' + daRes.insertedRows)
 
-  // legacy .xls (BIFF) import via SheetJS — same first-sheet conversion path
-  const xlsImportPath = join(dir, 'import.xls')
+  // a second workbook through the exceljs path (SheetJS, the old .xls reader,
+  // was removed — imports are .xlsx or CSV); a legacy .xls is rejected with a
+  // message telling the user to re-save it
+  const xlsImportPath = join(dir, 'import-data.xlsx')
   {
-    const wb = XLSX.utils.book_new()
-    const rows = [
+    const wb = new ExcelJS.Workbook()
+    const sheet = wb.addWorksheet('Data')
+    for (const r of [
       ['DATETIME', 'DISTRICT', 'REGION', 'CELL', 'BASESTATION', 'PRB Utilization', 'Connected Users', 'Data Volume (MB)', 'Availability', 'DL Throughput (kbps)'],
       ['2026-07-05', 'Accra Metro', 'Greater Accra', 'ACC-004-A', 'ACC-004', 87.0, 51, 1390.0, 99.7, 19400],
       ['2026-07-05', 'Accra Metro', 'Greater Accra', 'ACC-004-B', 'ACC-004', 75.0, 32, 890.0, 99.6, 15900],
       ['2026-07-06', 'Kumasi', 'Ashanti', 'KUM-004-A', 'KUM-004', 91.0, 67, 1690.0, 98.8, 23900]
-    ]
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Data')
-    XLSX.writeFile(wb, xlsImportPath, { bookType: 'biff8' })
+    ]) sheet.addRow(r)
+    await wb.xlsx.writeFile(xlsImportPath)
   }
   const [xla] = await analyzeFiles([xlsImportPath])
-  if (!xla || xla.errors.length > 0) throw new Error('xls analyze failed: ' + JSON.stringify(xla?.errors))
+  if (!xla || xla.errors.length > 0) throw new Error('xlsx analyze failed: ' + JSON.stringify(xla?.errors))
   if (xla.suggestedMapping['DATETIME'] !== 'date' || xla.suggestedMapping['CELL'] !== 'cell') {
-    throw new Error('xls mapping missing date/cell: ' + JSON.stringify(xla.suggestedMapping))
+    throw new Error('xlsx mapping missing date/cell: ' + JSON.stringify(xla.suggestedMapping))
   }
   const xlaPrev = await previewImport(xla.id, { columns: xla.suggestedMapping })
-  if (!xlaPrev.canImport) throw new Error('xls preview blocked: ' + JSON.stringify(xlaPrev.issues))
+  if (!xlaPrev.canImport) throw new Error('xlsx preview blocked: ' + JSON.stringify(xlaPrev.issues))
   const xlaRes = await runImport(xla.id, { columns: xla.suggestedMapping }, { backupDir: join(dir, 'backups') })
-  if (xlaRes.insertedRows !== 3) throw new Error('xls import inserted ' + xlaRes.insertedRows)
-  if (!xlaRes.archivePath || !xlaRes.archivePath.endsWith('.xls.gz')) {
-    throw new Error('xls archive must keep the original workbook: ' + xlaRes.archivePath)
+  if (xlaRes.insertedRows !== 3) throw new Error('xlsx import inserted ' + xlaRes.insertedRows)
+  if (!xlaRes.archivePath || !xlaRes.archivePath.endsWith('.xlsx.gz')) {
+    throw new Error('xlsx archive must keep the original workbook: ' + xlaRes.archivePath)
+  }
+  const legacyXls = join(dir, 'legacy.xls')
+  writeFileSync(legacyXls, Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(504)]))
+  const [lx] = await analyzeFiles([legacyXls])
+  if (!lx || !lx.errors.some((e) => e.startsWith('Legacy .xls workbooks are not supported'))) {
+    throw new Error('legacy .xls should be rejected with the re-save message: ' + JSON.stringify(lx?.errors))
   }
 
   // duplicate dimension names within one file: the same SITE under two
@@ -1517,7 +1524,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
         importOk: true,
         xlsxImport: true,
         dmyDates: true,
-        xlsImport: true,
+        legacyXlsRejected: true,
         dateFormats: true,
         exportCsv: true,
         importInserted: 6,

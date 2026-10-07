@@ -914,7 +914,7 @@ export default function DataManager(): React.JSX.Element {
                   ref={fileInput}
                   type="file"
                   multiple
-                  accept=".csv,.txt,.xlsx,.xls"
+                  accept=".csv,.txt,.xlsx"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const paths = Array.from(e.target.files ?? []).map((f) => window.api.files.path(f))

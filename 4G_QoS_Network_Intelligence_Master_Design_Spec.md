@@ -1,5 +1,7 @@
 # 4G QoS Network Intelligence — Master Design Specification
 
+> **Historical document.** This is the original design for the first version of the app. It is kept for reference and does not describe the current app — see [README.md](README.md) and the specs in [docs/superpowers/specs](docs/superpowers/specs).
+
 ## 1. Product Vision
 Build a professional, portable Windows desktop application for telecom QoS analytics that evolves the current dashboard into a full engineering intelligence workstation.
 

@@ -1,5 +1,7 @@
 # 4G QoS Network Intelligence — Implementation Plan
 
+> **Historical document.** This is the original design for the first version of the app. It is kept for reference and does not describe the current app — see [README.md](README.md) and the specs in [docs/superpowers/specs](docs/superpowers/specs).
+
 Feasibility verdict for `4G_QoS_Network_Intelligence_Master_Design_Spec.md`: **implementable**.
 The spec is internally consistent and maps cleanly onto mature technology. Details below.
 

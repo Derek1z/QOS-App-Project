@@ -50,7 +50,7 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         label: 'Cell Investigation',
         icon: '🔬',
         milestone: 1,
-        blurb: 'Deep-dive single cell investigation, trend lines, threshold overlays, and expandable RCA donut chart.'
+        blurb: 'Deep-dive investigation of a cell, site or district: trend lines, threshold overlays, findings and root-cause hypotheses.'
       },
       {
         id: 'explorer',
@@ -97,7 +97,7 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         label: 'Workspace Settings',
         icon: '🧰',
         milestone: 0,
-        blurb: 'Workspace information, snapshot backups, and database maintenance.'
+        blurb: 'Workspace information and recent workspaces.'
       }
     ]
   }

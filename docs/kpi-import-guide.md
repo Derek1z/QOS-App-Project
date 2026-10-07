@@ -9,7 +9,7 @@ that possible.
 
 ## 1. KPI auto-suggest on import (Data Manager → Import)
 
-When you drop a CSV, the app looks at each column name and suggests which of the
+When you drop a CSV or `.xlsx` workbook, the app looks at each column name and suggests which of the
 **active technology's KPIs** it represents — exact alias match first, then a
 fuzzy word-overlap match (so `Data Volume (MB)` correctly suggests 2G's
 GPRS Traffic).
@@ -26,40 +26,38 @@ GPRS Traffic).
   your KPI choices, so re-importing the same file restores them automatically —
   no need to re-apply.
 
-## 2. KPI Watch (Executive Overview)
+## 2. Imported KPIs on the Executive Overview
 
-The **KPI Watch** card on the Executive Overview shows the active technology's
-KPI health at a glance, driven entirely by the imported values vs. the editable
-targets:
+The Executive Overview shows the active technology's imported KPIs against
+their editable targets:
 
-- **Top breached KPIs** — label, breached/total cells, the target, and a mean
-  severity (0–100) for the latest week.
-- **Weekly trend sparklines** — each KPI's value history (last ~12 weeks) with
-  breach weeks in red and a dashed line at the target.
-- **Worst cells** — the cells with the highest breach severity and how many KPIs
-  each breached.
+- **Available KPI metrics** — one card per imported KPI with its latest
+  complete-period value and whether it meets the target.
+- **KPI threshold breach telemetry** — how many cells breach each KPI's target
+  per period (daily, weekly or monthly).
 
-The card **refreshes automatically when you switch 2G/3G/4G** in the top bar, so
-you can compare how each technology's imported KPIs are doing.
+Both follow the 2G/3G/4G switcher in the top bar.
 
 ## 3. Tech-aware NC detection
 
-NC (noise cell) classification uses the technology's own KPIs:
+NC (non-compliance) is judged on each technology's regulatory KPIs, against
+the editable targets:
 
-| Technology | NC drivers (imported KPIs)        |
-|------------|-----------------------------------|
-| 2G         | TCH Congestion, Drop Call Rate    |
-| 3G         | CE Utilization, Drop Call Rate    |
-| 4G         | PRB utilization (threshold rule)  |
+| Technology | NC KPIs                                                                  |
+|------------|--------------------------------------------------------------------------|
+| 2G         | Call Connection Success Rate, Call Drop Rate, TCH Congestion, SDCCH Congestion |
+| 3G         | Call Connection Success Rate, Call Drop Rate, Data Access Success Rate    |
+| 4G         | Call Connection Success Rate, Call Drop Rate, Data Service Access Failure, Peak Hour PRB Utilization |
 
-A 2G/3G cell is flagged NC when its imported congestion/drop KPI breaches the
-**editable target** on enough days in the week — the 4G PRB threshold no longer
-applies. Lifecycle (New/Recurring/Persistent NC), trends, severity, and the
-priority/health scores all flow from these tech-aware flags.
+A cell-day is bad when any of its technology's NC KPIs misses its target; a
+week is NC with enough bad days (default 1), a month likewise (default 3).
+The NC labels (New, Recurring, Intermittent, Persistent, Chronic NC,
+Recovering, Healthy), trends, severity and the priority and health scores all
+follow from these flags. See the README for the label rules.
 
 ## Managing the definitions themselves
 
 Open **KPI Definitions** (Management group) to edit targets, units,
 worse-is-higher direction, aggregation, and aliases per technology — those
-editable targets are exactly what the KPI Watch and NC detection compare
-against.
+editable targets are exactly what the Overview, NC detection and forecast
+risk compare against.

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { dirs } from '../paths'
-import type { AppStateData, RecentWorkspace } from '../../../shared/api'
+import type { AppStateData, RecentWorkspace, Technology } from '../../../shared/api'
 
 export interface WindowBounds {
   x?: number
@@ -49,11 +49,21 @@ export function patch(p: Partial<AppState>): AppState {
   return next
 }
 
-export function touchRecent(path: string, name: string): void {
+export function touchRecent(path: string, name: string, technology?: Technology): void {
   const st = load()
-  const entry: RecentWorkspace = { path, name, lastOpened: new Date().toISOString() }
+  const entry: RecentWorkspace = { path, name, lastOpened: new Date().toISOString(), ...(technology ? { technology } : {}) }
   patch({
     recentWorkspaces: [entry, ...st.recentWorkspaces.filter((r) => r.path !== path)].slice(0, 10),
     lastWorkspacePath: path
   })
+}
+
+/** The most recent workspace of `technology` whose file still exists, other
+ *  than `excludePath` (fixed-workspace-technology spec §4.2). Entries written
+ *  before workspaces recorded their technology are skipped. */
+export function findRecentWorkspace(
+  technology: Technology, excludePath: string | undefined, recent: RecentWorkspace[], exists: (p: string) => boolean
+): string | null {
+  const hit = recent.find((r) => r.technology === technology && r.path !== excludePath && exists(r.path))
+  return hit?.path ?? null
 }

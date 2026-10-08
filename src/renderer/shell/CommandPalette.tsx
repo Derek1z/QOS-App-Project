@@ -41,11 +41,9 @@ export default function CommandPalette(): React.JSX.Element | null {
             keywords: `technology rat mode 2g 3g 4g switch ${t.toLowerCase()}`,
             run: async () => {
               try {
-                const w = await window.api.workspace.setTechnology(t)
-                st.setWorkspace(w)
-                st.setSummary(await window.api.analytics.summary())
-                emit('WORKSPACE_CHANGED')
-                emit('RULESET_CHANGED')
+                const path = await window.api.workspace.findRecent(t, workspace.path)
+                if (path) await openWorkspaceFlow(path)
+                else st.setError(`No ${t} workspace yet — create one from the workspace menu.`)
               } catch (e) {
                 st.setError(e instanceof Error ? e.message : String(e))
               }

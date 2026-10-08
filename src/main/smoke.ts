@@ -40,6 +40,11 @@ import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
 import { app } from 'electron'
+import { findRecentWorkspace, load as loadAppState } from './services/appState'
+import { existsSync as fileExists } from 'node:fs'
+
+const appStateFindRecent = (t: '2G' | '3G' | '4G', exclude: string): string | null =>
+  findRecentWorkspace(t, exclude, loadAppState().recentWorkspaces, fileExists)
 import { recomputeAllAggregates } from './import/aggregates'
 import { refreshAllIntelligence } from './analytics/engine'
 import { planForecastJob, runForecastJob } from './forecast/job'
@@ -920,9 +925,12 @@ export async function runSmokeTest(dir: string): Promise<void> {
     target: 9
   })
   if (patched.target !== 9) throw new Error('kpi patch failed')
-  // 27d2. switch to 2G so the imported 2G columns (TCH congestion) belong to
-  // the active technology — the flow a real 2G user follows
-  await ws.setWorkspaceTechnology('2G')
+  await removeKpiDef(ws.getCurrent()!.connection, saved.kpiId)
+  const afterRemove = await listKpiDefs(ws.getCurrent()!.connection, tech)
+  if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')
+  // 27d2. a workspace's technology is fixed (fixed-workspace-technology spec):
+  // 2G data goes into its own 2G workspace — the flow a real 2G user follows
+  const twoG = await ws.createWorkspace(dir, '2G KPI Test', '2G')
   const extraCsv = join(dir, 'kpi_extra.csv')
   writeFileSync(extraCsv, [
     'Date/Time,Cell,District,Region,Site,PRB Utilization,Connected Users,Data Volume (MB),Availability,DL Throughput (kbps),TCH Congestion (%)',
@@ -969,16 +977,13 @@ export async function runSmokeTest(dir: string): Promise<void> {
   if (kpiRec2.suggestedKpiMapping['TCH Congestion (%)'] !== 'tch_congestion') {
     throw new Error('kpi profile lost accepted assignment: ' + JSON.stringify(kpiRec2.suggestedKpiMapping))
   }
-  await removeKpiDef(ws.getCurrent()!.connection, saved.kpiId)
-  const afterRemove = await listKpiDefs(ws.getCurrent()!.connection, tech)
-  if (afterRemove.some((k) => k.key === 'custom_trial_kpi')) throw new Error('kpi remove failed')
 
-  // 27e. technology switching (spec §54a): the workspace is now 2G from 27d2;
-  // the imported TCH congestion (3.5 vs target 1.0) must feed the priority score
+  // 27e. the 2G workspace: the imported TCH congestion (3.5 vs target 1.0)
+  // must feed the priority score
   const infoNow = await ws.getCurrentInfo()
-  if (infoNow?.technology !== '2G') throw new Error('expected 2G after switch: ' + infoNow?.technology)
+  if (infoNow?.technology !== '2G') throw new Error('expected a 2G workspace: ' + infoNow?.technology)
   const twoGDefs = await listKpiDefs(ws.getCurrent()!.connection, '2G')
-  if (twoGDefs.length < 5) throw new Error('2G KPI set not seeded on switch: ' + twoGDefs.length)
+  if (twoGDefs.length < 5) throw new Error('2G KPI set not seeded: ' + twoGDefs.length)
   const kpiPrio = await getPriorityQueue('balanced', 100)
   const prioCell = kpiPrio.find((p) => p.cellName === 'EXTRA_001_A')
   if (prioCell && prioCell.components.kpiBreach < 1) {
@@ -986,10 +991,13 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   const ciKpi = await getCellIntelligence({ limit: 500 })
   const extraDetail = ciKpi.rows.find((r) => r.cellName === 'EXTRA_001_A')
-  if (extraDetail && extraDetail.kpis.length === 0) throw new Error('cell kpis missing after tech switch')
-  // switch back so later smoke steps run under the default 4G
-  const backTo4G = await ws.setWorkspaceTechnology('4G')
-  if (backTo4G.technology !== '4G') throw new Error('switch back to 4G failed')
+  if (extraDetail && extraDetail.kpis.length === 0) throw new Error('cell kpis missing in the 2G workspace')
+  // switching technology = opening the other workspace: the main one is still
+  // 4G, and the finder knows where the 2G one is
+  const backTo4G = await ws.openWorkspace(created.path)
+  if (backTo4G.technology !== '4G') throw new Error('main workspace must still be 4G: ' + backTo4G.technology)
+  const found2G = appStateFindRecent('2G', created.path)
+  if (found2G !== twoG.path) throw new Error('2G workspace not found from the 4G one: ' + found2G)
 
   // 27f. Excel (.xlsx) import: real NCA dashboards ship as xlsx (spec §9 keeps
   // the raw source), so the first sheet is converted and staged like a CSV

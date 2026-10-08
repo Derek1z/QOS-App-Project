@@ -11,6 +11,8 @@ export interface RecentWorkspace {
   path: string
   name: string
   lastOpened: string
+  /** recorded on open/create; absent on entries written before 2026-10-08 */
+  technology?: Technology
 }
 
 export type Technology = '2G' | '3G' | '4G'
@@ -1633,7 +1635,8 @@ export interface Api {
     close(): Promise<void>
     info(): Promise<WorkspaceInfo | null>
     /** switch the active workspace's technology (2G/3G/4G) and re-seed its KPI set */
-    setTechnology(technology: Technology): Promise<WorkspaceInfo>
+    /** most recent existing workspace of the technology, other than `excludePath` */
+    findRecent(technology: Technology, excludePath?: string): Promise<string | null>
     onChanged(cb: () => void): () => void
     snapshots(): Promise<WorkspaceSnapshot[]>
     createSnapshot(name: string, opts?: CreateSnapshotOpts): Promise<WorkspaceSnapshot>

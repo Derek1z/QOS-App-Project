@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore, emit, on, type PeriodId, type Grain, type ModuleId } from '../store'
+import { openWorkspaceFlow } from '../lib/flows'
 import type { Technology, Rules } from '../../../shared/api'
 import TargetsModal from '../modules/TargetsModal'
 
@@ -60,12 +61,10 @@ export default function CommandBar(): React.JSX.Element {
     if (!workspace || workspace.technology === tech || switching) return
     setSwitching(true)
     try {
-      const w = await window.api.workspace.setTechnology(tech)
-      useAppStore.getState().setWorkspace(w)
-      const s = await window.api.analytics.summary({ period, grain })
-      useAppStore.getState().setSummary(s)
-      emit('WORKSPACE_CHANGED')
-      emit('RULESET_CHANGED')
+      // interim until the switch flow (plan Task 3): open that technology's workspace
+      const path = await window.api.workspace.findRecent(tech, workspace.path)
+      if (path) await openWorkspaceFlow(path)
+      else useAppStore.getState().setError(`No ${tech} workspace yet — create one from the workspace menu.`)
     } catch (e) {
       useAppStore.getState().setError(e instanceof Error ? e.message : String(e))
     } finally {

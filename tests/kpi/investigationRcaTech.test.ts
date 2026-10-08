@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { previewApi } from '../../src/renderer/lib/previewApi'
+import { previewApi, demoUseTechnology } from '../../src/renderer/lib/previewApi'
 
 describe('Investigation Workspace & RCA Multi-Technology Decoupling', () => {
   it('returns pure 2G findings, hypotheses, and evidence with zero PRB mentions for 2G', async () => {
@@ -119,7 +119,7 @@ describe('Investigation Workspace & RCA Multi-Technology Decoupling', () => {
 
   it('adapts report tables and recommendations dynamically to active technology', async () => {
     // Switch to 2G
-    await previewApi.workspace.setTechnology('2G')
+    demoUseTechnology('2G')
     const rep2G = await previewApi.reports.generate({ sections: ['all-cells', 'priority-queue'], formats: ['md'] })
     expect(rep2G.files.md?.content).toBeDefined()
     expect(rep2G.files.md?.content).toContain('TCH Cong %')
@@ -131,7 +131,7 @@ describe('Investigation Workspace & RCA Multi-Technology Decoupling', () => {
     expect(exec2G.problemSummary.keyRecommendations.some((r) => r.includes('frequency plan') || r.includes('TCH'))).toBe(true)
 
     // Switch to 3G
-    await previewApi.workspace.setTechnology('3G')
+    demoUseTechnology('3G')
     const rep3G = await previewApi.reports.generate({ sections: ['all-cells', 'priority-queue'], formats: ['md'] })
     expect(rep3G.files.md?.content).toBeDefined()
     expect(rep3G.files.md?.content).toContain('Peak Util %')
@@ -143,7 +143,7 @@ describe('Investigation Workspace & RCA Multi-Technology Decoupling', () => {
     expect(exec3G.problemSummary.keyRecommendations.some((r) => r.includes('CE expansion') || r.includes('power rebalancing'))).toBe(true)
 
     // Restore to 4G
-    await previewApi.workspace.setTechnology('4G')
+    demoUseTechnology('4G')
   })
 
   it('2G Huawei diagnostic engine evaluates RF interference, overshoot, accessibility, and hardware drops accurately', async () => {

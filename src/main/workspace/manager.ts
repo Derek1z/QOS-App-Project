@@ -294,18 +294,6 @@ export async function getCurrentInfo(): Promise<WorkspaceInfo | null> {
   return assemble(current)
 }
 
-/** Switch the active workspace's technology and re-seed its KPI set. */
-export async function setWorkspaceTechnology(technology: Technology): Promise<WorkspaceInfo> {
-  if (!current) throw new Error('No workspace is open')
-  if (current.readOnly) throw new Error('Workspace is open read-only — switch technology on the writable workspace')
-  const tech = technology === '2G' || technology === '3G' ? technology : '4G'
-  await current.connection.run(
-    `UPDATE workspace_meta SET value = '${tech}' WHERE key = 'technology'`
-  )
-  await seedKpiDefs(current.connection, tech)
-  return assemble(current)
-}
-
 // --- lifecycle ---
 
 export async function createWorkspace(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {
@@ -336,7 +324,7 @@ export async function createWorkspace(dir: string, name: string, technology?: st
       await ensureDerivedKpiSchema(connection)
       const lockHeld = acquireLock(path)
       current = { path, name: safe, readOnly: false, instance, connection, lockHeld }
-      await appState.touchRecent(path, safe)
+      await appState.touchRecent(path, safe, tech)
       return assemble(current)
     } catch (e) {
       try {
@@ -446,7 +434,7 @@ export async function openWorkspace(
         path, name: nameFromPath(path), readOnly, instance, connection, lockHeld
       }
       current = ws
-      await appState.touchRecent(path, ws.name)
+      await appState.touchRecent(path, ws.name, info.technology)
       return { ...info, path, name: ws.name, readOnly, sizeBytes: statSync(path).size }
     } catch (e) {
       try {

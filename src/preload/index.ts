@@ -38,7 +38,7 @@ const api: Api = {
     isLocked: call('workspace:isLocked'),
     close: call('workspace:close'),
     info: call('workspace:info'),
-    setTechnology: call('workspace:setTechnology'),
+    findRecent: call('workspace:findRecent'),
     onChanged: (cb) => {
       const listener = () => cb()
       ipcRenderer.on('workspace:changed', listener)

@@ -122,8 +122,8 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   })
   ipcMain.handle('workspace:close', () => ws.closeWorkspace())
   ipcMain.handle('workspace:info', () => ws.getCurrentInfo())
-  ipcMain.handle('workspace:setTechnology', (_e, technology: Technology) =>
-    ws.setWorkspaceTechnology(technology))
+  ipcMain.handle('workspace:findRecent', (_e, technology: Technology, excludePath?: string) =>
+    appState.findRecentWorkspace(technology, excludePath, appState.load().recentWorkspaces, existsSync))
 
   ipcMain.handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
   ipcMain.handle('kpis:save', async (_e, patch: KpiDefPatch) => afterForecastInput((await saveKpiTargetsCurrent([patch]))[0]))

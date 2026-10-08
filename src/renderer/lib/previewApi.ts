@@ -3052,6 +3052,13 @@ async function saveDemoKpiDef(patch: KpiDefPatch): Promise<KpiDefinition> {
   return def
 }
 
+/** Demo-only: show the browser demo as another technology's workspace
+ *  (a workspace's technology is fixed, so the Api has no setter). */
+export function demoUseTechnology(technology: Technology): void {
+  demoTech = technology === '2G' || technology === '3G' ? technology : '4G'
+  demoKpiValues.clear()
+}
+
 export const previewApi: Api & { demo: true } = {
   demo: true,
   files: {
@@ -3087,11 +3094,7 @@ export const previewApi: Api & { demo: true } = {
     isLocked: async (): Promise<{ locked: boolean; pid?: number }> => ({ locked: false }),
     close: async () => {},
     info: async () => demoWorkspaceInfo(),
-    setTechnology: async (technology: Technology): Promise<WorkspaceInfo> => {
-      demoTech = technology === '2G' || technology === '3G' ? technology : '4G'
-      demoKpiValues.clear()
-      return demoWorkspaceInfo()
-    },
+    findRecent: async (): Promise<string | null> => null,
     onChanged: () => () => {},
     snapshots: async (): Promise<WorkspaceSnapshot[]> => demoSnapshots,
     createSnapshot: async (name: string, opts?: CreateSnapshotOpts): Promise<WorkspaceSnapshot> => {

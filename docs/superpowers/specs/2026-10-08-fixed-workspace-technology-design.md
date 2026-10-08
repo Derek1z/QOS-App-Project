@@ -34,7 +34,7 @@ Each workspace holds one technology (decided 2026-10-08: the user keeps one `.qo
 - Nothing writes `workspace_meta.technology` afterwards except the one-time correction in §4.4. `setWorkspaceTechnology`, the `workspace:setTechnology` IPC channel and preload method, and the store's write-through are removed.
 
 ### 4.2 The 2G/3G/4G buttons
-Everywhere they appear (top bar, command palette, and the screens with their own technology tabs: Overview, NC & Breach Analytics, Smart Priority Queue, Forecasting, Cell Investigation, Cell Intelligence, Network Explorer, Health Matrix, Performance Analysis, Comparison Lab, KPI Definitions, Targets):
+Everywhere they appear (top bar, command palette, and the screens with their own technology tabs: Overview, NC & Breach Analytics, Smart Priority Queue, Forecasting, Cell Investigation, Cell Intelligence, Network Explorer, Health Matrix, Performance Analysis, Comparison Lab). KPI Definitions and Targets are the exception: their tabs choose which technology's catalogue to edit and stay local (ruling 2026-10-08):
 1. The open workspace's technology: nothing happens.
 2. Another technology: open the most recently used workspace of that technology whose file still exists.
 3. None: "No 3G workspace yet — create one?" → the create dialog with 3G preselected; cancelling stays put.

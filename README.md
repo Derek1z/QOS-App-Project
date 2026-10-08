@@ -81,7 +81,7 @@ In the sidebar:
 | **Cell Intelligence** | Cell cards filtered by severity, with PRB, a telemetry chart drawer and a link to Investigation |
 | **Cell Investigation** | One cell, site or district: KPI history, rule-based findings in calibrated language, root-cause hypotheses, before/after comparison around an intervention date, notes, Markdown export |
 | **Network Explorer** | Region → district → site → cell drill-down with health roll-ups |
-| **Ghana Health Matrix** | 16-region map with 253-district drill-down, and a 4–26-week health heatmap |
+| **Ghana Health Matrix** | 16-region map with a 260-district drill-down (2019 boundaries; Guan District, created in 2021, has no shape yet), and a 4–26-week health heatmap. District names match ignoring case, punctuation and Municipal/Metropolitan; the map lists names it cannot place |
 | **Performance Analysis** | Distributions, a PRB-vs-throughput quadrant scatter and a correlation matrix |
 | **Data Manager** | Import (analyse → map → preview → import), starter CSV templates, import history and data quality, raw-file archive, maintenance |
 | **KPI Definitions & Derived** | Per-technology KPI catalogue (targets, direction, aggregation, aliases) and derived KPIs |
@@ -178,3 +178,5 @@ docs/superpowers/   specs and plans for the 2026 changes
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Map data: region boundaries from [virgoaugustine/Ghana-GeoJSON-data](https://github.com/virgoaugustine/Ghana-GeoJSON-data) (MIT); district boundaries from [geoBoundaries](https://www.geoboundaries.org) gbOpen GHA ADM2 (CC BY 4.0; source: USAID Ghana HPNO, Ghana Statistical Service), simplified by `scripts/build-ghana-districts.cjs`.

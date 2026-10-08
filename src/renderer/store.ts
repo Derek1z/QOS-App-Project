@@ -72,6 +72,9 @@ interface AppStore {
   setWorkspace(w: WorkspaceInfo | null): void
   /** Opens that technology's workspace; true when the workspace changed. */
   setSelectedTech(t: Technology): Promise<boolean>
+  /** the technology whose workspace is being opened by a tab click, or null */
+  switchingTo: Technology | null
+  setSwitchingTo(t: Technology | null): void
   setSummary(s: Summary | null): void
   setRecent(r: RecentWorkspace[]): void
   setPeriod(p: PeriodId): void
@@ -128,6 +131,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     primaryKpiId: workspace?.technology === s.workspace?.technology ? s.primaryKpiId : null
   })),
   setSelectedTech: (selectedTech) => switchTechnologyFlow(selectedTech),
+  switchingTo: null,
+  setSwitchingTo: (switchingTo) => set({ switchingTo }),
   setSummary: (summary) => set({ summary }),
   setRecent: (recent) => set({ recent }),
   setPeriod: (period) => set({ period }),

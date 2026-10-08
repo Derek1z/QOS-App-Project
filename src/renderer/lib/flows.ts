@@ -55,13 +55,16 @@ export async function switchTechnologyFlow(target: Technology): Promise<boolean>
   const st = useAppStore.getState()
   const ws = st.workspace
   if (ws && ws.technology === target) return false
-  // one switch at a time: a second click must not start a second open
+  // one switch at a time: a second click must not start a second open (the
+  // status bar keeps showing which workspace is on its way)
   if (switchInFlight) return false
   switchInFlight = true
+  st.setSwitchingTo(target)
   try {
     return await runTechSwitch(target)
   } finally {
     switchInFlight = false
+    useAppStore.getState().setSwitchingTo(null)
   }
 }
 
@@ -75,6 +78,7 @@ async function runTechSwitch(target: Technology): Promise<boolean> {
     if (plan.kind === 'open') {
       await openWorkspaceFlow(plan.path)
     } else {
+      st.setSwitchingTo(null) // the create prompt and dialog are the feedback here
       if (!window.confirm(`No ${plan.technology} workspace yet — create one?`)) return false
       await createWorkspaceFlow(undefined, plan.technology)
     }

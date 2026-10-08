@@ -1770,6 +1770,10 @@ code {
   color: var(--danger);
   font-weight: 600;
 }
+.status-busy {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 .status-grain {
   text-transform: capitalize;

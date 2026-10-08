@@ -5,6 +5,7 @@ export default function StatusBar(): React.JSX.Element {
   const summary = useAppStore((s) => s.summary)
   const grain = useAppStore((s) => s.grain)
   const error = useAppStore((s) => s.error)
+  const switchingTo = useAppStore((s) => s.switchingTo)
 
   return (
     <footer className="status">
@@ -26,6 +27,9 @@ export default function StatusBar(): React.JSX.Element {
       <span className="status-sep">·</span>
       <span className="status-grain">Grain: {grain}</span>
       <span className="status-spacer" />
+      {switchingTo && (
+        <span className="status-busy" role="status">⟳ Opening the {switchingTo} workspace…</span>
+      )}
       {error && <span className="status-error">⚠ {error}</span>}
       <span>DuckDB · v2.0 Engine</span>
       <span className="status-sep">·</span>

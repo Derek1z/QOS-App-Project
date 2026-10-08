@@ -87,6 +87,32 @@ describe('store technology setters switch workspaces', () => {
     expect([first, second].filter(Boolean).length).toBe(1)
   })
 
+  it('shows which workspace is opening while a switch runs, including on a second click', async () => {
+    useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
+    stubApi('/w/3g.qosdb', false)
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const api = (globalThis as unknown as { window: { api: { workspace: { open: (p: string) => Promise<WorkspaceInfo> } } } }).window.api
+    const realOpen = api.workspace.open
+    api.workspace.open = async (p: string) => { await gate; return realOpen(p) }
+
+    const first = useAppStore.getState().setSelectedTech('3G')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(useAppStore.getState().switchingTo).toBe('3G')
+    expect(await useAppStore.getState().setSelectedTech('2G')).toBe(false) // second click
+    expect(useAppStore.getState().switchingTo).toBe('3G') // still says what is opening
+    release()
+    expect(await first).toBe(true)
+    expect(useAppStore.getState().switchingTo).toBeNull()
+  })
+
+  it('clears the indicator when a switch is cancelled', async () => {
+    useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
+    stubApi(null, false)
+    await useAppStore.getState().setSelectedTech('3G')
+    expect(useAppStore.getState().switchingTo).toBeNull()
+  })
+
   it('a switch that lands on another technology reports no switch (final review 7)', async () => {
     useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
     stubApi('/w/2g-really-3g.qosdb', false) // the stub opens everything as 3G

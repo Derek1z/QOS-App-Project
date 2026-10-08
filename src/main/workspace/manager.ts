@@ -106,7 +106,13 @@ export function onBeforeClose(fn: () => Promise<void>): void {
   beforeClose.push(fn)
 }
 
-export async function closeWorkspace(): Promise<void> {
+/** Queued with opens and creates: a close that arrives while an open is
+ *  running waits for it, so the workspace does not reappear afterwards. */
+export function closeWorkspace(): Promise<void> {
+  return queued(closeWorkspaceNow)
+}
+
+async function closeWorkspaceNow(): Promise<void> {
   if (!current) return
   for (const fn of beforeClose) {
     try {
@@ -400,9 +406,10 @@ async function cleanExtraMetricsTechOnce(conn: DuckDBConnection): Promise<boolea
 
 // --- lifecycle ---
 
-// Opens and creates run one at a time: a second one starting while the first
-// is still opening would put two DuckDB instances on the same file (a
-// technology tab is a single click away from an open).
+// Opens, creates and closes run one at a time: a second open starting while
+// the first is still opening would put two DuckDB instances on the same file
+// (a technology tab is a single click away from an open). Inside a queued
+// step, call the *Now variants, never the queued ones (that would deadlock).
 let lifecycleQueue: Promise<unknown> = Promise.resolve()
 function queued<T>(fn: () => Promise<T>): Promise<T> {
   const run = lifecycleQueue.then(fn, fn)
@@ -420,7 +427,7 @@ async function createWorkspaceNow(dir: string, name: string, technology?: string
   if (!safe) throw new Error('Workspace name is empty')
   const path = join(dir, safe.toLowerCase().endsWith('.qosdb') ? safe : `${safe}.qosdb`)
   if (existsSync(path)) throw new Error(`Workspace already exists: ${path}`)
-  if (current) await closeWorkspace()
+  if (current) await closeWorkspaceNow()
 
   let instance: DuckDBInstance | null = null
   try {
@@ -488,7 +495,7 @@ async function openWorkspaceNow(
   if (!opts.readOnly && current?.path !== path && lockedByOther(path).locked) {
     throw new Error('This workspace is open in another instance. Open it read-only instead.')
   }
-  if (current) await closeWorkspace()
+  if (current) await closeWorkspaceNow()
 
   const readOnly = !!opts.readOnly
   const lockHeld = readOnly ? false : acquireLock(path)

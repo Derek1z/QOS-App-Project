@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore, emit } from '../store'
 import { refreshWorkspaceState, errMsg, switchTechnologyFlow } from '../lib/flows'
 import { importTechBlock } from '../lib/importTech'
+import { mappingValue, parseMappingValue, mappingGroups } from '../lib/columnMapping'
 import type {
   FileAnalysis, MappingConfig, PreviewResult, ImportResult,
   ImportAuditRow, CoverageRow, QualityRow, CanonicalField, ValidationIssue, ImportProgress,
@@ -1164,67 +1165,30 @@ export default function DataManager(): React.JSX.Element {
                               <tr key={h}>
                                 <td className="map-src">{h}</td>
                                 <td>
-                                  <div className="map-cell">
-                                    <select
-                                      className="sel"
-                                      value={mapping.columns[h] ?? ''}
-                                      onChange={(e) =>
-                                        changeMapping(a.id, h, e.target.value as CanonicalField | '')
-                                      }
-                                    >
-                                      <option value="">— ignore —</option>
-                                      {FIELD_ORDER.map((f) => (
-                                        <option key={f} value={f}>
-                                          {FIELD_LABELS[f]}
-                                          {f === 'date' || f === 'cell' ? ' *' : ''}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <span className="map-or">or</span>
-                                    <select
-                                      className="sel"
-                                      value={mapping.kpiColumns?.[h] ?? ''}
-                                      onChange={(e) => changeKpiMapping(a.id, h, e.target.value)}
-                                    >
-                                      <option value="">— as extra KPI —</option>
-                                      {kpiDefs.filter(k => k.technology === '2G').length > 0 && (
-                                        <optgroup label="🏷️ 2G GSM Core & Supporting">
-                                          {kpiDefs.filter(k => k.technology === '2G').map((k) => (
-                                            <option key={k.kpiId} value={k.key}>
-                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      )}
-                                      {kpiDefs.filter(k => k.technology === '3G').length > 0 && (
-                                        <optgroup label="🏷️ 3G UMTS Core, Supporting & Diagnostics">
-                                          {kpiDefs.filter(k => k.technology === '3G').map((k) => (
-                                            <option key={k.kpiId} value={k.key}>
-                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      )}
-                                      {kpiDefs.filter(k => k.technology === '4G').length > 0 && (
-                                        <optgroup label="🏷️ 4G LTE Core & Supporting">
-                                          {kpiDefs.filter(k => k.technology === '4G').map((k) => (
-                                            <option key={k.kpiId} value={k.key}>
-                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      )}
-                                      {kpiDefs.filter(k => !k.technology || (k.technology as string) === 'ALL').length > 0 && (
-                                        <optgroup label="🏷️ General / Other KPIs">
-                                          {kpiDefs.filter(k => !k.technology || (k.technology as string) === 'ALL').map((k) => (
-                                            <option key={k.kpiId} value={k.key}>
-                                              {k.label}{k.unit ? ` (${k.unit})` : ''}{k.isCore ? ' ★' : ''}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      )}
-                                    </select>
-                                  </div>
+                                  {(() => {
+                                    const value = mappingValue(mapping.columns[h], mapping.kpiColumns?.[h])
+                                    return (
+                                      <select
+                                        className="sel map-sel"
+                                        value={value}
+                                        aria-label={`Mapping for ${h}`}
+                                        onChange={(e) => {
+                                          const next = parseMappingValue(e.target.value)
+                                          if (next.field) changeMapping(a.id, h, next.field)
+                                          else changeKpiMapping(a.id, h, next.kpiKey ?? '')
+                                        }}
+                                      >
+                                        <option value="">— ignore —</option>
+                                        {mappingGroups(workspace?.technology ?? '4G', kpiDefs, value).map((g) => (
+                                          <optgroup key={g.label} label={g.label}>
+                                            {g.options.map((o) => (
+                                              <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                          </optgroup>
+                                        ))}
+                                      </select>
+                                    )
+                                  })()}
                                 </td>
                               </tr>
                             ))}

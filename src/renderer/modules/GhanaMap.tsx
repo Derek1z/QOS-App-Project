@@ -148,7 +148,7 @@ export default function GhanaMap(): React.JSX.Element {
               {(['2G', '3G', '4G'] as Technology[]).map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  onClick={() => void setSelectedTech(t)}
                   style={{
                     padding: '5px 16px',
                     fontSize: '12px',

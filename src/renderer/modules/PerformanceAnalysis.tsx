@@ -42,7 +42,6 @@ export default function PerformanceAnalysis(): React.JSX.Element {
   const period = useAppStore((s) => s.period)
   const setPeriod = useAppStore((s) => s.setPeriod)
   const technologyId = useAppStore((s) => s.technologyId)
-  const setTechnologyId = useAppStore((s) => s.setTechnologyId)
   const selectedTech = useAppStore((s) => s.selectedTech)
   const setSelectedTech = useAppStore((s) => s.setSelectedTech)
 
@@ -53,12 +52,8 @@ export default function PerformanceAnalysis(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Sync technology selection
-  const handleTechChange = (tech: Technology) => {
-    const id = tech === '2G' ? 2 : tech === '3G' ? 3 : 4
-    setTechnologyId(id)
-    setSelectedTech(tech)
-  }
+  // the technology tabs open that technology's workspace (spec §4.2)
+  const handleTechChange = (tech: Technology) => void setSelectedTech(tech)
 
   useEffect(() => {
     let alive = true

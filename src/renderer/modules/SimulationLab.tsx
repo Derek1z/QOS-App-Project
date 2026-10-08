@@ -684,21 +684,21 @@ export default function SimulationLab(): React.JSX.Element {
           <div className="seg">
             <button
               className={`seg-btn ${tech === '4G' ? 'active' : ''}`}
-              onClick={() => { setSelectedTech('4G'); setTech('4G') }}
+              onClick={() => void setSelectedTech('4G')}
               style={{ fontWeight: tech === '4G' ? 700 : 500, padding: '4px 10px' }}
             >
               4G LTE
             </button>
             <button
               className={`seg-btn ${tech === '3G' ? 'active' : ''}`}
-              onClick={() => { setSelectedTech('3G'); setTech('3G') }}
+              onClick={() => void setSelectedTech('3G')}
               style={{ fontWeight: tech === '3G' ? 700 : 500, padding: '4px 10px' }}
             >
               3G UMTS
             </button>
             <button
               className={`seg-btn ${tech === '2G' ? 'active' : ''}`}
-              onClick={() => { setSelectedTech('2G'); setTech('2G') }}
+              onClick={() => void setSelectedTech('2G')}
               style={{ fontWeight: tech === '2G' ? 700 : 500, padding: '4px 10px' }}
             >
               2G GSM

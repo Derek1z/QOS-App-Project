@@ -69,6 +69,8 @@ export default function ComparisonLab(): React.JSX.Element {
   useEffect(() => {
     if (selectedTech && selectedTech !== tech) {
       setTech(selectedTech)
+      const mList = TECH_METRICS[selectedTech] ?? TECH_METRICS['4G']
+      setMetric(mList[0].id)
     }
   }, [selectedTech])
 
@@ -135,12 +137,7 @@ export default function ComparisonLab(): React.JSX.Element {
               {(['2G', '3G', '4G'] as Technology[]).map((t) => (
                 <button
                   key={t}
-                  onClick={() => {
-                    setSelectedTech(t)
-                    setTech(t)
-                    const mList = TECH_METRICS[t] ?? TECH_METRICS['4G']
-                    setMetric(mList[0].id)
-                  }}
+                  onClick={() => void setSelectedTech(t)}
                   style={{
                     padding: '5px 16px',
                     fontSize: '12px',

@@ -7,7 +7,6 @@ const TECHS: Technology[] = ['2G', '3G', '4G']
 export default function KpiDefinitions(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const selectedTech = useAppStore((s) => s.selectedTech)
-  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
   const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [defs, setDefs] = useState<KpiDefinition[]>([])
   const [loading, setLoading] = useState(false)
@@ -65,7 +64,7 @@ export default function KpiDefinitions(): React.JSX.Element {
               {TECHS.map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setSelectedTech(t); setTech(t); }}
+                  onClick={() => setTech(t)}
                   style={{
                     padding: '5px 16px',
                     fontSize: '12px',

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { WorkspaceInfo, Summary, RecentWorkspace, Technology } from '../../shared/api'
+import { switchTechnologyFlow } from './lib/flows'
 
 export type CreateWorkspaceChoice = { name: string; tech: Technology }
 
@@ -59,7 +60,8 @@ interface AppStore {
   supportingKpiIds: number[]
   reportingRange: string
   targetsModalOpen: boolean
-  setTechnologyId(id: number): void
+  /** Opens that technology's workspace; true when the workspace changed. */
+  setTechnologyId(id: number): Promise<boolean>
   setPrimaryKpiId(id: number | null): void
   setSupportingKpiIds(ids: number[]): void
   setReportingRange(range: string): void
@@ -68,7 +70,8 @@ interface AppStore {
   setExplorerState: (state: Partial<{ level: 'region' | 'district' | 'site' | 'cell'; parentId: number | null; search: string }>) => void
   setModule(m: ModuleId): void
   setWorkspace(w: WorkspaceInfo | null): void
-  setSelectedTech(t: Technology): void
+  /** Opens that technology's workspace; true when the workspace changed. */
+  setSelectedTech(t: Technology): Promise<boolean>
   setSummary(s: Summary | null): void
   setRecent(r: RecentWorkspace[]): void
   setPeriod(p: PeriodId): void
@@ -104,10 +107,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   supportingKpiIds: [],
   reportingRange: '7r',
   targetsModalOpen: false,
-  setTechnologyId: (technologyId) => {
-    const techName: Technology = technologyId === 2 ? '2G' : technologyId === 3 ? '3G' : '4G'
-    set({ technologyId, selectedTech: techName, primaryKpiId: null })
-  },
+  // A workspace's technology is fixed (spec §4.1): choosing another one opens
+  // that technology's workspace. The selection only changes when the
+  // workspace does (setWorkspace), so a cancelled switch leaves it as is.
+  setTechnologyId: (technologyId) =>
+    get().setSelectedTech(technologyId === 2 ? '2G' : technologyId === 3 ? '3G' : '4G'),
   setPrimaryKpiId: (primaryKpiId) => set({ primaryKpiId }),
   setSupportingKpiIds: (supportingKpiIds) => set({ supportingKpiIds }),
   setReportingRange: (reportingRange) => set({ reportingRange }),
@@ -116,15 +120,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setExplorerState: (state) =>
     set((s) => ({ explorerState: { ...s.explorerState, ...state } })),
   setModule: (module) => set({ module }),
-  setWorkspace: (workspace) => set({
+  setWorkspace: (workspace) => set((s) => ({
     workspace,
     selectedTech: workspace?.technology ?? '4G',
-    technologyId: workspace?.technology === '2G' ? 2 : workspace?.technology === '3G' ? 3 : 4
-  }),
-  setSelectedTech: (selectedTech) => {
-    const techId = selectedTech === '2G' ? 2 : selectedTech === '3G' ? 3 : 4
-    set({ selectedTech, technologyId: techId })
-  },
+    technologyId: workspace?.technology === '2G' ? 2 : workspace?.technology === '3G' ? 3 : 4,
+    // KPI ids belong to one technology's catalogue
+    primaryKpiId: workspace?.technology === s.workspace?.technology ? s.primaryKpiId : null
+  })),
+  setSelectedTech: (selectedTech) => switchTechnologyFlow(selectedTech),
   setSummary: (summary) => set({ summary }),
   setRecent: (recent) => set({ recent }),
   setPeriod: (period) => set({ period }),

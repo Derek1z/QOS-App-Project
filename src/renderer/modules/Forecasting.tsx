@@ -276,10 +276,7 @@ export default function Forecasting(): React.JSX.Element {
             <button
               key={t}
               className={`fc-tab-btn${tech === t ? ' active' : ''}`}
-              onClick={() => {
-                setSelectedTech(t)
-                setTech(t)
-              }}
+              onClick={() => void setSelectedTech(t)}
             >
               {t} {t === '4G' ? 'LTE' : t === '3G' ? 'UMTS' : 'GSM'}
             </button>

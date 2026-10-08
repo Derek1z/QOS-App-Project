@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore, emit, on, type PeriodId, type Grain, type ModuleId } from '../store'
-import { openWorkspaceFlow } from '../lib/flows'
-import type { Technology, Rules } from '../../../shared/api'
+import type { Rules } from '../../../shared/api'
 import TargetsModal from '../modules/TargetsModal'
 
 const PERIODS: { id: PeriodId; label: string }[] = [
@@ -11,8 +10,6 @@ const PERIODS: { id: PeriodId; label: string }[] = [
   { id: 'mtd', label: 'Month to date' },
   { id: '3m', label: 'Last 3 months' }
 ]
-
-const TECHS: Technology[] = ['2G', '3G', '4G']
 
 const GRAINS: Grain[] = ['daily', 'weekly', 'monthly']
 
@@ -26,7 +23,6 @@ export default function CommandBar(): React.JSX.Element {
   const grain = useAppStore((s) => s.grain)
   const setPeriod = useAppStore((s) => s.setPeriod)
   const setGrain = useAppStore((s) => s.setGrain)
-  const [switching, setSwitching] = useState(false)
   const [rules, setRules] = useState<Rules | null>(null)
   const [targetsOpen, setTargetsOpen] = useState(false)
 
@@ -56,21 +52,6 @@ export default function CommandBar(): React.JSX.Element {
       off()
     }
   }, [workspace?.path])
-
-  async function switchTech(tech: Technology): Promise<void> {
-    if (!workspace || workspace.technology === tech || switching) return
-    setSwitching(true)
-    try {
-      // interim until the switch flow (plan Task 3): open that technology's workspace
-      const path = await window.api.workspace.findRecent(tech, workspace.path)
-      if (path) await openWorkspaceFlow(path)
-      else useAppStore.getState().setError(`No ${tech} workspace yet — create one from the workspace menu.`)
-    } catch (e) {
-      useAppStore.getState().setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSwitching(false)
-    }
-  }
 
   function goTo(m: ModuleId): void {
     useAppStore.getState().setModule(m)

@@ -12,7 +12,6 @@ export interface TargetsModalProps {
 
 export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): React.JSX.Element | null {
   const selectedTech = useAppStore((s) => s.selectedTech)
-  const setSelectedTech = useAppStore((s) => s.setSelectedTech)
   const [activeTech, setActiveTech] = useState<Technology>(selectedTech || '4G')
   const [tab, setTab] = useState<'targets' | 'periods'>('targets')
   const [defs, setDefs] = useState<KpiDefinition[]>([])
@@ -73,7 +72,6 @@ export default function TargetsModal({ isOpen, onClose }: TargetsModalProps): Re
 
   const handleTechChange = (t: Technology) => {
     setActiveTech(t)
-    setSelectedTech(t)
     void load(t)
   }
 

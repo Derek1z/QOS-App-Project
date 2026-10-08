@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, emit, type PeriodId, type Grain } from '../store'
 import { ALL_MODULES } from '../modules'
-import { openWorkspaceFlow, createWorkspaceFlow, closeWorkspaceFlow } from '../lib/flows'
+import { openWorkspaceFlow, createWorkspaceFlow, closeWorkspaceFlow, switchTechnologyFlow } from '../lib/flows'
 import type { Technology } from '../../../shared/api'
 
 interface Cmd {
@@ -32,24 +32,14 @@ export default function CommandPalette(): React.JSX.Element | null {
     if (workspace) {
       cmds.push({ id: 'close', label: 'Close Workspace', keywords: 'close exit workspace', run: () => void closeWorkspaceFlow() })
 
-      // quick technology switching
-      if (!workspace.readOnly) {
-        for (const t of ['2G', '3G', '4G'] as Technology[]) {
-          cmds.push({
-            id: `tech:${t}`,
-            label: `Switch Technology: ${t}`,
-            keywords: `technology rat mode 2g 3g 4g switch ${t.toLowerCase()}`,
-            run: async () => {
-              try {
-                const path = await window.api.workspace.findRecent(t, workspace.path)
-                if (path) await openWorkspaceFlow(path)
-                else st.setError(`No ${t} workspace yet — create one from the workspace menu.`)
-              } catch (e) {
-                st.setError(e instanceof Error ? e.message : String(e))
-              }
-            }
-          })
-        }
+      // each technology has its own workspace (spec §4.2)
+      for (const t of (['2G', '3G', '4G'] as Technology[]).filter((x) => x !== workspace.technology)) {
+        cmds.push({
+          id: `tech:${t}`,
+          label: `Open ${t} workspace`,
+          keywords: `technology rat mode 2g 3g 4g switch open workspace ${t.toLowerCase()}`,
+          run: () => void switchTechnologyFlow(t)
+        })
       }
 
       // quick workflow actions

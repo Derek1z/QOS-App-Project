@@ -1,5 +1,7 @@
 import { useAppStore, emit } from '../store'
 import type { CreateWorkspaceChoice } from '../store'
+import type { Technology } from '../../../shared/api'
+import { planTechSwitch } from './techSwitch'
 
 export function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -43,7 +45,31 @@ function suggestWorkspaceName(created: Array<{ name: string }> | undefined): str
   return `${base}_${n}`
 }
 
-export async function createWorkspaceFlow(name?: string): Promise<void> {
+/** A 2G/3G/4G button (spec §4.2): open the most recent workspace of that
+ *  technology, or offer to create one. True when the workspace changed. */
+export async function switchTechnologyFlow(target: Technology): Promise<boolean> {
+  const st = useAppStore.getState()
+  const ws = st.workspace
+  if (ws && ws.technology === target) return false
+  try {
+    const found = await window.api.workspace.findRecent(target, ws?.path)
+    const plan = planTechSwitch(target, ws ? { technology: ws.technology, path: ws.path } : null, found)
+    if (plan.kind === 'none') return false
+    if (plan.kind === 'open') {
+      await openWorkspaceFlow(plan.path)
+    } else {
+      if (!window.confirm(`No ${plan.technology} workspace yet — create one?`)) return false
+      await createWorkspaceFlow(undefined, plan.technology)
+    }
+  } catch (e) {
+    st.setError(errMsg(e))
+    return false
+  }
+  const now = useAppStore.getState().workspace
+  return now != null && now.path !== ws?.path
+}
+
+export async function createWorkspaceFlow(name?: string, preselectedTech?: Technology): Promise<void> {
   const st = useAppStore.getState()
   // remember the last folder + technology so the next creation is pre-filled
   const app = await window.api.appState.get()
@@ -53,7 +79,7 @@ export async function createWorkspaceFlow(name?: string): Promise<void> {
   // technology are collected by an in-app modal instead. The default technology
   // is the one remembered for this folder, falling back to the global last one.
   const defaultName = name ?? suggestWorkspaceName(app.createdWorkspaces)
-  const defaultTech = app.technologyByDir?.[dir] ?? app.lastTechnology
+  const defaultTech = preselectedTech ?? app.technologyByDir?.[dir] ?? app.lastTechnology
   const choice = await new Promise<CreateWorkspaceChoice | null>((resolve) => {
     useAppStore.getState().openCreatePrompt(defaultName, defaultTech, resolve)
   })

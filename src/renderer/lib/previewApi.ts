@@ -2,6 +2,7 @@ import { forecastSeries, type UnitDomain } from '../../main/analytics/forecastin
 import { classifyRisk, RISK_RANK } from '../../main/analytics/forecasting/risk'
 import { FORECAST_HORIZONS, DEFAULT_HORIZON, PERIOD_NOUN, addPeriods, forecastPeriodLabel } from '../../../shared/forecast'
 import type {
+  RecentWorkspace,
   Api, WorkspaceInfo, FileAnalysis, MappingConfig, PreviewResult, ImportResult, ImportAuditRow,
   CoverageRow, QualityRow, CanonicalField, ValidationIssue, NcLifecycleResult, GeoStatsResult, SheetInfo,
   PriorityRow, HealthResult, NcMovementRow, HealthScope, HealthMatrixResult,
@@ -3059,6 +3060,19 @@ export function demoUseTechnology(technology: Technology): void {
   demoKpiValues.clear()
 }
 
+/** The browser demo has one workspace per technology (spec §4.2). */
+const demoWorkspacePath = (t: Technology): string => `C:\\Demo\\workspaces\\Preview_Network_${t}.qosdb`
+
+function demoRecent(): RecentWorkspace[] {
+  const order: Technology[] = [demoTech, ...(['4G', '3G', '2G'] as Technology[]).filter((t) => t !== demoTech)]
+  return order.map((t) => ({
+    path: demoWorkspacePath(t),
+    name: `Preview Network ${t}`,
+    lastOpened: new Date().toISOString(),
+    technology: t
+  }))
+}
+
 export const previewApi: Api & { demo: true } = {
   demo: true,
   files: {
@@ -3070,13 +3084,7 @@ export const previewApi: Api & { demo: true } = {
     }
   },
   workspace: {
-    listRecent: async () => [
-      {
-        path: 'C:\\Demo\\workspaces\\Preview_Network.qosdb',
-        name: 'Preview Network',
-        lastOpened: new Date().toISOString()
-      }
-    ],
+    listRecent: async () => demoRecent(),
     pickOpen: async () => 'C:\\Demo\\workspaces\\' + demoWorkspaceName + '.qosdb',
     pickDirectory: async () => 'C:\\Demo\\workspaces',
     create: async (_dir: string, name: string, technology?: string) => {
@@ -3088,13 +3096,17 @@ export const previewApi: Api & { demo: true } = {
       demoKpiValues.clear()
       return demoWorkspaceInfo()
     },
-    open: async () => {
-      throw new Error('Opening workspaces is not available in browser preview mode')
+    open: async (path: string) => {
+      const t = (['2G', '3G', '4G'] as Technology[]).find((x) => path === demoWorkspacePath(x))
+      if (!t) throw new Error('Opening workspaces is not available in browser preview mode')
+      demoUseTechnology(t)
+      return demoWorkspaceInfo()
     },
     isLocked: async (): Promise<{ locked: boolean; pid?: number }> => ({ locked: false }),
     close: async () => {},
     info: async () => demoWorkspaceInfo(),
-    findRecent: async (): Promise<string | null> => null,
+    findRecent: async (technology: Technology, excludePath?: string): Promise<string | null> =>
+      demoRecent().find((r) => r.technology === technology && r.path !== excludePath)?.path ?? null,
     onChanged: () => () => {},
     snapshots: async (): Promise<WorkspaceSnapshot[]> => demoSnapshots,
     createSnapshot: async (name: string, opts?: CreateSnapshotOpts): Promise<WorkspaceSnapshot> => {
@@ -3635,13 +3647,7 @@ export const previewApi: Api & { demo: true } = {
   },
   appState: {
     get: async () => ({
-      recentWorkspaces: [
-        {
-          path: 'C:\\Demo\\workspaces\\Preview_Network.qosdb',
-          name: 'Preview Network',
-          lastOpened: new Date().toISOString()
-        }
-      ],
+      recentWorkspaces: demoRecent(),
       lastTechnology: demoAppState.lastTechnology,
       lastWorkspaceDir: demoAppState.lastWorkspaceDir,
       technologyByDir: demoAppState.technologyByDir,
@@ -3953,8 +3959,8 @@ export const previewApi: Api & { demo: true } = {
 function demoWorkspaceInfo(): WorkspaceInfo {
   const { min, max } = factDateRange()
   return {
-    path: 'C:\\Demo\\workspaces\\Preview_Network.qosdb',
-    name: demoWorkspaceName + ' (browser demo)',
+    path: demoWorkspacePath(demoTech),
+    name: `${demoWorkspaceName} ${demoTech} (browser demo)`,
     readOnly: false,
     schemaVersion: '1.0.0',
     createdAt: new Date().toISOString(),

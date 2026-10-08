@@ -13,6 +13,8 @@ import { markForecastDirty } from '../forecast/job'
 import { refreshIntelligence } from '../analytics/engine'
 import { writeQuality } from './quality'
 import { listDerivedKpis, saveDerivedKpi } from '../services/derivedKpiService'
+import { workspaceTechnology } from '../services/kpiService'
+import { WORKSPACE_TECH_SQL } from '../analytics/ncRule'
 import type {
   CanonicalField, ImportResult, MappingConfig, ValidationIssue
 } from '../../../shared/api'
@@ -401,7 +403,9 @@ async function insertFacts(conn: DuckDBConnection, importId: number): Promise<nu
 }
 
 /** Persist extra per-cell KPI values (spec §54a): unmapped source columns that
- *  were assigned a KpiDefinition.key are extracted directly from each row's JSON blob. */
+ *  were assigned a KpiDefinition.key are extracted directly from each row's JSON blob.
+ *  A key is resolved within the workspace's technology only: kpi_defs is unique
+ *  on (technology, kpi_key) and keys like connected_users exist under several. */
 async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
   const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
   if (Number(r.getRowObjects()[0].n) === 0) return
@@ -412,7 +416,7 @@ async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
     FROM stg_clean s
     JOIN dim_cell c ON c.name = s.cell_name
     CROSS JOIN UNNEST(json_keys(s.kpi_json)) AS kv(k_key)
-    JOIN kpi_defs k ON k.kpi_key = kv.k_key
+    JOIN kpi_defs k ON k.kpi_key = kv.k_key AND k.technology = ${WORKSPACE_TECH_SQL}
     WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.rn = 1
       AND try_cast(json_extract_string(s.kpi_json, '$.' || kv.k_key) AS DOUBLE) IS NOT NULL
       AND NOT EXISTS (
@@ -427,12 +431,13 @@ async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
   if (Number(r.getRowObjects()[0].n) === 0) return
 
   const derivedList = await listDerivedKpis(conn)
-  const enabledDerived = derivedList.filter((d) => d.enabled)
+  const tech = await workspaceTechnology(conn)
+  const enabledDerived = derivedList.filter((d) => d.enabled && d.technology === tech)
   if (enabledDerived.length === 0) return
 
   for (const def of enabledDerived) {
     await saveDerivedKpi(conn, def)
-    const kpiRow = await conn.runAndReadAll(`SELECT kpi_id FROM kpi_defs WHERE kpi_key = '${def.id.replace(/'/g, "''")}'`)
+    const kpiRow = await conn.runAndReadAll(`SELECT kpi_id FROM kpi_defs WHERE technology = ${WORKSPACE_TECH_SQL} AND kpi_key = '${def.id.replace(/'/g, "''")}'`)
     const kpiId = Number(kpiRow.getRowObjects()[0]?.kpi_id)
     if (!kpiId) continue
 

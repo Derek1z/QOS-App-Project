@@ -13,6 +13,7 @@ import { recomputeNcLifecycle } from '../analytics/nc'
 import { periodCoverageViewSql } from '../analytics/periods'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
+import { WORKSPACE_TECH_SQL } from '../analytics/ncRule'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
 import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
 
@@ -350,6 +351,53 @@ async function correctTechnologyOnce(conn: DuckDBConnection): Promise<boolean> {
   return change
 }
 
+/** Before imports resolved KPI keys within the workspace's technology, a
+ *  column mapped to a key defined under several technologies (connected_users,
+ *  data_volume) was stored once per technology. Once per workspace (marker
+ *  `extra_tech_cleaned`), drop each other-technology row whose key exists in
+ *  the workspace's technology and whose twin row (same cell, day and key)
+ *  holds the workspace's copy. Returns true when rows were deleted, so the
+ *  caller recomputes. */
+async function cleanExtraMetricsTechOnce(conn: DuckDBConnection): Promise<boolean> {
+  const cleaned = (await conn.runAndReadAll(
+    `SELECT value FROM workspace_meta WHERE key = 'extra_tech_cleaned'`
+  )).getRowObjects()[0]?.value
+  if (cleaned != null) return false
+  const countRows = async (): Promise<number> =>
+    Number((await conn.runAndReadAll(`SELECT count(*) AS n FROM fact_extra_metrics`)).getRowObjects()[0].n)
+  await conn.run('BEGIN TRANSACTION')
+  try {
+    const before = await countRows()
+    await conn.run(
+      `DELETE FROM fact_extra_metrics AS e
+       WHERE EXISTS (
+         SELECT 1
+         FROM kpi_defs k
+         JOIN kpi_defs w ON w.kpi_key = k.kpi_key AND w.technology = ${WORKSPACE_TECH_SQL}
+         JOIN fact_extra_metrics t ON t.kpi_id = w.kpi_id AND t.cell_id = e.cell_id AND t.date_id = e.date_id
+         WHERE k.kpi_id = e.kpi_id AND k.technology <> ${WORKSPACE_TECH_SQL}
+       )`
+    )
+    const deleted = before - (await countRows())
+    if (deleted > 0) {
+      console.log(`[extraTech] dropped ${deleted} other-technology KPI row(s)`)
+      // the caller recomputes now; dropping the relabel marker makes an
+      // interrupted recompute run again on the next open
+      await conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
+    }
+    await conn.run(
+      `INSERT INTO workspace_meta (key, value) VALUES ('extra_tech_cleaned', ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      [new Date().toISOString()]
+    )
+    await conn.run('COMMIT')
+    return deleted > 0
+  } catch (e) {
+    await conn.run('ROLLBACK').catch(() => {})
+    throw e
+  }
+}
+
 // --- lifecycle ---
 
 // Opens and creates run one at a time: a second one starting while the first
@@ -386,7 +434,7 @@ async function createWorkspaceNow(dir: string, name: string, technology?: string
       await connection.run(
         `INSERT INTO workspace_meta (key, value) VALUES ` +
         `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}'), ` +
-        `('nc_periods', '${NC_PERIODS_MARKER}'), ('tech_checked', '${now}')`
+        `('nc_periods', '${NC_PERIODS_MARKER}'), ('tech_checked', '${now}'), ('extra_tech_cleaned', '${now}')`
       )
       await seedKpiDefs(connection, '2G')
       await seedKpiDefs(connection, '3G')
@@ -471,7 +519,9 @@ async function openWorkspaceNow(
         )
         const markerVal = markerR.getRowObjects()[0]?.value
         const techCorrected = await correctTechnologyOnce(connection)
-        if (techCorrected || markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
+        // after the correction, so rows are judged against the final technology
+        const extraCleaned = await cleanExtraMetricsTechOnce(connection)
+        if (techCorrected || extraCleaned || markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
           await recomputeAllAggregates(connection)
           await refreshAllIntelligence(connection)
           await connection.run(

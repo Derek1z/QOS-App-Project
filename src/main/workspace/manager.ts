@@ -294,6 +294,52 @@ export async function getCurrentInfo(): Promise<WorkspaceInfo | null> {
   return assemble(current)
 }
 
+// --- one-time technology correction (fixed workspace technology, spec §4.4) ---
+
+/** The technology holding at least 90% of the imported KPI rows, or null
+ *  when there are none or no technology reaches 90%. */
+export async function inferWorkspaceTechnology(conn: DuckDBConnection): Promise<Technology | null> {
+  const rows = (await conn.runAndReadAll(
+    `SELECT k.technology AS technology, count(*) AS n
+     FROM fact_extra_metrics e JOIN kpi_defs k ON k.kpi_id = e.kpi_id
+     GROUP BY k.technology ORDER BY n DESC`
+  )).getRowObjects()
+  const total = rows.reduce((a, r) => a + Number(r.n), 0)
+  if (total === 0) return null
+  const top = rows[0]
+  return Number(top.n) / total >= 0.9 ? (String(top.technology) as Technology) : null
+}
+
+/** Before this change the 2G/3G/4G buttons rewrote a workspace's technology,
+ *  so an older workspace may hold one technology's data under another's
+ *  label. Checked once per workspace (marker `tech_checked`); returns true
+ *  when the technology was changed, so the caller recomputes. */
+async function correctTechnologyOnce(conn: DuckDBConnection): Promise<boolean> {
+  const checked = (await conn.runAndReadAll(
+    `SELECT value FROM workspace_meta WHERE key = 'tech_checked'`
+  )).getRowObjects()[0]?.value
+  if (checked != null) return false
+  const stored = (await conn.runAndReadAll(
+    `SELECT value FROM workspace_meta WHERE key = 'technology'`
+  )).getRowObjects()[0]?.value
+  const inferred = await inferWorkspaceTechnology(conn)
+  const change = inferred != null && inferred !== String(stored ?? '4G')
+  if (change) {
+    console.log(`[techCheck] workspace technology ${String(stored ?? '4G')} -> ${inferred} (from its KPI rows)`)
+    await conn.run(
+      `INSERT INTO workspace_meta (key, value) VALUES ('technology', ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      [inferred]
+    )
+  }
+  await conn.run(
+    `INSERT INTO workspace_meta (key, value) VALUES ('tech_checked', ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    [new Date().toISOString()]
+  )
+  return change
+}
+
 // --- lifecycle ---
 
 export async function createWorkspace(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {
@@ -316,7 +362,7 @@ export async function createWorkspace(dir: string, name: string, technology?: st
       await connection.run(
         `INSERT INTO workspace_meta (key, value) VALUES ` +
         `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}'), ` +
-        `('nc_periods', '${NC_PERIODS_MARKER}')`
+        `('nc_periods', '${NC_PERIODS_MARKER}'), ('tech_checked', '${now}')`
       )
       await seedKpiDefs(connection, '2G')
       await seedKpiDefs(connection, '3G')
@@ -392,7 +438,8 @@ export async function openWorkspace(
           `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
         )
         const markerVal = markerR.getRowObjects()[0]?.value
-        if (markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
+        const techCorrected = await correctTechnologyOnce(connection)
+        if (techCorrected || markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
           await recomputeAllAggregates(connection)
           await refreshAllIntelligence(connection)
           await connection.run(

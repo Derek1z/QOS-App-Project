@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore, emit } from '../store'
 import { refreshWorkspaceState, errMsg, switchTechnologyFlow } from '../lib/flows'
 import { importTechBlock } from '../lib/importTech'
+import { importQueue } from '../lib/importQueue'
 import { mappingValue, parseMappingValue, mappingGroups } from '../lib/columnMapping'
 import type {
   FileAnalysis, MappingConfig, PreviewResult, ImportResult,
@@ -121,6 +122,8 @@ export default function DataManager(): React.JSX.Element {
 
   const blockOf = (a: FileAnalysis): { blocked: boolean; message: string | null } =>
     importTechBlock(a.detectedTechnology, workspace?.technology ?? '4G', !!techOverride[a.id])
+  const queue = importQueue({ analyses, mappings, workspaceTech: workspace?.technology ?? '4G', overrides: techOverride })
+  const { canRun, importableCount: importable } = queue
 
   useEffect(() => {
     const techs = [...new Set(analyses.map((a) => a.detectedTechnology).filter(
@@ -378,16 +381,14 @@ export default function DataManager(): React.JSX.Element {
     const off = window.api.imports.onProgress((p) => setProgress(p))
     try {
       let last: ImportResult | null = null
-      for (const a of analyses) {
-        const m = mappings[a.id]
-        if (!m || a.errors.length > 0 || blockOf(a).blocked) continue
-        last = await window.api.imports.run(a.id, m)
+      for (const a of queue.toImport) {
+        last = await window.api.imports.run(a.id, mappings[a.id])
       }
       setResult(last)
       await refreshWorkspaceState()
       emit('IMPORT_COMPLETE')
       // blocked files were not imported: keep them, with their way forward
-      const left = analyses.filter((a) => blockOf(a).blocked)
+      const left = queue.blocked
       setAnalyses(left)
       setMappings((prev) => Object.fromEntries(left.map((a) => [a.id, prev[a.id]]).filter(([, m]) => m)))
       setPreviews({})
@@ -600,15 +601,6 @@ export default function DataManager(): React.JSX.Element {
     URL.revokeObjectURL(url)
   }
 
-  const importable = analyses.filter((a) => a.errors.length === 0 && !blockOf(a).blocked).length
-  const canRun = analyses.some((a) => {
-    if (a.errors.length > 0 || blockOf(a).blocked) return false
-    const cols = mappings[a.id]?.columns
-    if (!cols) return false
-    // columns is keyed by source header, so check the mapped canonical values
-    const values = Object.values(cols)
-    return values.includes('date') && values.includes('cell')
-  })
 
   return (
     <div className="module">

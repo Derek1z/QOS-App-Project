@@ -53,6 +53,13 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         blurb: 'Deep-dive investigation of a cell, site or district: trend lines, threshold overlays, findings and root-cause hypotheses.'
       },
       {
+        id: 'cell-intelligence',
+        label: 'Cell Intelligence',
+        icon: '🧬',
+        milestone: 1,
+        blurb: 'Cell cards filtered by severity, with PRB, a telemetry chart drawer and a link to Investigation.'
+      },
+      {
         id: 'explorer',
         label: 'Network Explorer',
         icon: '🌐',
@@ -97,7 +104,7 @@ export const MODULE_GROUPS: { title: string; items: ModuleDef[] }[] = [
         label: 'Workspace Settings',
         icon: '🧰',
         milestone: 0,
-        blurb: 'Workspace information and recent workspaces.'
+        blurb: 'Workspace information, snapshots and recent workspaces.'
       }
     ]
   }

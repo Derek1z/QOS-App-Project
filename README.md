@@ -76,13 +76,14 @@ In the sidebar:
 | **NC & Breach Analytics** | NC labels, trend (Improving / Stable / Worsening), severity (Normal / Watch / High / Critical) across daily, weekly and monthly views |
 | **Smart Priority Queue** | Cells, sites and districts ranked 0–100 (bands Critical 90+, High 75+, Medium 50+, Watch 25+, Low); workflow status, owner, ticket and review date per entity, with overdue flags |
 | **Forecasting & Early Warning** | Backtested forecasts of imported KPIs, per-cell risk against targets, capacity growth — see below |
+| **Cell Intelligence** | Cell cards filtered by severity, with PRB, a telemetry chart drawer and a link to Investigation |
 | **Cell Investigation** | One cell, site or district: KPI history, rule-based findings in calibrated language, root-cause hypotheses, before/after comparison around an intervention date, notes, Markdown export |
 | **Network Explorer** | Region → district → site → cell drill-down with health roll-ups |
 | **Ghana Health Matrix** | 16-region map with 253-district drill-down, and a 4–26-week health heatmap |
 | **Performance Analysis** | Distributions, a PRB-vs-throughput quadrant scatter and a correlation matrix |
 | **Data Manager** | Import (analyse → map → preview → import), starter CSV templates, import history and data quality, raw-file archive, maintenance |
 | **KPI Definitions & Derived** | Per-technology KPI catalogue (targets, direction, aggregation, aliases) and derived KPIs |
-| **Workspace Settings** | Workspace info and recent workspaces |
+| **Workspace Settings** | Workspace info, snapshots (create, restore, delete, compare two) and recent workspaces |
 
 Also: **Reports** (top bar → Export Packs) and **Comparison Lab** (command palette → Compare Periods or Regions).
 
@@ -121,7 +122,7 @@ Every number on the Forecasting screen is an imported value, a forecast from imp
 - Each import runs in a separate process on its own connection, backs the workspace up first, and rolls back on error.
 - The original import files are kept gzip-compressed in `<workspace>.qosdb.raw/` for 90 days.
 - Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.
-- Workspace snapshots (create, compare, restore) exist in the backend but have no screen yet.
+- Snapshots (Workspace Settings): point-in-time copies to restore (the current data is backed up first) or to compare two milestones KPI by KPI.
 
 ---
 
@@ -170,7 +171,6 @@ docs/superpowers/   specs and plans for the 2026 changes
 
 - Legacy `.xls`, `.xlsb`, `.ods` and non-comma CSV are not imported.
 - Report schedules only run while the app is open.
-- Workspace snapshots have no screen yet.
 - The Windows build since the October 2026 changes is untested on Windows.
 
 ## License

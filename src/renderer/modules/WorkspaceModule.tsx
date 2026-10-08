@@ -4,13 +4,9 @@ import {
   openWorkspaceFlow,
   closeWorkspaceFlow
 } from '../lib/flows'
+import { fmtBytes } from '../lib/snapshotsView'
+import SnapshotsPanel from '../components/SnapshotsPanel'
 
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
 
 export default function WorkspaceModule(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
@@ -101,6 +97,8 @@ export default function WorkspaceModule(): React.JSX.Element {
           </div>
         </div>
       </div>
+
+      {workspace && <SnapshotsPanel />}
 
       {/* Recent Workspaces Card */}
       <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)' }}>

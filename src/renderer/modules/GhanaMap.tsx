@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
 import { MapChart } from 'echarts/charts'
 import { TooltipComponent, VisualMapContinuousComponent, GeoComponent } from 'echarts/components'
@@ -7,12 +7,16 @@ import type { EChartsOption } from 'echarts'
 import { GHANA_REGIONS_GEOJSON } from '../lib/ghanaRegions'
 import { GHANA_DISTRICTS_GEOJSON } from '../lib/ghanaDistricts'
 import { useAppStore } from '../store'
+import { matchMapData, mapTooltip } from '../lib/mapData'
 import type { DistrictMapRow, RegionMapRow, Technology } from '../../../shared/api'
 
 echarts.use([MapChart, TooltipComponent, VisualMapContinuousComponent, GeoComponent, CanvasRenderer])
 
 try { echarts.registerMap('ghana', GHANA_REGIONS_GEOJSON as any) } catch { /* registered */ }
 try { echarts.registerMap('ghanaDistricts', GHANA_DISTRICTS_GEOJSON as any) } catch { /* registered */ }
+
+const REGION_SHAPES = GHANA_REGIONS_GEOJSON.features.map((f) => f.properties.name)
+const DISTRICT_SHAPES = GHANA_DISTRICTS_GEOJSON.features.map((f) => f.properties.name)
 
 export default function GhanaMap(): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -27,6 +31,8 @@ export default function GhanaMap(): React.JSX.Element {
   const [regions, setRegions] = useState<RegionMapRow[]>([])
   const [districts, setDistricts] = useState<DistrictMapRow[]>([])
   const [loading, setLoading] = useState(true)
+  const regionMatch = useMemo(() => matchMapData(regions, REGION_SHAPES), [regions])
+  const districtMatch = useMemo(() => matchMapData(districts, DISTRICT_SHAPES), [districts])
 
   useEffect(() => {
     if (selectedTech && selectedTech !== tech) {
@@ -42,10 +48,8 @@ export default function GhanaMap(): React.JSX.Element {
         const regRes = await window.api.analytics.regionMap(tech, grain)
         if (!alive) return
         setRegions(regRes)
-        if (regRes.length > 0) {
-          const distRes = await window.api.analytics.regionDistricts(regRes[0].id, tech, grain)
-          if (alive) setDistricts(distRes)
-        }
+        const distRes = await Promise.all(regRes.map((r) => window.api.analytics.regionDistricts(r.id, tech, grain)))
+        if (alive) setDistricts(distRes.flat())
       } catch {
         /* close */
       } finally {
@@ -63,17 +67,13 @@ export default function GhanaMap(): React.JSX.Element {
       chartRef.current = chart
     }
 
-    const dataList = level === 'region' ? regions : districts
-    const mapData = dataList.map((r) => ({
-      name: r.name,
-      value: r.healthScore != null ? Math.round(r.healthScore) : 80
-    }))
+    const { data: mapData } = level === 'region' ? regionMatch : districtMatch
 
     const opt: EChartsOption = {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
-        formatter: '{b}: Health Score {c}%'
+        formatter: (p: unknown) => mapTooltip(p as { name: string; value?: unknown })
       },
       visualMap: {
         min: 40,
@@ -117,9 +117,11 @@ export default function GhanaMap(): React.JSX.Element {
     const handleResize = () => chart?.resize()
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [regions, districts, level])
+  }, [regionMatch, districtMatch, level])
 
-  const nationalHealth = regions.length > 0 ? Math.round(regions.reduce((acc, r) => acc + (r.healthScore ?? 80), 0) / regions.length) : 88
+  // average over the regions that have a score; no data shows as "—"
+  const scored = regions.filter((r) => r.healthScore != null)
+  const nationalHealth = scored.length > 0 ? Math.round(scored.reduce((acc, r) => acc + (r.healthScore ?? 0), 0) / scored.length) : null
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -203,8 +205,8 @@ export default function GhanaMap(): React.JSX.Element {
             </span>
             <div style={{ display: 'inline-flex', background: 'var(--bg-3)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border)' }}>
               {[
-                { id: 'region', label: '16 Regions' },
-                { id: 'district', label: '261 Districts' }
+                { id: 'region', label: `${REGION_SHAPES.length} Regions` },
+                { id: 'district', label: `${DISTRICT_SHAPES.length} Districts` }
               ].map((l) => (
                 <button
                   key={l.id}
@@ -247,9 +249,9 @@ export default function GhanaMap(): React.JSX.Element {
           <div style={{ position: 'relative', width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="80" height="80" viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)', width: '80px', height: '80px' }}>
               <path stroke="var(--bg-3)" strokeWidth="3.5" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              <path stroke="#10b981" strokeDasharray="88, 100" strokeWidth="3.5" strokeLinecap="round" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              <path stroke="#10b981" strokeDasharray={`${nationalHealth ?? 0}, 100`} strokeWidth="3.5" strokeLinecap="round" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
             </svg>
-            <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>{nationalHealth}%</span>
+            <span style={{ position: 'absolute', fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>{nationalHealth == null ? '—' : `${nationalHealth}%`}</span>
           </div>
 
           <div>
@@ -271,8 +273,18 @@ export default function GhanaMap(): React.JSX.Element {
       {/* Main ECharts Map Container */}
       <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)' }}>
         <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginBottom: '16px' }}>
-          Ghana Interactive Health Map ({level === 'region' ? '16 Regions' : '261 Districts'})
+          Ghana Interactive Health Map ({level === 'region' ? `${REGION_SHAPES.length} Regions` : `${DISTRICT_SHAPES.length} Districts`})
         </h3>
+        {(() => {
+          const m = level === 'region' ? regionMatch : districtMatch
+          const total = level === 'region' ? REGION_SHAPES.length : DISTRICT_SHAPES.length
+          return (
+            <p style={{ fontSize: '12px', color: 'var(--text-dim)', margin: '-8px 0 12px 0' }}>
+              {m.data.length} of {total} {level === 'region' ? 'regions' : 'districts'} have data; grey shapes have none.
+              {m.unmatched.length > 0 && ` Not on the map (name not recognised): ${m.unmatched.slice(0, 8).join(', ')}${m.unmatched.length > 8 ? ` and ${m.unmatched.length - 8} more` : ''}.`}
+            </p>
+          )
+        })()}
         <div ref={containerRef} style={{ height: '520px', width: '100%' }} />
       </div>
 
@@ -297,9 +309,9 @@ export default function GhanaMap(): React.JSX.Element {
                   <td style={{ padding: '12px 14px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div style={{ flex: 1, height: '6px', background: 'var(--bg-3)', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{ width: `${Math.min(100, reg.healthScore ?? 80)}%`, height: '100%', background: (reg.healthScore ?? 80) > 75 ? '#34d399' : '#fbbf24' }} />
+                        <div style={{ width: `${Math.min(100, reg.healthScore ?? 0)}%`, height: '100%', background: (reg.healthScore ?? 0) > 75 ? '#34d399' : '#fbbf24' }} />
                       </div>
-                      <span style={{ fontWeight: 800, fontSize: '12px', color: '#f8fafc' }}>{Math.round(reg.healthScore ?? 80)}%</span>
+                      <span style={{ fontWeight: 800, fontSize: '12px', color: '#f8fafc' }}>{reg.healthScore == null ? '—' : `${Math.round(reg.healthScore)}%`}</span>
                     </div>
                   </td>
                   <td style={{ padding: '12px 14px', color: 'var(--text-dim)' }}>{reg.cells}</td>

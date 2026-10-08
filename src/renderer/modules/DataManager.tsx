@@ -73,6 +73,12 @@ function IssueList({ issues }: { issues: ValidationIssue[] }): React.JSX.Element
   )
 }
 
+const SYNTHETIC_TITLE: Record<Technology, string> = {
+  '2G': 'Generate multi-week 2G dataset with TCH/SDCCH congestion and call drops',
+  '3G': 'Generate multi-week 3G dataset with CSSR, CDR, and DASR metrics',
+  '4G': 'Generate multi-week 4G dataset with PRB, DSAF, and throughput metrics'
+}
+
 export default function DataManager(): React.JSX.Element {
   const workspace = useAppStore((s) => s.workspace)
   const [tab, setTab] = useState<Tab>('import')
@@ -304,7 +310,9 @@ export default function DataManager(): React.JSX.Element {
       }
       setMappings(next)
       for (const a of as) {
-        if (a.errors.length === 0) {
+        // a blocked file (another technology) gets no preview until the user
+        // chooses "Import anyway" and validates it
+        if (a.errors.length === 0 && !importTechBlock(a.detectedTechnology, workspace?.technology ?? '4G', false).blocked) {
           // Fast path: synthesize preview directly from the sample rows already parsed during analysis
           const sampleRows = a.sample ?? []
           if (sampleRows.length > 0) {
@@ -377,8 +385,10 @@ export default function DataManager(): React.JSX.Element {
       setResult(last)
       await refreshWorkspaceState()
       emit('IMPORT_COMPLETE')
-      setAnalyses([])
-      setMappings({})
+      // blocked files were not imported: keep them, with their way forward
+      const left = analyses.filter((a) => blockOf(a).blocked)
+      setAnalyses(left)
+      setMappings((prev) => Object.fromEntries(left.map((a) => [a.id, prev[a.id]]).filter(([, m]) => m)))
       setPreviews({})
       await loadTabs()
     } catch (e) {
@@ -475,7 +485,7 @@ export default function DataManager(): React.JSX.Element {
       return { ...prev, [a.id]: { columns: cur.columns, kpiColumns: { ...suggested } } }
     })
     setKpiSuggest((prev) => ({ ...prev, [a.id]: 'applied' }))
-    await preview(a.id, { columns: a.suggestedMapping, kpiColumns: { ...suggested } })
+    if (!blockOf(a).blocked) await preview(a.id, { columns: a.suggestedMapping, kpiColumns: { ...suggested } })
   }
 
   useEffect(() => {
@@ -578,6 +588,7 @@ export default function DataManager(): React.JSX.Element {
     URL.revokeObjectURL(url)
   }
 
+  const importable = analyses.filter((a) => a.errors.length === 0 && !blockOf(a).blocked).length
   const canRun = analyses.some((a) => {
     if (a.errors.length > 0 || blockOf(a).blocked) return false
     const cols = mappings[a.id]?.columns
@@ -908,30 +919,20 @@ export default function DataManager(): React.JSX.Element {
                   Choose files…
                 </button>
                 <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <button
-                    className="btn btn-ghost"
-                    disabled={busy || syntheticBusy}
-                    onClick={() => void generateSynthetic('2G')}
-                    title="Generate multi-week 2G dataset with TCH/SDCCH congestion and call drops"
-                  >
-                    {syntheticBusy ? 'Generating…' : '⚡ Generate 2G Demo Data'}
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    disabled={busy || syntheticBusy}
-                    onClick={() => void generateSynthetic('3G')}
-                    title="Generate multi-week 3G dataset with CSSR, CDR, and DASR metrics"
-                  >
-                    {syntheticBusy ? 'Generating…' : '⚡ Generate 3G Demo Data'}
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    disabled={busy || syntheticBusy}
-                    onClick={() => void generateSynthetic('4G')}
-                    title="Generate multi-week 4G dataset with PRB, DSAF, and throughput metrics"
-                  >
-                    {syntheticBusy ? 'Generating…' : '⚡ Generate 4G Demo Data'}
-                  </button>
+                  {/* demo data for the workspace's own technology only (spec §1) */}
+                  {(() => {
+                    const t = workspace?.technology ?? '4G'
+                    return (
+                      <button
+                        className="btn btn-ghost"
+                        disabled={busy || syntheticBusy}
+                        onClick={() => void generateSynthetic(t)}
+                        title={SYNTHETIC_TITLE[t]}
+                      >
+                        {syntheticBusy ? 'Generating…' : `⚡ Generate ${t} Demo Data`}
+                      </button>
+                    )
+                  })()}
                 </div>
                 {isDemo && (
                   <button className="btn btn-ghost" onClick={() => void loadSample()}>
@@ -975,7 +976,7 @@ export default function DataManager(): React.JSX.Element {
                       disabled={busy || !canRun}
                       onClick={() => void run()}
                     >
-                      🚀 Ingest All {analyses.length} Files in Batch
+                      🚀 Ingest {importable} of {analyses.length} Files in Batch
                     </button>
                   </div>
                 </div>

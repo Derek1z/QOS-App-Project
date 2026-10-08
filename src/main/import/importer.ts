@@ -14,7 +14,7 @@ import {
   aliasGeoValue
 } from './mapping'
 import { validateSample } from './validator'
-import { discoverKpiDefs, workspaceTechnology } from '../services/kpiService'
+import { discoverKpiDefs, listKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { detectDerivedKpiSuggestions } from '../services/derivedKpiService'
 import { invalidateSummaryCache } from '../services/queryService'
 import { utilityProcess } from 'electron'
@@ -84,15 +84,22 @@ export async function analyzeFiles(
       // spec §54a: suggest KPI assignments for the active technology from the
       // source column names (exact alias + fuzzy token match)
       onProgress?.({ phase: 'Discovering KPI columns', detail: fname })
-      const kpiDiscovery = await discoverKpiDefs(ws.connection, header)
+      // locked to the workspace's own technology: its catalogue only, and a
+      // column already mapped to a network field is not also a KPI
       const currentTech = await workspaceTechnology(ws.connection)
+      const kpiDiscovery = await discoverKpiDefs(ws.connection, header, currentTech)
+      const ownKeys = new Set((await listKpiDefs(ws.connection, currentTech)).map((d) => d.key))
+      const kpiMapping = Object.fromEntries(
+        Object.entries(profile ? profile.kpiColumns : kpiDiscovery.mapping)
+          .filter(([h, k]) => ownKeys.has(k) && !mapping[h])
+      )
       const derivedSuggestions = detectDerivedKpiSuggestions(header, detectedTechnology ?? currentTech)
       const st = statSync(path)
       const id = `${path}|${st.size}|${st.mtimeMs}`
       out.push({
         id, path, filename: basename(path), header, sample: rows, fingerprint,
         suggestedMapping: mapping,
-        suggestedKpiMapping: profile ? profile.kpiColumns : kpiDiscovery.mapping,
+        suggestedKpiMapping: kpiMapping,
         derivedSuggestions,
         confidence, knownProfile: !!profile,
         detectedTechnology,

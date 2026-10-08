@@ -17,11 +17,14 @@ GPRS Traffic).
 - A banner appears above the mapping table: **"✨ Auto-suggested N KPI
   mappings from the column names."**
 - Click **Apply suggestions** to map all of them in one click, or **Dismiss**.
-- You can still edit any column afterwards — each row has a second dropdown
-  (canonical field **or** any KPI definition).
-- The suggestions are always for the **currently active technology** (see the
-  2G/3G/4G switcher in the top bar), so switch technology *before* importing a
-  file for that technology's columns.
+- You can still edit any column afterwards — each row has one **Mapped to**
+  list: *ignore*, a network & cell field (date, cell, site, …), or a KPI of the
+  workspace's technology. PRB utilisation is a 4G field and is only offered in
+  4G workspaces.
+- Each workspace holds one technology, and the suggestions are for that
+  technology. A file that looks like another technology is stopped with
+  **Open the <T> workspace** (or **Create a <T> workspace**), which analyses it
+  again there, and **Import anyway**.
 - **Accepted assignments are remembered.** The source-mapping profile stores
   your KPI choices, so re-importing the same file restores them automatically —
   no need to re-apply.
@@ -36,7 +39,7 @@ their editable targets:
 - **KPI threshold breach telemetry** — how many cells breach each KPI's target
   per period (daily, weekly or monthly).
 
-Both follow the 2G/3G/4G switcher in the top bar.
+Both show the open workspace's technology.
 
 ## 3. Tech-aware NC detection
 

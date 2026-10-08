@@ -1,7 +1,7 @@
 # Fixed Workspace Technology Design
 
 **Date**: 2026-10-08
-**Status**: Draft for review
+**Status**: Implemented (2026-10-08)
 **Scope**: a workspace's technology is set at creation and never rewritten; the 2G/3G/4G buttons move between workspaces; imports check that a file's technology matches the workspace
 
 ---

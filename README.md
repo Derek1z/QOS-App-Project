@@ -24,7 +24,9 @@ These were taken on 29/08/2026 and predate the October changes (NC periods, comp
 
 **Files:** `.xlsx` workbooks (every sheet is read, so per-technology or multi-week sheets work; first row = headers) and comma-separated `.csv` / `.txt`. Legacy `.xls` is rejected with a message to save it as `.xlsx` or CSV. Semicolon- or tab-separated text is not supported.
 
-**Columns:** the importer suggests a mapping from the column names (Huawei-style headers such as `4G Peak Hour Traffic Utilization_NCA(%)` or `RRC Connected UEs (Avg)`) and remembers your mapping per file layout. Every KPI the technology defines can be mapped; the core columns are date, cell, site, district, region, PRB/utilisation, users, data volume, throughput and availability.
+**Columns:** the importer suggests a mapping from the column names (Huawei-style headers such as `4G Peak Hour Traffic Utilization_NCA(%)` or `RRC Connected UEs (Avg)`) and remembers your mapping per file layout. Each column has one **Mapped to** list: a network & cell field (date, cell, site, district, region, users, data volume, throughput, availability, and PRB utilisation in 4G) or any KPI of the workspace's technology.
+
+**Technology:** a workspace holds one technology, chosen when it is created. Keep one workspace per technology: the 2G/3G/4G tabs on each screen and the command palette (**Open 3G workspace**) open the most recently used workspace of that technology, or offer to create one. A file that looks like another technology is stopped with **Open/Create the <T> workspace** or **Import anyway**. Workspaces whose technology was switched by older versions are corrected once when opened, from the technology of their imported KPIs.
 
 **Dates:** day-first (`07/05/2026` is 7 May).
 
@@ -118,7 +120,7 @@ Every number on the Forecasting screen is an imported value, a forecast from imp
 
 ## Workspaces and data safety
 
-- A workspace is one `.qosdb` DuckDB file. Opening it takes a write lock; a second copy of the app can open it read-only.
+- A workspace is one `.qosdb` DuckDB file of one technology. Opening it takes a write lock; a second copy of the app can open it read-only.
 - Each import runs in a separate process on its own connection, backs the workspace up first, and rolls back on error.
 - The original import files are kept gzip-compressed in `<workspace>.qosdb.raw/` for 90 days.
 - Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.

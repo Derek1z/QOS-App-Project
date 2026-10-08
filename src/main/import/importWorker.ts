@@ -19,7 +19,13 @@ function post(msg: WorkerMessage): void {
 /** Runs in an Electron utility process (see runInWorker in importer.ts): the
  *  job arrives as the first message on process.parentPort. */
 async function main(job: ImportCoreJob): Promise<void> {
-  const lockHeld = acquireLock(job.workspacePath)
+  let lockHeld = acquireLock(job.workspacePath)
+  // the main process reopens as soon as it hears back, so the lock must be
+  // gone before any reply (else it sees a live foreign lock and refuses)
+  const release = (): void => {
+    if (lockHeld) releaseLock(job.workspacePath)
+    lockHeld = false
+  }
   let instance: Awaited<ReturnType<typeof DuckDBInstance.create>> | null = null
   let conn: DuckDBConnection | null = null
   try {
@@ -43,13 +49,17 @@ async function main(job: ImportCoreJob): Promise<void> {
     conn = null
     // Windows: the file must be released before the main process reopens it —
     // only report done once the DuckDB handle is fully closed.
+    release()
     post({ type: 'done', result })
   } catch (e) {
     closeHandles(instance, conn)
+    instance = null
+    conn = null
+    release()
     post({ type: 'error', message: e instanceof Error ? e.message : String(e) })
   } finally {
     closeHandles(instance, conn)
-    if (lockHeld) releaseLock(job.workspacePath)
+    release()
   }
 }
 

@@ -3546,6 +3546,8 @@ code {
 
 /* --- KPI Definitions (spec §54a) --- */
 .map-sel { min-width: 280px; max-width: 100%; }
+.map-also { margin-left: 8px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.map-also .btn { padding: 0 6px; margin-left: 4px; }
 .kpi-page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .kpi-table td { vertical-align: middle; }
 .kpi-row-actions { gap: 6px; }

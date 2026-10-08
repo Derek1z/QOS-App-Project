@@ -30,15 +30,16 @@ describe('KPI suggestions follow the workspace technology', () => {
     for (const k of keys) expect(twoG.has(k)).toBe(true)
   })
 
-  it('a 4G workspace does not suggest the 2G KPI, and a field column carries no KPI', { timeout: 60000 }, async () => {
+  it('a 4G workspace keeps its own PRB KPI and does not suggest the 2G KPI', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('4G')
     const file = join(ws.dir, 'mixed.csv')
     writeFileSync(file, `${HEADER}\n07/05/2026,CELL-1,50,0.5,0.2\n`)
     const { analyzeFiles } = await import('../../src/main/import/importer')
     const [a] = await analyzeFiles([file])
     expect(Object.values(a.suggestedKpiMapping)).not.toContain('tch_congestion')
-    for (const h of Object.keys(a.suggestedMapping)) {
-      expect(a.suggestedKpiMapping[h]).toBeUndefined()
-    }
+    // the PRB column is both the network field and the 4G core KPI: per-KPI
+    // values (KPI cards, KPI breach) come only from the KPI half
+    expect(a.suggestedMapping['PRB Utilization']).toBe('prb')
+    expect(a.suggestedKpiMapping['PRB Utilization']).toBe('prb_utilization')
   })
 })

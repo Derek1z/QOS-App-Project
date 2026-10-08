@@ -84,14 +84,15 @@ export async function analyzeFiles(
       // spec §54a: suggest KPI assignments for the active technology from the
       // source column names (exact alias + fuzzy token match)
       onProgress?.({ phase: 'Discovering KPI columns', detail: fname })
-      // locked to the workspace's own technology: its catalogue only, and a
-      // column already mapped to a network field is not also a KPI
+      // locked to the workspace's own technology: its catalogue only. A
+      // network-field column may also be that technology's KPI (4G PRB):
+      // per-KPI values come only from the KPI half.
       const currentTech = await workspaceTechnology(ws.connection)
       const kpiDiscovery = await discoverKpiDefs(ws.connection, header, currentTech)
       const ownKeys = new Set((await listKpiDefs(ws.connection, currentTech)).map((d) => d.key))
       const kpiMapping = Object.fromEntries(
         Object.entries(profile ? profile.kpiColumns : kpiDiscovery.mapping)
-          .filter(([h, k]) => ownKeys.has(k) && !mapping[h])
+          .filter(([, k]) => ownKeys.has(k))
       )
       const derivedSuggestions = detectDerivedKpiSuggestions(header, detectedTechnology ?? currentTech)
       const st = statSync(path)

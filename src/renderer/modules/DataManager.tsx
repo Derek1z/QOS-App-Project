@@ -312,7 +312,8 @@ export default function DataManager(): React.JSX.Element {
       for (const a of as) {
         // a blocked file (another technology) gets no preview until the user
         // chooses "Import anyway" and validates it
-        if (a.errors.length === 0 && !importTechBlock(a.detectedTechnology, workspace?.technology ?? '4G', false).blocked) {
+        const wsTech = useAppStore.getState().workspace?.technology ?? '4G'
+        if (a.errors.length === 0 && !importTechBlock(a.detectedTechnology, wsTech, false).blocked) {
           // Fast path: synthesize preview directly from the sample rows already parsed during analysis
           const sampleRows = a.sample ?? []
           if (sampleRows.length > 0) {
@@ -472,6 +473,17 @@ export default function DataManager(): React.JSX.Element {
       else delete kcols[header]
       delete cols[header]
       return { ...prev, [id]: { columns: cols, kpiColumns: kcols, valueAliases: cur.valueAliases } }
+    })
+  }
+
+  /** Keep a column's network field, stop also importing it as a KPI. */
+  function dropKpiHalf(id: string, header: string): void {
+    setMappings((prev) => {
+      const cur = prev[id]
+      if (!cur?.kpiColumns?.[header]) return prev
+      const kcols = { ...cur.kpiColumns }
+      delete kcols[header]
+      return { ...prev, [id]: { ...cur, kpiColumns: kcols } }
     })
   }
 
@@ -1190,6 +1202,12 @@ export default function DataManager(): React.JSX.Element {
                                       </select>
                                     )
                                   })()}
+                                  {mapping.columns[h] && mapping.kpiColumns?.[h] && (
+                                    <span className="map-also" title="Stored as the network field and as this KPI (KPI cards and breach scoring read the KPI)">
+                                      + KPI: {kpiDefs.find((k) => k.key === mapping.kpiColumns?.[h] && k.technology === workspace?.technology)?.label ?? mapping.kpiColumns[h]}
+                                      <button className="btn btn-ghost btn-sm" aria-label={`Do not import ${h} as a KPI`} onClick={() => dropKpiHalf(a.id, h)}>×</button>
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             ))}

@@ -3576,7 +3576,8 @@ code {
   border-color: rgba(52, 211, 153, 0.4);
   color: var(--green);
 }
-.kpi-suggest {
+.kpi-suggest,
+.tech-block {
   display: flex;
   align-items: center;
   justify-content: space-between;

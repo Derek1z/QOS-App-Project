@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore, emit } from '../store'
-import { refreshWorkspaceState, errMsg } from '../lib/flows'
+import { refreshWorkspaceState, errMsg, switchTechnologyFlow } from '../lib/flows'
+import { importTechBlock } from '../lib/importTech'
 import type {
   FileAnalysis, MappingConfig, PreviewResult, ImportResult,
   ImportAuditRow, CoverageRow, QualityRow, CanonicalField, ValidationIssue, ImportProgress,
   RawArchiveResult, MaintenanceAction, MaintenanceResult,
-  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition, GeoStatsResult, SheetInfo
+  MaintenanceScheduleSettings, ScheduledMaintenanceRun, KpiDefinition, GeoStatsResult, SheetInfo, Technology
 } from '../../../shared/api'
 import { FIELD_LABELS, FIELD_ORDER } from '../../../shared/api'
 import { SheetSelectorModal } from '../components/SheetSelectorModal'
@@ -83,6 +84,10 @@ export default function DataManager(): React.JSX.Element {
   // per-file state of the auto-suggested KPI assignments (spec §54a)
   const [kpiSuggest, setKpiSuggest] = useState<Record<string, 'applied' | 'dismissed'>>({})
   const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
+  // spec §4.5: files of another technology, "Import anyway" per file, and
+  // whether a workspace of that technology exists (open vs create)
+  const [techOverride, setTechOverride] = useState<Record<string, boolean>>({})
+  const [techFound, setTechFound] = useState<Partial<Record<Technology, string | null>>>({})
   const [result, setResult] = useState<ImportResult | null>(null)
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [coverage, setCoverage] = useState<CoverageRow[]>([])
@@ -106,6 +111,27 @@ export default function DataManager(): React.JSX.Element {
   const [excelSheets, setExcelSheets] = useState<SheetInfo[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  const blockOf = (a: FileAnalysis): { blocked: boolean; message: string | null } =>
+    importTechBlock(a.detectedTechnology, workspace?.technology ?? '4G', !!techOverride[a.id])
+
+  useEffect(() => {
+    const techs = [...new Set(analyses.map((a) => a.detectedTechnology).filter(
+      (t): t is Technology => !!t && t !== workspace?.technology))]
+    if (techs.length === 0) return
+    let alive = true
+    void Promise.all(techs.map(async (t) => [t, await window.api.workspace.findRecent(t, workspace?.path)] as const))
+      .then((pairs) => { if (alive) setTechFound(Object.fromEntries(pairs)) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [analyses, workspace?.path, workspace?.technology])
+
+  /** Open (or create) the detected technology's workspace, then analyse that
+   *  technology's files again there. */
+  async function goToTechWorkspace(t: Technology): Promise<void> {
+    const paths = analyses.filter((x) => x.detectedTechnology === t).map((x) => x.path)
+    if (await switchTechnologyFlow(t)) await analyze(paths)
+  }
 
   async function handleFileSelection(paths: string[]): Promise<void> {
     if (!paths.length) return
@@ -265,6 +291,7 @@ export default function DataManager(): React.JSX.Element {
       const as = await window.api.imports.analyze(paths)
       setAnalyses(as)
       setKpiSuggest({})
+      setTechOverride({})
       const next: Record<string, MappingConfig> = {}
       for (const a of as) {
         const m: MappingConfig = { columns: a.suggestedMapping }
@@ -343,7 +370,7 @@ export default function DataManager(): React.JSX.Element {
       let last: ImportResult | null = null
       for (const a of analyses) {
         const m = mappings[a.id]
-        if (!m || a.errors.length > 0) continue
+        if (!m || a.errors.length > 0 || blockOf(a).blocked) continue
         last = await window.api.imports.run(a.id, m)
       }
       setResult(last)
@@ -551,7 +578,7 @@ export default function DataManager(): React.JSX.Element {
   }
 
   const canRun = analyses.some((a) => {
-    if (a.errors.length > 0) return false
+    if (a.errors.length > 0 || blockOf(a).blocked) return false
     const cols = mappings[a.id]?.columns
     if (!cols) return false
     // columns is keyed by source header, so check the mapped canonical values
@@ -976,6 +1003,28 @@ export default function DataManager(): React.JSX.Element {
                         <span className="file-err">blocked: {a.errors.join('; ')}</span>
                       )}
                     </div>
+                    {(() => {
+                      const block = blockOf(a)
+                      const t = a.detectedTechnology
+                      if (!block.blocked || !t) return null
+                      return (
+                        <div className="notice notice-error tech-block">
+                          <span>{block.message}</span>
+                          <span className="suggest-actions">
+                            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void goToTechWorkspace(t)}>
+                              {techFound[t] ? `Open the ${t} workspace` : `Create a ${t} workspace`}
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              disabled={busy}
+                              onClick={() => setTechOverride((p) => ({ ...p, [a.id]: true }))}
+                            >
+                              Import anyway
+                            </button>
+                          </span>
+                        </div>
+                      )
+                    })()}
                     {showSuggest && (
                       <div className="notice kpi-suggest">
                         <span>
@@ -1303,7 +1352,7 @@ export default function DataManager(): React.JSX.Element {
                           </div>
                         )}
                         <div className="row-actions">
-                          <button className="btn" disabled={busy} onClick={() => void preview(a.id, mapping)}>
+                          <button className="btn" disabled={busy || blockOf(a).blocked} onClick={() => void preview(a.id, mapping)}>
                             Validate &amp; Preview
                           </button>
                           {/\.(xlsx|xls)$/i.test(a.path) && (

@@ -44,8 +44,8 @@ import { scheduleForecastRefresh, forecastStatus, onForecastProgress } from './f
 import {
   listDerivedKpis, saveDerivedKpi, detectDerivedKpiSuggestions
 } from './services/derivedKpiService'
-import { lockPath } from './workspace/lock'
-import { existsSync, readFileSync } from 'node:fs'
+import { lockedByOther } from './workspace/lock'
+import { existsSync } from 'node:fs'
 import type {
   CreateSnapshotOpts, MaintenanceAction, MappingConfig, KpiDefPatch, Technology, DerivedKPI
 } from '../../shared/api'
@@ -66,23 +66,7 @@ function afterForecastInput<T>(result: T): T {
 export function registerIpc(win: () => BrowserWindow | null): void {
   ipcMain.handle('workspace:listRecent', () => appState.load().recentWorkspaces)
 
-  ipcMain.handle('workspace:isLocked', (_e, path: string) => {
-    const lp = lockPath(path)
-    if (!existsSync(lp)) return { locked: false }
-    let pid = NaN
-    try {
-      pid = parseInt(readFileSync(lp, 'utf8'), 10)
-    } catch {
-      /* unreadable -> treat as unlocked */
-    }
-    if (!Number.isFinite(pid) || pid === process.pid) return { locked: false }
-    try {
-      process.kill(pid, 0)
-      return { locked: true, pid }
-    } catch {
-      return { locked: false } // stale lock from a dead process
-    }
-  })
+  ipcMain.handle('workspace:isLocked', (_e, path: string) => lockedByOther(path))
 
   ipcMain.handle('workspace:pickOpen', async () => {
     const res = await dialog.showOpenDialog({

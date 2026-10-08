@@ -76,6 +76,24 @@ describe('store technology setters switch workspaces', () => {
     expect(useAppStore.getState().selectedTech).toBe('3G')
   })
 
+  it('a second click while a switch is running does not open twice (final review 1)', async () => {
+    useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
+    const api = stubApi('/w/3g.qosdb', false)
+    const [first, second] = await Promise.all([
+      useAppStore.getState().setSelectedTech('3G'),
+      useAppStore.getState().setSelectedTech('3G')
+    ])
+    expect(api.opened).toEqual(['/w/3g.qosdb'])
+    expect([first, second].filter(Boolean).length).toBe(1)
+  })
+
+  it('a switch that lands on another technology reports no switch (final review 7)', async () => {
+    useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
+    stubApi('/w/2g-really-3g.qosdb', false) // the stub opens everything as 3G
+    expect(await useAppStore.getState().setSelectedTech('2G')).toBe(false)
+    expect(useAppStore.getState().error).toMatch(/3G/)
+  })
+
   it('the open workspace\'s technology does nothing', async () => {
     useAppStore.getState().setWorkspace(info('4G', '/w/4g.qosdb'))
     const api = stubApi('/w/other.qosdb', true)

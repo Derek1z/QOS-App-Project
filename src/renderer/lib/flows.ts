@@ -28,6 +28,8 @@ export async function openWorkspaceFlow(path?: string): Promise<void> {
     emit('WORKSPACE_CHANGED')
   } catch (e) {
     st.setError(errMsg(e))
+    // the open may have closed the previous workspace before failing
+    await refreshWorkspaceState().catch(() => {})
   } finally {
     st.setBusy(false)
   }
@@ -47,10 +49,25 @@ function suggestWorkspaceName(created: Array<{ name: string }> | undefined): str
 
 /** A 2G/3G/4G button (spec §4.2): open the most recent workspace of that
  *  technology, or offer to create one. True when the workspace changed. */
+let switchInFlight = false
+
 export async function switchTechnologyFlow(target: Technology): Promise<boolean> {
   const st = useAppStore.getState()
   const ws = st.workspace
   if (ws && ws.technology === target) return false
+  // one switch at a time: a second click must not start a second open
+  if (switchInFlight) return false
+  switchInFlight = true
+  try {
+    return await runTechSwitch(target)
+  } finally {
+    switchInFlight = false
+  }
+}
+
+async function runTechSwitch(target: Technology): Promise<boolean> {
+  const st = useAppStore.getState()
+  const ws = st.workspace
   try {
     const found = await window.api.workspace.findRecent(target, ws?.path)
     const plan = planTechSwitch(target, ws ? { technology: ws.technology, path: ws.path } : null, found)
@@ -66,7 +83,15 @@ export async function switchTechnologyFlow(target: Technology): Promise<boolean>
     return false
   }
   const now = useAppStore.getState().workspace
-  return now != null && now.path !== ws?.path
+  if (now == null || now.path === ws?.path) return false
+  if (now.technology !== target) {
+    // an older workspace corrected on open (its data is another technology)
+    useAppStore.getState().setError(
+      `${now.name} holds ${now.technology} data, so it opened as a ${now.technology} workspace.`
+    )
+    return false
+  }
+  return true
 }
 
 export async function createWorkspaceFlow(name?: string, preselectedTech?: Technology): Promise<void> {

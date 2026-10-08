@@ -1,4 +1,4 @@
-import { openSync, writeSync, closeSync, readFileSync, unlinkSync } from 'node:fs'
+import { openSync, writeSync, closeSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 
 /**
  * Per-workspace lock file (spec §8): one writable instance per workspace.
@@ -43,6 +43,26 @@ export function acquireLock(path: string): boolean {
       /* ignore */
     }
     return acquireLock(path)
+  }
+}
+
+/** Another live process holds the workspace (a lock of our own pid, a dead
+ *  pid or an unreadable lock file does not count). */
+export function lockedByOther(path: string): { locked: boolean; pid?: number } {
+  const lp = lockPath(path)
+  if (!existsSync(lp)) return { locked: false }
+  let pid = NaN
+  try {
+    pid = parseInt(readFileSync(lp, 'utf8'), 10)
+  } catch {
+    return { locked: false }
+  }
+  if (!Number.isFinite(pid) || pid === process.pid) return { locked: false }
+  try {
+    process.kill(pid, 0)
+    return { locked: true, pid }
+  } catch {
+    return { locked: false }
   }
 }
 

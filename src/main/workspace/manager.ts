@@ -3,7 +3,7 @@ import { join, basename } from 'node:path'
 import os from 'node:os'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
 import { SCHEMA_SQL, AGG_CELL_DAILY_SELECT, CELL_FORECASTS_SQL, FORECAST_DIRTY_SQL } from './schema'
-import { acquireLock, releaseLock } from './lock'
+import { acquireLock, releaseLock, lockedByOther } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
@@ -324,25 +324,49 @@ async function correctTechnologyOnce(conn: DuckDBConnection): Promise<boolean> {
   )).getRowObjects()[0]?.value
   const inferred = await inferWorkspaceTechnology(conn)
   const change = inferred != null && inferred !== String(stored ?? '4G')
-  if (change) {
-    console.log(`[techCheck] workspace technology ${String(stored ?? '4G')} -> ${inferred} (from its KPI rows)`)
+  await conn.run('BEGIN TRANSACTION')
+  try {
+    if (change) {
+      console.log(`[techCheck] workspace technology ${String(stored ?? '4G')} -> ${inferred} (from its KPI rows)`)
+      await conn.run(
+        `INSERT INTO workspace_meta (key, value) VALUES ('technology', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        [inferred]
+      )
+      // the caller recomputes now; dropping the relabel marker makes an
+      // interrupted recompute run again on the next open
+      await conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
+    }
     await conn.run(
-      `INSERT INTO workspace_meta (key, value) VALUES ('technology', ?)
+      `INSERT INTO workspace_meta (key, value) VALUES ('tech_checked', ?)
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      [inferred]
+      [new Date().toISOString()]
     )
+    await conn.run('COMMIT')
+  } catch (e) {
+    await conn.run('ROLLBACK').catch(() => {})
+    throw e
   }
-  await conn.run(
-    `INSERT INTO workspace_meta (key, value) VALUES ('tech_checked', ?)
-     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-    [new Date().toISOString()]
-  )
   return change
 }
 
 // --- lifecycle ---
 
-export async function createWorkspace(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {
+// Opens and creates run one at a time: a second one starting while the first
+// is still opening would put two DuckDB instances on the same file (a
+// technology tab is a single click away from an open).
+let lifecycleQueue: Promise<unknown> = Promise.resolve()
+function queued<T>(fn: () => Promise<T>): Promise<T> {
+  const run = lifecycleQueue.then(fn, fn)
+  lifecycleQueue = run.catch(() => {})
+  return run
+}
+
+export function createWorkspace(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {
+  return queued(() => createWorkspaceNow(dir, name, technology))
+}
+
+async function createWorkspaceNow(dir: string, name: string, technology?: string): Promise<WorkspaceInfo> {
   const tech = technology === '2G' || technology === '3G' ? technology : '4G'
   const safe = name.trim().replace(/[\\/:*?"<>|]+/g, '_')
   if (!safe) throw new Error('Workspace name is empty')
@@ -402,12 +426,20 @@ export async function createWorkspace(dir: string, name: string, technology?: st
   }
 }
 
-export async function openWorkspace(
+export function openWorkspace(path: string, opts: { readOnly?: boolean } = {}): Promise<WorkspaceInfo> {
+  return queued(() => openWorkspaceNow(path, opts))
+}
+
+async function openWorkspaceNow(
   path: string,
   opts: { readOnly?: boolean } = {}
 ): Promise<WorkspaceInfo> {
   if (!existsSync(path)) throw new Error(`Workspace file not found: ${path}`)
   if (!isValidDuckDbFile(path)) throw new Error(`Not a valid database workspace file: ${path}`)
+  // fail before closing the open workspace, so a refused open leaves it open
+  if (!opts.readOnly && current?.path !== path && lockedByOther(path).locked) {
+    throw new Error('This workspace is open in another instance. Open it read-only instead.')
+  }
   if (current) await closeWorkspace()
 
   const readOnly = !!opts.readOnly

@@ -1634,7 +1634,6 @@ export interface Api {
     isLocked(path: string): Promise<{ locked: boolean; pid?: number }>
     close(): Promise<void>
     info(): Promise<WorkspaceInfo | null>
-    /** switch the active workspace's technology (2G/3G/4G) and re-seed its KPI set */
     /** most recent existing workspace of the technology, other than `excludePath` */
     findRecent(technology: Technology, excludePath?: string): Promise<string | null>
     onChanged(cb: () => void): () => void

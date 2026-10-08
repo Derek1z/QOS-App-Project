@@ -5,7 +5,7 @@ import { TooltipComponent, VisualMapContinuousComponent, GeoComponent } from 'ec
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
 import { GHANA_REGIONS_GEOJSON } from '../lib/ghanaRegions'
-import { GHANA_DISTRICTS_GEOJSON } from '../lib/ghanaDistricts'
+import { GHANA_DISTRICTS_GEOJSON, DISTRICT_ALIASES } from '../lib/ghanaDistricts'
 import { useAppStore } from '../store'
 import { matchMapData, mapTooltip } from '../lib/mapData'
 import type { DistrictMapRow, RegionMapRow, Technology } from '../../../shared/api'
@@ -32,7 +32,7 @@ export default function GhanaMap(): React.JSX.Element {
   const [districts, setDistricts] = useState<DistrictMapRow[]>([])
   const [loading, setLoading] = useState(true)
   const regionMatch = useMemo(() => matchMapData(regions, REGION_SHAPES), [regions])
-  const districtMatch = useMemo(() => matchMapData(districts, DISTRICT_SHAPES), [districts])
+  const districtMatch = useMemo(() => matchMapData(districts, DISTRICT_SHAPES, DISTRICT_ALIASES), [districts])
 
   useEffect(() => {
     if (selectedTech && selectedTech !== tech) {

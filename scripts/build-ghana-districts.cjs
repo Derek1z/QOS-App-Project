@@ -113,10 +113,43 @@ function regionOf(geometry) {
   return best ? best[0] : null
 }
 
+/** geoBoundaries spelling -> official district name (2019 MMDA list, as in
+ *  operator data). The source spelling stays accepted via DISTRICT_ALIASES. */
+const OFFICIAL_NAME = {
+  'Accra Metropolis': 'Accra Metropolitan',
+  'Adansi Akrofuom': 'Akrofuom',
+  'Adenta Municipal': 'Adentan Municipal',
+  'Akwapem North': 'Akuapem North Municipal',
+  'Akwapem South': 'Akwapim South',
+  'Akyem Mansa': 'Akyemansa',
+  'Asene Akroso Manso': 'Asene Manso Akroso',
+  'Asikuma-odoben-brakwa': 'Asikuma Odoben Brankwa',
+  'Assin Fosu': 'Assin Central Municipal',
+  'Atwima Nwabiagya South': 'Atwima Nwabiagya Municipal',
+  'Awutu Senya': 'Awutu Senya West',
+  'Bolga  East': 'Bolgatanga East',
+  'Bunkpurugu Nakpanduri': 'Bunkpurugu Nyankpanduri',
+  'Dormaa Municipal': 'Dormaa Central Municipal',
+  'Kasena Nankana East': 'Kassena Nankana Municipal',
+  'Kasena Nankana West': 'Kassena Nankana West',
+  'Ledzokuku Municipal': 'Ledzekuku Municipal',
+  'Lower Manya': 'Lower Manya Krobo Municipal',
+  'Sagnerigu': 'Sagnarigu Municipal',
+  'Sekondi Takoradi Metropolis': 'Sekondi Takoradi Metropolitan',
+  'Sekyere Afram Plains North': 'Sekyere Afram Plains',
+  'Twifo Hemang Lower Denkyira': 'Twifo Heman Lower Denkyira',
+  'Upper Manya': 'Upper Manya Krobo',
+  'Wassa Amenfi Central': 'Amenfi Central',
+  'Wassa Amenfi West': 'Amenfi West Municipal'
+}
+for (const s of Object.keys(OFFICIAL_NAME)) {
+  if (!src.features.some((f) => f.properties.shapeName === s)) throw new Error(`OFFICIAL_NAME: no source shape '${s}'`)
+}
+
 const features = src.features
   .map((f) => ({
     type: 'Feature',
-    properties: { name: f.properties.shapeName, region: regionOf(f.geometry) },
+    properties: { name: OFFICIAL_NAME[f.properties.shapeName] ?? f.properties.shapeName, region: regionOf(f.geometry) },
     geometry: simplifyGeometry(f.geometry)
   }))
   .sort((a, b) => a.properties.name.localeCompare(b.properties.name))
@@ -125,7 +158,8 @@ const header = `// Ghana ${features.length}-district (ADM2) boundaries, 2019, fr
 // gbOpen GHA ADM2 (CC BY 4.0; source: USAID Ghana HPNO, Ghana Statistical
 // Service). Built by scripts/build-ghana-districts.cjs: coordinates rounded and
 // points thinned for an offline bundle; each district carries the region that
-// holds most of its area (ghanaRegions.ts). Guan District (2021) is
+// holds most of its area (ghanaRegions.ts); names follow the official 2019
+// district list. Guan District (2021) is
 // not in the source.
 export interface GhanaDistrictFeature {
   type: 'Feature'
@@ -134,7 +168,9 @@ export interface GhanaDistrictFeature {
 }
 export const GHANA_DISTRICTS_GEOJSON: { type: 'FeatureCollection'; features: GhanaDistrictFeature[] } = `
 const out = path.join(root, 'src/renderer/lib/ghanaDistricts.ts')
-fs.writeFileSync(out, header + JSON.stringify({ type: 'FeatureCollection', features }) + '\n')
+fs.writeFileSync(out, header + JSON.stringify({ type: 'FeatureCollection', features }) +
+  '\n\n/** Source spellings of renamed districts, still accepted when matching data. */\n' +
+  'export const DISTRICT_ALIASES: Record<string, string> = ' + JSON.stringify(OFFICIAL_NAME, null, 2) + '\n')
 const unplaced = features.filter((f) => !f.properties.region).map((f) => f.properties.name)
 console.log(`wrote ${out}: ${features.length} districts, ${fs.statSync(out).size} bytes` +
   (unplaced.length ? `; no region: ${unplaced.join(', ')}` : ''))

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { GHANA_DISTRICTS_GEOJSON } from '../../src/renderer/lib/ghanaDistricts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { GHANA_DISTRICTS_GEOJSON, DISTRICT_ALIASES } from '../../src/renderer/lib/ghanaDistricts'
+import { matchMapData } from '../../src/renderer/lib/mapData'
 import { GHANA_REGIONS_GEOJSON } from '../../src/renderer/lib/ghanaRegions'
 
 /** The bundled district map (geoBoundaries GHA ADM2, 2019 boundaries): 260
@@ -18,7 +21,7 @@ describe('Ghana district shapes', () => {
     const names = features.map((f) => f.properties.name)
     expect(names.length).toBe(260)
     expect(new Set(names).size).toBe(260)
-    for (const n of ['Mion', 'Kadjebi', 'Kasena Nankana East', 'Kasena Nankana West', 'Awutu Senya East', 'Ho Municipal', 'Bosome Freho', 'Asuogyaman', 'Upper Denkyira West']) {
+    for (const n of ['Mion', 'Kadjebi', 'Kassena Nankana Municipal', 'Kassena Nankana West', 'Awutu Senya East', 'Ho Municipal', 'Bosome Freho', 'Asuogyaman', 'Upper Denkyira West']) {
       expect(names).toContain(n)
     }
   })
@@ -36,5 +39,27 @@ describe('Ghana district shapes', () => {
     expect(region('Asuogyaman')).toBe('Eastern')
     expect(region('Upper Denkyira West')).toBe('Central')
     expect(region('Ho Municipal')).toBe('Volta')
+  })
+
+  it('every official district name (2019 list, as in operator data) lands on its own shape', () => {
+    const official = readFileSync(join(__dirname, '../fixtures/ghana-districts-official.txt'), 'utf8').trim().split('\n')
+    expect(official.length).toBe(260)
+    const { data, unmatched } = matchMapData(
+      official.map((name) => ({ name, healthScore: 50 })),
+      features.map((f) => f.properties.name),
+      DISTRICT_ALIASES
+    )
+    expect(unmatched).toEqual([])
+    expect(new Set(data.map((d) => d.name)).size).toBe(260)
+  })
+
+  it('still accepts the boundary source\'s spellings', () => {
+    const { data, unmatched } = matchMapData(
+      ['Accra Metropolis', 'Assin Fosu', 'Kasena Nankana East', 'Wassa Amenfi Central', 'Ledzokuku Municipal'].map((name) => ({ name, healthScore: 50 })),
+      features.map((f) => f.properties.name),
+      DISTRICT_ALIASES
+    )
+    expect(unmatched).toEqual([])
+    expect(data.map((d) => d.name)).toEqual(['Accra Metropolitan', 'Assin Central Municipal', 'Kassena Nankana Municipal', 'Amenfi Central', 'Ledzekuku Municipal'])
   })
 })

@@ -30,9 +30,11 @@ describe('daily NC view after lowering the PRB threshold (80 -> 70)', () => {
     expect(await dailyFlag(ws.conn)).toEqual({ is_nc: true, breach_days: 1 })
   })
 
-  it('flags a 75% PRB day as NC after the workspace is reopened', async () => {
+  // a writable reopen (schema checks, KPI seeds, once-on-open markers) takes
+  // 3-5 s on the development laptop: the 5 s default made this flaky
+  it('flags a 75% PRB day as NC after the workspace is reopened', { timeout: 60000 }, async () => {
     const mgr = await import('../../src/main/workspace/manager')
-    mgr.closeWorkspace()
+    await mgr.closeWorkspace()
     await mgr.openWorkspace(join(ws.dir, 'test.qosdb'))
     expect(await dailyFlag(mgr.getCurrent()!.connection)).toEqual({ is_nc: true, breach_days: 1 })
   })

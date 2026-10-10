@@ -130,6 +130,17 @@ Every number on the Forecasting screen is an imported value, a forecast from imp
 - Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.
 - Snapshots (Workspace Settings): point-in-time copies to restore (the current data is backed up first) or to compare two milestones KPI by KPI.
 
+### Security
+
+The app is meant to be shared, and it opens files from other systems, so neither a crafted import file nor a tampered copy of the app should be able to run code:
+
+- The window runs with Electron's renderer sandbox and context isolation; the page has no Node access and reaches the app only through its own API (`window.api`).
+- The window cannot open other windows, navigate away from the app page, or embed web views; every browser permission request (camera, notifications, …) is refused.
+- The main process answers API calls only from the app page itself; anything else is rejected and logged.
+- The packaged app's Content Security Policy allows no inline, eval or remote scripts and no network connections (dev mode keeps a relaxed policy for hot reload).
+- Fuses baked into the binary: it cannot be run as plain Node.js (`ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` are ignored), it loads only its packaged code, and it refuses to start if that code was altered (archive integrity check; the Windows exe's integrity record is verified at build time).
+- Each of these is checked by the smoke test against the real window, and the fuses are read back from the built binaries. The exe is not code-signed yet, so Windows still shows an "unknown publisher" warning.
+
 ---
 
 ## Development

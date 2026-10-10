@@ -1,7 +1,7 @@
 # Electron Hardening Design
 
 **Date**: 2026-10-10
-**Status**: Draft for review
+**Status**: Implemented (2026-10-10)
 **Scope**: renderer sandbox, navigation and new-window guard, permission denial, IPC sender check, strict Content Security Policy for the packaged app, Electron fuses (Phase 2 of the remediation plan)
 
 ---

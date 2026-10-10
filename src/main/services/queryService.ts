@@ -1,6 +1,7 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { getCurrent } from '../workspace/manager'
 import { emptyLifecycleCounts } from '../../../shared/lifecycle'
+import { COMPARE_METRICS } from '../../../shared/compareMetrics'
 import type {
   Summary, NcLifecycleResult, NcLifecycleRow, NcMovementRow, PriorityMode, PriorityRow,
   Grain, PeriodId,
@@ -1370,7 +1371,6 @@ export async function getComparison(opts: {
   const type: ComparisonType = opts.type ?? 'period'
   // region mode always compares regions against the network baseline
   const scope: CompareScope = type === 'region' ? 'region' : (opts.scope ?? 'cell')
-  const metric: CompareMetric = opts.metric ?? 'prb'
   const grain: Grain = opts.grain === 'daily' || opts.grain === 'monthly' ? opts.grain : 'weekly'
 
   const aggTable = grain === 'daily' ? 'agg_cell_daily' : grain === 'monthly' ? 'agg_cell_monthly' : 'agg_cell_weekly'
@@ -1393,46 +1393,43 @@ export async function getComparison(opts: {
     nc: { label: 'NC cells', unit: '', expr: 'sum(w.is_nc)', worseIsHigher: true }
   }
 
-  const TECH_METRIC_LISTS: Record<Technology, Array<{ metric: CompareMetric; label: string; unit: string; worseIsHigher: boolean }>> = {
-    '4G': [
-      { metric: 'prb', label: 'PRB utilization', unit: '%', worseIsHigher: true },
-      { metric: 'throughput', label: 'DL throughput', unit: 'kbps', worseIsHigher: false },
-      { metric: 'users', label: 'Connected users', unit: '', worseIsHigher: false },
-      { metric: 'volume', label: 'Data volume', unit: 'MB', worseIsHigher: false },
-      { metric: 'availability', label: 'Availability', unit: '%', worseIsHigher: false },
-      { metric: 'nc', label: 'NC cells', unit: '', worseIsHigher: true }
-    ],
-    '3G': [
-      { metric: 'call_setup_success_3g', label: '3G CSSR', unit: '%', worseIsHigher: false },
-      { metric: 'call_drop_rate_3g', label: '3G Call Drop Rate', unit: '%', worseIsHigher: true },
-      { metric: 'data_access_success_3g', label: '3G Data Access', unit: '%', worseIsHigher: false },
-      { metric: '3g_dl_power_congestion', label: 'DL Power Congestion', unit: 'events', worseIsHigher: true },
-      { metric: '3g_ul_ce_congestion', label: 'UL CE Congestion', unit: 'events', worseIsHigher: true },
-      { metric: 'throughput', label: 'HSDPA Throughput', unit: 'kbps', worseIsHigher: false },
-      { metric: 'availability', label: '3G Availability', unit: '%', worseIsHigher: false },
-      { metric: 'nc', label: 'NC cells', unit: '', worseIsHigher: true }
-    ],
-    '2G': [
-      { metric: 'tch_congestion', label: 'TCH Congestion', unit: '%', worseIsHigher: true },
-      { metric: 'sdcch_congestion', label: 'SDCCH Congestion', unit: '%', worseIsHigher: true },
-      { metric: 'call_setup_success_2g', label: '2G Voice CSSR', unit: '%', worseIsHigher: false },
-      { metric: 'call_drop_rate_2g', label: '2G Call Drop Rate', unit: '%', worseIsHigher: true },
-      { metric: 'throughput', label: 'GPRS Throughput', unit: 'kbps', worseIsHigher: false },
-      { metric: 'availability', label: 'TCH Availability', unit: '%', worseIsHigher: false },
-      { metric: 'nc', label: 'NC cells', unit: '', worseIsHigher: true }
-    ]
-  }
+  // core ids read agg_cell_*; every other id is a kpi_defs key of this
+  // technology, read from agg_cell_kpi_* (null expr)
+  const METRICS = (COMPARE_METRICS[tech] ?? COMPARE_METRICS['4G']).map((m) => ({
+    ...m,
+    expr: CORE_DEFS[m.metric]?.expr ?? null
+  }))
+  // an id from another technology or an older page falls back to the default
+  const metric: CompareMetric = METRICS.some((m) => m.metric === opts.metric) ? opts.metric! : METRICS[0].metric
+  const kpiAggTable = grain === 'daily' ? 'agg_cell_kpi_daily' : grain === 'monthly' ? 'agg_cell_kpi_monthly' : 'agg_cell_kpi_weekly'
+  const kpiKeys = METRICS.filter((m) => m.expr == null).map((m) => m.metric)
 
-  const METRICS = (TECH_METRIC_LISTS[tech] || TECH_METRIC_LISTS['4G']).map((m) => {
-    const c = CORE_DEFS[m.metric]
-    return {
-      metric: m.metric,
-      label: m.label,
-      unit: m.unit,
-      expr: c ? c.expr : 'avg(w.avg_value)',
-      worseIsHigher: m.worseIsHigher
+  /** Per-KPI values for one period: per entity at the chosen scope, or one
+   *  network row (key -1). Sum-aggregated KPIs add up; the rest average. */
+  async function kpiValues(period: string, byEntity: boolean): Promise<Map<number, Record<string, number | null>>> {
+    const out = new Map<number, Record<string, number | null>>()
+    if (kpiKeys.length === 0 || !period) return out
+    const v = `CASE kd.agg WHEN 'sum' THEN kw.sum_value WHEN 'max' THEN kw.max_value WHEN 'min' THEN kw.min_value ELSE kw.avg_value END`
+    const r = await conn.runAndReadAll(
+      `SELECT ${byEntity ? sel.id : '-1'} AS entity_id, kd.kpi_key AS k,
+              CASE WHEN any_value(kd.agg) = 'sum' THEN sum(${v}) ELSE avg(${v}) END AS value
+       FROM ${kpiAggTable} kw
+       JOIN kpi_defs kd ON kd.kpi_id = kw.kpi_id
+       JOIN dim_cell c ON c.cell_id = kw.cell_id
+       ${byEntity ? sel.join : ''}
+       WHERE kw.${dateCol} = CAST(? AS DATE) AND kd.technology = ?
+         AND kd.kpi_key IN (${kpiKeys.map(() => '?').join(', ')})
+       GROUP BY ALL`,
+      [period, tech, ...kpiKeys]
+    )
+    for (const x of r.getRowObjects()) {
+      const id = Number(x.entity_id)
+      const rec = out.get(id) ?? {}
+      rec[String(x.k)] = x.value == null ? null : Number(x.value)
+      out.set(id, rec)
     }
-  })
+    return out
+  }
 
   // Comparisons pair complete periods only (spec §3.1): weekly/monthly take
   // the latest period (newest complete, else newest partial, per
@@ -1484,16 +1481,17 @@ export async function getComparison(opts: {
     for (const key of ['prb', 'thr', 'usr', 'vol', 'avail', 'nc']) {
       out[key] = row?.[key] == null ? null : Number(row[key])
     }
-    return out
+    return { ...out, ...(await kpiValues(weekStart, false)).get(-1) }
   }
 
   /** Per-entity metric + NC count for one period at the chosen scope. */
   async function scopeRows(weekStart: string): Promise<Map<number, { name: string; value: number | null; nc: number; cells: number }>> {
     const metricDef = METRICS.find((m) => m.metric === metric)!
     const safeWk = weekStart.replace(/'/g, "''")
+    const kv = metricDef.expr == null ? await kpiValues(weekStart, true) : null
     const r = await conn.runAndReadAll(
       `SELECT ${sel.id} AS entity_id, ${sel.name} AS entity_name,
-              ${metricDef.expr} AS value, sum(is_nc) AS nc, count(*) AS cells
+              ${metricDef.expr ?? 'NULL'} AS value, sum(is_nc) AS nc, count(*) AS cells
        FROM ${aggTable} w
        JOIN dim_cell c ON c.cell_id = w.cell_id
        ${sel.join}
@@ -1502,9 +1500,11 @@ export async function getComparison(opts: {
     )
     const map = new Map<number, { name: string; value: number | null; nc: number; cells: number }>()
     for (const x of r.getRowObjects()) {
-      map.set(Number(x.entity_id), {
+      const id = Number(x.entity_id)
+      const value = kv ? kv.get(id)?.[metric] ?? null : x.value == null ? null : Number(x.value)
+      map.set(id, {
         name: String(x.entity_name ?? ''),
-        value: x.value == null ? null : Number(x.value),
+        value,
         nc: Number(x.nc ?? 0),
         cells: Number(x.cells ?? 0)
       })
@@ -1526,12 +1526,14 @@ export async function getComparison(opts: {
        WHERE w.${dateCol} = '${safeWk}'
        GROUP BY ${sel.id}, ${sel.name}`
     )
+    const kv = await kpiValues(weekStart, true)
     const map = new Map<number, { name: string; vals: Record<string, number | null>; nc: number; cells: number }>()
     for (const x of r.getRowObjects()) {
       const vals: Record<string, number | null> = {}
       for (const key of ['prb', 'thr', 'usr', 'vol', 'avail', 'nc']) {
         vals[key] = x[key] == null ? null : Number(x[key])
       }
+      Object.assign(vals, kv.get(Number(x.entity_id)))
       map.set(Number(x.entity_id), {
         name: String(x.entity_name ?? ''),
         vals,

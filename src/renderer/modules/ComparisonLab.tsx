@@ -5,6 +5,7 @@ import type {
   CompareMetric, CompareScope, CompareSort, CompareView, ComparisonResult, ComparisonType, Technology
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
+import { COMPARE_METRICS } from '../../../shared/compareMetrics'
 import { rankingOption, rankRows } from '../lib/comparisonCharts'
 
 const TYPES: Array<{ id: ComparisonType; label: string }> = [
@@ -20,27 +21,9 @@ const SCOPES: Array<{ id: CompareScope; label: string }> = [
 ]
 
 const TECH_METRICS: Record<Technology, Array<{ id: CompareMetric; label: string }>> = {
-  '4G': [
-    { id: 'prb', label: 'PRB Utilization' },
-    { id: 'throughput', label: 'DL User Speed' },
-    { id: 'users', label: 'Active Users' },
-    { id: 'volume', label: 'Traffic Volume' },
-    { id: 'availability', label: 'Availability' },
-    { id: 'nc', label: 'Non-Compliance' }
-  ],
-  '3G': [
-    { id: 'cssr_3g', label: '3G CSSR' },
-    { id: 'call_drop_3g', label: '3G CDR' },
-    { id: 'data_access_3g', label: '3G DASR' },
-    { id: 'dl_power_cong_3g', label: 'DL Power Cong' },
-    { id: 'ul_ce_cong_3g', label: 'UL CE Cong' }
-  ],
-  '2G': [
-    { id: 'tch_congestion', label: 'TCH Congestion' },
-    { id: 'sdcch_congestion', label: 'SDCCH Congestion' },
-    { id: 'cssr_2g', label: 'Voice CSSR' },
-    { id: 'call_drop_2g', label: 'Call Drop Rate' }
-  ]
+  '4G': COMPARE_METRICS['4G'].map((m) => ({ id: m.metric, label: m.label })),
+  '3G': COMPARE_METRICS['3G'].map((m) => ({ id: m.metric, label: m.label })),
+  '2G': COMPARE_METRICS['2G'].map((m) => ({ id: m.metric, label: m.label }))
 }
 
 const VIEWS: Array<{ id: CompareView; label: string }> = [
@@ -58,9 +41,7 @@ export default function ComparisonLab(): React.JSX.Element {
   const [tech, setTech] = useState<Technology>(selectedTech || '4G')
   const [type, setType] = useState<ComparisonType>('period')
   const [scope, setScope] = useState<CompareScope>('cell')
-  const [metric, setMetric] = useState<CompareMetric>(
-    (selectedTech || '4G') === '2G' ? 'tch_congestion' : (selectedTech || '4G') === '3G' ? 'cssr_3g' : 'prb'
-  )
+  const [metric, setMetric] = useState<CompareMetric>(TECH_METRICS[selectedTech || '4G'][0].id)
   const [view, setView] = useState<CompareView>('actual')
   const [sort, setSort] = useState<CompareSort>('worst')
   const [result, setResult] = useState<ComparisonResult | null>(null)

@@ -234,7 +234,7 @@ export default function CellIntelligence(): React.JSX.Element {
 
                 <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Site: {cell.site || '—'}</div>
                 <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>
-                  {tech === '2G' ? 'TCH Congestion' : tech === '3G' ? 'Peak Traffic Util' : 'PRB Utilization'}: <strong style={{ color: '#f87171' }}>{cell.prbAvg != null ? `${cell.prbAvg.toFixed(1)}%` : '—'}</strong>
+                  {tech === '4G' ? 'PRB Utilization' : 'Peak Traffic Util'}: <strong style={{ color: '#f87171' }}>{cell.prbAvg != null ? `${cell.prbAvg.toFixed(1)}%` : '—'}</strong>
                 </div>
               </div>
 

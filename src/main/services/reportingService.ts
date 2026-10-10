@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_CHARTS, REPORT_SECTIONS } from '../../../shared/api'
 import { latestComplete, periodLabel } from '../../../shared/periods'
 import { getForecast } from './forecastService'
+import { workspaceTechnology } from './kpiService'
 
 type JSZipLike = {
   loadAsync(data: Uint8Array | Buffer): Promise<{
@@ -64,6 +65,16 @@ function kpiCellValue(c: CellIntelligenceRow, key: string): string | null {
   return `${Number(k.value).toFixed(1)}${k.breached ? ' ⚠' : ''}${k.unit ? ` ${k.unit}` : ''}`
 }
 
+/** The core utilization column is PRB in 4G; 2G/3G files map their traffic
+ *  utilization into it, so their reports must not call it PRB. */
+async function utilLabels(): Promise<{ col: string; avg: string; severity: string }> {
+  const ws = getCurrent()
+  const tech = ws ? await workspaceTechnology(ws.connection) : '4G'
+  return tech === '4G'
+    ? { col: 'PRB %', avg: 'Avg PRB utilization', severity: 'PRB severity' }
+    : { col: 'Traffic util. %', avg: 'Avg traffic utilization', severity: 'Utilization severity' }
+}
+
 const fmtK = (v: number | null | undefined): string =>
   v == null ? '—' : `${Math.round(v).toLocaleString()}`
 
@@ -86,10 +97,11 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
     const s = await getSummary()
     const h = await getHealth()
     const q = await getPriorityQueue('balanced', 10)
+    const util = await utilLabels()
     const rows: Array<Array<string | number | null>> = [
       ['Observed rows', fmtK(s?.rowCount)],
       ['Cells / Sites / Districts / Regions', `${fmtK(s?.cells)} / ${fmtK(s?.sites)} / ${fmtK(s?.districts)} / ${fmtK(s?.regions)}`],
-      ['Avg PRB utilization', fmt(s?.avgPrb, '%')],
+      [util.avg, fmt(s?.avgPrb, '%')],
       ['Data volume', s?.totalVolumeMb == null ? '—' : `${(s.totalVolumeMb / 1024).toFixed(1)} GB`],
       ['Connected users', fmtK(s?.totalUsers)],
       ['DL throughput', s?.avgThroughputKbps == null ? '—' : `${(s.avgThroughputKbps / 1024).toFixed(1)} Mbps`],
@@ -130,10 +142,11 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'all-cells': async () => {
     const r = await getCellIntelligence({ limit: 200 })
+    const util = await utilLabels()
     const kpiCols = kpiColumnDefs(r.rows)
     return {
       title: 'All Cells',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Priority', ...kpiCols.map((k) => k.label)],
+      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', util.col, 'Priority', ...kpiCols.map((k) => k.label)],
       rows: r.rows.map((c) => [
         c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.priorityScore ?? null,
@@ -145,11 +158,12 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'nc-register': async () => {
     const r = await getCellIntelligence({ limit: 400 })
+    const util = await utilLabels()
     const nc = r.rows.filter((c) => c.isNc)
     const kpiCols = kpiColumnDefs(nc)
     return {
       title: 'NC Register',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', 'PRB %', 'Breach days', ...kpiCols.map((k) => k.label)],
+      columns: ['Cell', 'Region', 'District', 'Site', 'Lifecycle', 'Trend', 'Severity', util.col, 'Breach days', ...kpiCols.map((k) => k.label)],
       rows: nc.map((c) => [
         c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.lifecycle, c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays,
@@ -161,10 +175,11 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'persistent-nc': async () => {
     const r = await getCellIntelligence({ lifecycle: 'Persistent NC', limit: 100 })
+    const util = await utilLabels()
     const kpiCols = kpiColumnDefs(r.rows)
     return {
       title: 'Persistent NC',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Trend', 'Severity', 'PRB %', 'Breach days', 'Priority', ...kpiCols.map((k) => k.label)],
+      columns: ['Cell', 'Region', 'District', 'Site', 'Trend', 'Severity', util.col, 'Breach days', 'Priority', ...kpiCols.map((k) => k.label)],
       rows: r.rows.map((c) => [
         c.cellName, c.region ?? '', c.district ?? '', c.site ?? '', c.trend ?? '—', c.severity,
         c.prbAvg == null ? null : c.prbAvg.toFixed(1), c.breachDays, c.priorityScore ?? null,
@@ -176,9 +191,10 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
 
   'priority-queue': async () => {
     const q = await getPriorityQueue('balanced', 50)
+    const util = await utilLabels()
     return {
       title: 'Priority Queue',
-      columns: ['Cell', 'Region', 'District', 'Site', 'Score', 'Band', 'PRB severity', 'Persistence', 'Trend'],
+      columns: ['Cell', 'Region', 'District', 'Site', 'Score', 'Band', util.severity, 'Persistence', 'Trend'],
       rows: q.map((p) => [p.cellName, p.region ?? '', p.district ?? '', p.site ?? '', p.score, p.band, p.components.prbSeverity, p.components.persistence, p.components.worseningTrend]),
       note: 'Balanced mode, latest week. Higher score = more urgent.'
     }

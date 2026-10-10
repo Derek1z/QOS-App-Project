@@ -1,7 +1,7 @@
 # Versioned Workspace Migrations Design
 
 **Date**: 2026-10-10
-**Status**: Draft for review
+**Status**: Implemented (2026-10-10)
 **Scope**: one integer schema version per workspace and an ordered migration list, replacing the checks and once-on-open markers that run on every writable open; protection for workspaces saved by a newer app (Phase 2 of the remediation plan)
 
 ---

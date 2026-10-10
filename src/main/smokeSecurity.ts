@@ -37,6 +37,10 @@ export async function runSecuritySmoke(): Promise<void> {
   }
 
   const win = createMainWindow({ show: false, offscreen: true })
+  // CSP violations are reported on the page's console (final review 4)
+  const consoleLines: string[] = []
+  win.webContents.on('console-message', (details) => consoleLines.push(details.message))
+  const cspViolations = (): string[] => consoleLines.filter((m) => /Content Security Policy/i.test(m))
   // the smoke run calls services directly; the page's API needs the real channels
   registerIpc(() => win)
   const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, offscreen: true } })
@@ -71,9 +75,24 @@ export async function runSecuritySmoke(): Promise<void> {
       })
     }
     await check('permission denied', async () => (await page(`Notification.requestPermission()`)) === 'denied')
+    // the real UI renders under the strict CSP: React mounted, nothing refused
+    await sleep(1500)
+    await check('app UI renders under the strict CSP', async () => {
+      const mounted = (await page(`document.getElementById('root')?.childElementCount ?? 0`)) as number
+      const refused = cspViolations()
+      if (refused.length) console.log(`[SMOKE] CSP violations: ${refused.slice(0, 3).join(' | ')}`)
+      return mounted > 0 && refused.length === 0
+    })
     await check('strict CSP in the built page', async () =>
       (await page(`document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content`)) === STRICT_CSP)
     await check('no inline script in the built page', async () => (await page(`[...document.scripts].every((s) => !!s.src)`)) === true)
+    // the detector above must see a refusal when one happens (self-test)
+    await check('CSP refusals are detected', async () => {
+      const before = cspViolations().length
+      await page(`{ const s = document.createElement('script'); s.src = 'data:text/javascript,1'; document.head.appendChild(s) } true`)
+      await sleep(500)
+      return cspViolations().length > before
+    })
     await check('injected inline script does not run', async () => {
       await page(`{ const s = document.createElement('script'); s.textContent = 'window.__inl = 1'; document.head.appendChild(s) } true`)
       await sleep(200)

@@ -211,7 +211,7 @@ code {
 
 .bar-workspace {
   font-weight: 600;
-  max-width: 260px;
+  max-width: 380px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

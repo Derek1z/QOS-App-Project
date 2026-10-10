@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { appEntry } from './security'
 
 /** The app window (Electron hardening spec §4.1): sandboxed renderer, context
  *  isolation, no Node in the page; the preload exposes `window.api` only.
@@ -28,7 +29,10 @@ export function createMainWindow(
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
+    // the exact URL the IPC and navigation checks compare against (loadFile
+    // builds its own, which differs for folder names containing '%')
+    const entry = appEntry()
+    void win.loadURL(entry.kind === 'file' ? entry.url : entry.origin)
   }
   return win
 }

@@ -28,7 +28,13 @@ export function applySecurity(): void {
       return { action: 'deny' }
     })
     const guard = (event: Electron.Event, url: string): void => {
-      if (allowNavigation(url, entry)) return
+      let allowed = false
+      try {
+        allowed = allowNavigation(url, entry)
+      } catch {
+        /* fail closed */
+      }
+      if (allowed) return
       event.preventDefault()
       console.warn(`[security] blocked navigation: ${url}`)
     }

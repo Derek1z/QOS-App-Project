@@ -6,6 +6,7 @@ import type {
   InvestigationScope, Technology
 } from '../../../shared/api'
 import Chart from '../lib/Chart'
+import { rcaBreakdown } from '../lib/rcaBreakdown'
 import {
   getAvailableTelemetryMetrics,
   heroMetricChartOption,
@@ -667,7 +668,7 @@ export default function InvestigationWorkspace(): React.JSX.Element {
               boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
             }}
           >
-            🔍 Expand RCA Donut Modal
+            🔍 Root-cause breakdown
           </button>
           <button
             onClick={() => void exportReport()}
@@ -1043,17 +1044,47 @@ export default function InvestigationWorkspace(): React.JSX.Element {
               <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc', margin: 0 }}>🔍 Root Cause Analysis Drill-Down</h3>
               <button onClick={() => setRcaModalOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '20px' }}>
-              RCA Severity Distribution for <strong style={{ color: '#f8fafc' }}>{selected?.name}</strong> across active telemetry parameters.
+            <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>
+              Possible root causes for <strong style={{ color: '#f8fafc' }}>{selected?.name}</strong>, strongest first, from its KPIs.
+              Confidence is how well the evidence fits; the counts are the observations for and against each cause.
             </p>
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>
-              <svg width="180" height="180" viewBox="0 0 36 36">
-                <circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--bg-3)" strokeWidth="4" />
-                <circle cx="18" cy="18" r="15.915" fill="none" stroke="#f87171" strokeWidth="4" strokeDasharray="50, 100" strokeDashoffset="25" />
-                <circle cx="18" cy="18" r="15.915" fill="none" stroke="#fbbf24" strokeWidth="4" strokeDasharray="30, 100" strokeDashoffset="-25" />
-                <circle cx="18" cy="18" r="15.915" fill="none" stroke="#38bdf8" strokeWidth="4" strokeDasharray="20, 100" strokeDashoffset="-55" />
-              </svg>
-            </div>
+            {(() => {
+              const rows = rcaBreakdown(result.hypotheses)
+              if (rows.length === 0) {
+                return (
+                  <div style={{ padding: '18px', background: 'var(--bg-3)', borderRadius: '10px', fontSize: '13px', color: 'var(--text-dim)' }}>
+                    No root cause stands out: nothing in this cell's KPIs matches a known pattern.
+                    {result.notAssessed.length > 0 && <div style={{ marginTop: '8px' }}>{result.notAssessed.join(' ')}</div>}
+                  </div>
+                )
+              }
+              const tone = (c: string): string => (c === 'High' ? '#f87171' : c === 'Medium' ? '#fbbf24' : '#38bdf8')
+              const VERDICT_TEXT: Record<string, string> = {
+                consistent: 'Evidence fits',
+                suggests: 'Evidence points to it',
+                'not supported': 'Evidence does not support it'
+              }
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '55vh', overflowY: 'auto' }}>
+                  {rows.map((r) => (
+                    <div key={r.title} style={{ background: 'var(--bg-3)', borderRadius: '10px', padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>{r.title}</span>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: tone(r.confidence), whiteSpace: 'nowrap' }}>
+                          {r.confidence} · {r.score}%
+                        </span>
+                      </div>
+                      <div style={{ height: '6px', background: 'var(--bg-card)', borderRadius: '3px', margin: '8px 0', overflow: 'hidden' }}>
+                        <div style={{ width: `${r.score}%`, height: '100%', background: tone(r.confidence) }} />
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                        {VERDICT_TEXT[r.verdict]} · {r.supporting} for · {r.contradicting} against
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
             <button
               onClick={() => setRcaModalOpen(false)}
               style={{ width: '100%', padding: '12px', background: 'var(--bg-3)', color: '#fff', border: '1px solid var(--border)', borderRadius: '10px', fontWeight: 700, cursor: 'pointer', marginTop: '16px' }}

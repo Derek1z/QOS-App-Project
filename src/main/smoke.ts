@@ -53,6 +53,7 @@ import { inProcessRunner } from './forecast/runner'
 import { cancelForecastRefresh } from './forecast/scheduler'
 import { getForecast } from './services/forecastService'
 import { overrideDataDirs, dirs } from './paths'
+import { runSecuritySmoke } from './smokeSecurity'
 
 export async function runSmokeTest(dir: string): Promise<void> {
   console.log('[SMOKE] 1. Creating workspace in', dir)
@@ -1505,6 +1506,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
   }
   await ws.closeWorkspace()
 
+  // Electron hardening spec §6 item 2: the real window against each attack
+  await runSecuritySmoke()
+
   // file-based success marker for packaged runs: the portable 7z SFX wrapper
   // swallows the child's stdout, so verify-portable checks for this file.
   if (app.isPackaged) {
@@ -1573,6 +1577,7 @@ export async function runSmokeTest(dir: string): Promise<void> {
         kpiSaveRemove: true,
         kpiExtraImport: true,
         kpiTechSwitch: true,
+        securityGuards: true,
         kpiScoring: true,
         derivedKpis: true,
         dynamicKpiCards: true

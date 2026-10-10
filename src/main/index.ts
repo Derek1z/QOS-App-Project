@@ -11,6 +11,8 @@ import { runSmokeTest } from './smoke'
 import { runForecastBench } from './bench'
 import { setDefaultRunnerFactory } from './forecast/scheduler'
 import { createUtilityRunner } from './forecast/utilityRunner'
+import { applySecurity } from './security'
+import { createMainWindow } from './window'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -101,6 +103,7 @@ function bootstrap(): void {
 
   Menu.setApplicationMenu(null)
   ensureDirs()
+  applySecurity() // Electron hardening spec §4.1: before the first window
   createWindow()
   registerIpc(() => mainWindow)
   startScheduler()
@@ -109,32 +112,11 @@ function bootstrap(): void {
 }
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    title: '2G/3G/4G QoS Network Intelligence',
-    icon: getAppIcon(),
-    width: 1440,
-    height: 900,
-    minWidth: 1080,
-    minHeight: 680,
-    show: false,
-    backgroundColor: '#0e1117',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      sandbox: false,
-      nodeIntegration: false
-    }
-  })
+  mainWindow = createMainWindow({ icon: getAppIcon() })
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
     mainWindow = null
   })
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
 }
 
 /** Spec §5: reopen last workspace automatically, validating it first. */

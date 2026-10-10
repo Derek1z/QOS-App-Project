@@ -733,7 +733,9 @@ export interface PriorityRow {
   band: PriorityBand
   mode: PriorityMode
   components: {
-    prbSeverity: number
+    /** 0-100 capacity part, per technology (4G PRB, 2G TCH/SDCCH congestion);
+     *  null where the technology's capacity is not scored (3G for now) */
+    capacitySeverity: number | null
     persistence: number
     userImpact: number
     trafficImpact: number

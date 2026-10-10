@@ -63,6 +63,7 @@ Initial list (today's steps moved as they are; each is safe on a workspace that 
 | 5 | NC periods relabel | yes | the lifecycle backfill (nothing else: the recompute relabels) |
 | 6 | Technology correction | yes | `correctTechnologyOnce`'s body (infer, set technology) |
 | 7 | Extra-KPI technology clean-up | yes | `cleanExtraMetricsTechOnce`'s body |
+| 8 | Per-technology priority | yes, when stored scores exist | added later: the priority score's capacity part is per technology (4G PRB, 2G TCH/SDCCH congestion, 3G not scored yet), so stored scores are recomputed |
 
 The old markers (`targets_owner`, `nc_periods`, `tech_checked`, `extra_tech_cleaned`) are no longer read or written; existing rows stay harmlessly.
 

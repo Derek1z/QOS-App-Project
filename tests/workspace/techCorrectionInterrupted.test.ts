@@ -58,7 +58,9 @@ describe('an interrupted technology correction', () => {
     const path = join(ws.dir, 'test.qosdb')
     await manager.closeWorkspace()
     failRecompute = true
-    await expect(manager.openWorkspace(path)).rejects.toThrow(/step 6 \(Technology correction\)/)
+    // the shared final recompute fails; it is reported against the last step
+    // that asked for it (v8 recomputes stored priority scores)
+    await expect(manager.openWorkspace(path)).rejects.toThrow(/step 8 \(Per-technology priority\)/)
     failRecompute = false
 
     const info = await manager.openWorkspace(path)

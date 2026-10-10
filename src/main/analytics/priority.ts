@@ -1,11 +1,12 @@
 import type { DuckDBConnection, DuckDBValue } from '@duckdb/node-api'
-import type { PriorityMode, PriorityBand, Trend } from '../../../shared/api'
+import type { PriorityMode, PriorityBand, Technology, Trend } from '../../../shared/api'
 import { PRIORITY_MODES } from '../../../shared/api'
 import { PRIORITY_PERSISTENCE, lifecycleCaseSql } from '../../../shared/lifecycle'
 import { getRules } from './rules'
 import { getPrbTarget } from './targets'
 import { cellKpiBreachByCell } from './kpiBreach'
 import { latestPeriodSql } from './periods'
+import { workspaceTechnology } from '../services/kpiService'
 
 /** How much the imported-KPI target-breach component weighs in the score.
  *  The six classical components keep 80%; the editable targets drive 20%. */
@@ -16,12 +17,28 @@ const KPI_BREACH_WEIGHT = 0.2
  *  Higher score = more urgent. Bands: Critical 90+, High 75+, Medium 50+,
  *  Watch 25+, Low below. */
 
-// [prbSeverity, persistence, userImpact, trafficImpact, throughputDegradation, worseningTrend]
+// [capacitySeverity, persistence, userImpact, trafficImpact, throughputDegradation, worseningTrend]
 const MODE_WEIGHTS: Record<Exclude<PriorityMode, 'balanced'>, number[]> = {
   customer: [10, 15, 30, 25, 20, 0], // customer impact: users + traffic lead
-  congestion: [45, 15, 5, 10, 15, 10], // congestion severity: PRB leads
+  congestion: [45, 15, 5, 10, 15, 10], // congestion severity: capacity leads
   persistence: [15, 45, 10, 10, 10, 10], // persistence: recurrence leads
   deterioration: [20, 15, 10, 10, 15, 30] // rapid deterioration: trend leads
+}
+
+/** The capacity part, per technology. 4G: PRB over the PRB target on a
+ *  40-point scale. 2G: the worse of TCH and SDCCH congestion over their
+ *  targets, relative (double the target = 100). 3G: not scored yet — the
+ *  user picks the 3G measure later — so the other five parts are rescaled to
+ *  0-100 rather than capping 3G scores. The 4G PRB rule never applies to a
+ *  2G or 3G cell: their utilization column is a different measure. */
+const CAPACITY_KPIS: Partial<Record<Technology, string[]>> = {
+  '2G': ['tch_congestion', 'sdcch_congestion']
+}
+
+function capacitySql(tech: Technology, prbThresh: number): string {
+  if (tech === '4G') return `ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (COALESCE(b.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1)`
+  if (CAPACITY_KPIS[tech]) return 'COALESCE(b.congestion_sev, 0.0)'
+  return 'CAST(NULL AS DOUBLE)'
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -49,6 +66,9 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
 
   const w = rules.priorityWeights ?? [25, 20, 15, 15, 15, 10]
   const prbThresh = await getPrbTarget(conn)
+  const tech = await workspaceTechnology(conn)
+  const capKeys = CAPACITY_KPIS[tech] ?? []
+  const kpiVal = `CASE k.agg WHEN 'sum' THEN w.sum_value WHEN 'max' THEN w.max_value WHEN 'min' THEN w.min_value ELSE w.avg_value END`
 
   const BATCH_SIZE = 2500
   for (let b = 0; b < cellIds.length; b += BATCH_SIZE) {
@@ -104,6 +124,20 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         AND w.cell_id IN (${idList})
       GROUP BY w.cell_id, w.week_start
     ),
+    congestion_agg AS (
+      SELECT w.cell_id, w.week_start,
+        ROUND(MAX(LEAST(100.0, GREATEST(0.0,
+          CASE WHEN k.worse_is_higher THEN 100.0 * (${kpiVal} - k.target) / k.target
+               ELSE 100.0 * (k.target - ${kpiVal}) / k.target END
+        ))), 1) AS congestion_sev
+      FROM agg_cell_kpi_weekly w
+      JOIN kpi_defs k ON k.kpi_id = w.kpi_id
+      WHERE k.active AND k.target IS NOT NULL AND k.target <> 0
+        AND k.technology = '${tech}'
+        AND k.kpi_key IN (${capKeys.length ? capKeys.map((x) => `'${x}'`).join(', ') : 'NULL'})
+        AND w.cell_id IN (${idList})
+      GROUP BY w.cell_id, w.week_start
+    ),
     cell_base AS (
       SELECT w.cell_id, CAST(w.week_start AS VARCHAR) AS week_start,
         w.prb_avg, w.connected_users_sum, w.data_volume_mb_sum, w.dl_throughput_kbps_avg,
@@ -111,7 +145,8 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         COALESCE(l.trend, 'Stable') AS trend,
         p.avg_users, p.avg_volume, p.avg_throughput,
         COALESCE(kb.kpi_breach_score, 0.0) AS kpi_breach,
-        kb.kpi_breach_score IS NOT NULL AS has_kpi
+        kb.kpi_breach_score IS NOT NULL AS has_kpi,
+        cg.congestion_sev
       FROM latest lw
       JOIN agg_cell_weekly w ON w.cell_id = lw.cell_id AND w.week_start = lw.week_start
       JOIN peers p ON p.week_start = lw.week_start
@@ -120,11 +155,13 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         AND l.grain = 'weekly' AND l.ruleset_version = ${rules.version}
       LEFT JOIN kpi_breach_agg kb
         ON kb.cell_id = lw.cell_id AND kb.week_start = lw.week_start
+      LEFT JOIN congestion_agg cg
+        ON cg.cell_id = lw.cell_id AND cg.week_start = lw.week_start
       WHERE lw.cell_id IN (${idList}) AND lw.rn = 1
     ),
     comp AS (
       SELECT b.cell_id, b.week_start,
-        ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (COALESCE(b.prb_avg, ${prbThresh}) - ${prbThresh})) / 40.0)), 1) AS prb_sev,
+        ${capacitySql(tech, prbThresh)} AS cap_sev,
         CAST(${lifecycleCaseSql('b.lifecycle', PRIORITY_PERSISTENCE, 0)} AS DOUBLE) AS persistence,
         CASE WHEN b.avg_users > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (b.connected_users_sum - b.avg_users)) / b.avg_users)), 1) ELSE 0.0 END AS user_imp,
         CASE WHEN b.avg_volume > 0 THEN ROUND(LEAST(100.0, GREATEST(0.0, (100.0 * (b.data_volume_mb_sum - b.avg_volume)) / b.avg_volume)), 1) ELSE 0.0 END AS traffic_imp,
@@ -138,7 +175,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
         b.has_kpi
       FROM cell_base b
     ),
-    modes(mode_name, w_prb, w_pers, w_user, w_vol, w_thrpt, w_trend) AS (
+    modes(mode_name, w_cap, w_pers, w_user, w_vol, w_thrpt, w_trend) AS (
       VALUES
         ('balanced', ${w[0]}, ${w[1]}, ${w[2]}, ${w[3]}, ${w[4]}, ${w[5]}),
         ('customer', 10, 15, 30, 25, 20, 0),
@@ -148,8 +185,10 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
     ),
     classical AS (
       SELECT c.*, m.mode_name,
-        (m.w_prb * c.prb_sev + m.w_pers * c.persistence + m.w_user * c.user_imp +
-         m.w_vol * c.traffic_imp + m.w_thrpt * c.thrpt_deg + m.w_trend * c.trend_comp) / 100.0 AS classical_score
+        (m.w_cap * COALESCE(c.cap_sev, 0.0) + m.w_pers * c.persistence + m.w_user * c.user_imp +
+         m.w_vol * c.traffic_imp + m.w_thrpt * c.thrpt_deg + m.w_trend * c.trend_comp)
+          -- an unscored capacity part leaves the other five on a 0-100 scale
+          / CASE WHEN c.cap_sev IS NULL THEN GREATEST(100.0 - m.w_cap, 1.0) ELSE 100.0 END AS classical_score
       FROM comp c CROSS JOIN modes m
     ),
     scored AS (
@@ -163,7 +202,7 @@ export async function recomputePriority(conn: DuckDBConnection, cellIds: number[
           END, 1
         ) AS final_score,
         json_object(
-          'prbSeverity', c.prb_sev,
+          'capacitySeverity', c.cap_sev,
           'persistence', c.persistence,
           'userImpact', c.user_imp,
           'trafficImpact', c.traffic_imp,

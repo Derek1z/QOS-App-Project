@@ -84,6 +84,6 @@ describe('extra KPI columns are stored under the workspace technology', () => {
     const version = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(version)).toBe('7')
+    expect(String(version)).toBe('8')
   })
 })

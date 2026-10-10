@@ -68,7 +68,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const version = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(version)).toBe('7')
+    expect(String(version)).toBe('8')
 
     // Overwrite the same row again; with the marker present a second reopen
     // must not recompute, so the overwritten value survives.
@@ -101,7 +101,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const version = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(version)).toBe('7')
+    expect(String(version)).toBe('8')
   })
 
   it('a newly created workspace is at the latest version, so it never triggers the relabel', { timeout: 30000 }, async () => {
@@ -109,6 +109,6 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     const version = (await ws.conn.runAndReadAll(
       `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(version)).toBe('7')
+    expect(String(version)).toBe('8')
   })
 })

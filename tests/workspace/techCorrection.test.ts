@@ -68,7 +68,7 @@ describe('one-time technology correction on open', () => {
 
   it('a new workspace is at the latest version, so it is never corrected', { timeout: 30000 }, async () => {
     ws = await openRealWorkspace('4G')
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
   })
 
   it('infers the technology holding ≥ 90% of KPI rows, else null', { timeout: 60000 }, async () => {
@@ -87,7 +87,7 @@ describe('one-time technology correction on open', () => {
     const info = await reopen(ws)
     expect(info.technology).toBe('3G')
     expect(await meta(ws, 'technology')).toBe('3G')
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
     expect(await ncDays(ws)).toBe(0) // PRB no longer counts; the 3G KPI is good
     const recent = (await import('../../src/main/services/appState')).load().recentWorkspaces[0]
     expect(recent.technology).toBe('3G')
@@ -106,7 +106,7 @@ describe('one-time technology correction on open', () => {
     await seed(ws, 12, 8)
     const info = await reopen(ws)
     expect(info.technology).toBe('4G')
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
   })
 
   it('no KPI rows keeps the stored technology', { timeout: 60000 }, async () => {

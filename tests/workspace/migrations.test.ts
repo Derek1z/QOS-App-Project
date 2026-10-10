@@ -22,7 +22,7 @@ vi.mock('../../src/main/import/aggregates', async (orig) => {
 
 const NAMES = [
   'Schema catch-up', 'Targets owned by kpi_defs', 'Derived-KPI tables', 'Merge duplicate dimensions',
-  'NC periods relabel', 'Technology correction', 'Extra-KPI technology clean-up'
+  'NC periods relabel', 'Technology correction', 'Extra-KPI technology clean-up', 'Per-technology priority'
 ]
 const MARKERS = ['targets_owner', 'nc_periods', 'tech_checked', 'extra_tech_cleaned']
 
@@ -66,11 +66,11 @@ async function schemaShape(ws: RealWorkspace): Promise<string[]> {
 }
 
 describe('the migration list', () => {
-  it('is versions 1..7 with the spec names', async () => {
+  it('is versions 1..8 with the spec names', async () => {
     const { MIGRATIONS, LATEST } = await import('../../src/main/workspace/migrations')
-    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(MIGRATIONS.map((m) => m.name)).toEqual(NAMES)
-    expect(LATEST).toBe(7)
+    expect(LATEST).toBe(8)
   })
 })
 
@@ -84,7 +84,7 @@ describe('opening workspaces by version', () => {
 
   it('a new workspace is at the latest version, with no backup and no old markers', { timeout: 60000 }, async () => {
     ws = await openRealWorkspace('4G')
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
     expect(backups(ws)).toEqual([])
     for (const m of MARKERS) expect(await meta(ws, m), m).toBeNull()
   })
@@ -98,7 +98,7 @@ describe('opening workspaces by version', () => {
     recomputeCalls = 0
 
     await reopen(ws)
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
     expect(backups(ws)).toHaveLength(1)
     expect(recomputeCalls).toBe(1)
     expect(await meta(ws, 'recompute_pending')).toBeNull()
@@ -119,7 +119,7 @@ describe('opening workspaces by version', () => {
     )
     recomputeCalls = 0
     await reopen(ws)
-    expect(await meta(ws, 'schema_version')).toBe('7')
+    expect(await meta(ws, 'schema_version')).toBe('8')
     expect(recomputeCalls).toBe(0)
   })
 

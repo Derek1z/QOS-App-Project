@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import type { Technology } from '../../shared/api'
 import { openTechWorkspace } from '../helpers/techWorkspace'
 import type { RealWorkspace } from '../helpers/realWorkspace'
@@ -11,6 +12,8 @@ import { COMPARE_METRICS } from '../../shared/compareMetrics'
  * browser-preview mock. Data: the real synthetic generator through the real
  * import core (only the utility-process hop is swapped, see techWorkspace).
  */
+vi.setConfig({ testTimeout: 30000 })
+
 vi.mock('../../src/main/import/importer', async (orig) => ({
   ...(await orig<typeof import('../../src/main/import/importer')>()),
   runImport: (await import('../helpers/techWorkspace')).inProcessRunImport
@@ -80,6 +83,17 @@ for (const tech of ['2G', '3G'] as Technology[]) {
       }
     })
 
+    it('Comparison Lab answers every metric at every grain, by period and by region', async () => {
+      const { getComparison } = await import('../../src/main/services/queryService')
+      for (const grain of ['daily', 'weekly', 'monthly'] as const) {
+        for (const type of ['period', 'region'] as const) {
+          for (const m of COMPARE_METRICS[tech]) {
+            await expect(getComparison({ grain, type, metric: m.metric }), `${grain} ${type} ${m.metric}`).resolves.toBeTruthy()
+          }
+        }
+      }
+    })
+
     it('Comparison Lab answers an unknown metric id with its own first KPI instead of failing', async () => {
       const { getComparison } = await import('../../src/main/services/queryService')
       const res = await getComparison({ metric: tech === '2G' ? 'cssr_2g' : 'cssr_3g' })
@@ -103,6 +117,17 @@ for (const tech of ['2G', '3G'] as Technology[]) {
       const md = pack.files.md?.content ?? ''
       expect(md.length).toBeGreaterThan(0)
       expect(md.split('\n').filter(mentionsPrb), 'report markdown lines').toEqual([])
+      // the slide deck and the HTML page carry their own text
+      const files = await generateReportPack({ sections: ['executive-summary', 'priority-queue'], formats: ['html', 'pptx'] })
+      expect((files.files.html?.content ?? '').split('\n').filter(mentionsPrb), 'report html lines').toEqual([])
+      const JSZip = (await import('jszip')).default
+      const zip = await JSZip.loadAsync(readFileSync(files.files.pptx!.path))
+      const slides = Object.keys(zip.files).filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f))
+      expect(slides.length).toBeGreaterThan(0)
+      for (const f of slides) {
+        const text = [...(await zip.file(f)!.async('string')).matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((x) => x[1])
+        expect(text.filter(mentionsPrb), f).toEqual([])
+      }
       const exec = await getExecutiveOverview()
       for (const r of exec.problemSummary.keyRecommendations) expect(mentionsPrb(r), r).toBe(false)
     })

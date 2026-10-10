@@ -22,7 +22,7 @@ describe('a workspace saved by a newer app', () => {
     const manager = await import('../../src/main/workspace/manager')
     ws = await openRealWorkspace('4G')
     const path = join(ws.dir, 'test.qosdb')
-    await setSchemaVersion(ws.conn, 8)
+    await setSchemaVersion(ws.conn, 99)
     await manager.closeWorkspace()
     const before = { hash: sha(path), backups: listBackups(ws.dir) }
 
@@ -49,7 +49,7 @@ describe('a workspace saved by a newer app', () => {
     const inst = await DuckDBInstance.create(path)
     const c = await inst.connect()
     await c.run(`PRAGMA disable_checkpoint_on_shutdown`)
-    await c.run(`UPDATE workspace_meta SET value = '8' WHERE key = 'schema_version'`)
+    await c.run(`UPDATE workspace_meta SET value = '99' WHERE key = 'schema_version'`)
     c.closeSync()
     inst.closeSync()
     expect(existsSync(`${path}.wal`)).toBe(true)
@@ -71,7 +71,7 @@ describe('a workspace saved by a newer app', () => {
     const manager = await import('../../src/main/workspace/manager')
     ws = await openRealWorkspace('4G')
     const path = join(ws.dir, 'test.qosdb')
-    for (const [key, value] of [['upgrading_to', '8'], ['recompute_pending', '8']] as const) {
+    for (const [key, value] of [['upgrading_to', '99'], ['recompute_pending', '99']] as const) {
       await ws.conn.run(`DELETE FROM workspace_meta WHERE key IN ('upgrading_to', 'recompute_pending')`)
       await ws.conn.run(`INSERT INTO workspace_meta (key, value) VALUES (?, ?)`, [key, value])
       await manager.closeWorkspace()

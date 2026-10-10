@@ -385,7 +385,7 @@ export async function getPriorityQueue(mode: PriorityMode, limit = 50): Promise<
   `)
   return r.getRowObjects().map((x) => {
     let components = {
-      prbSeverity: 0, persistence: 0, userImpact: 0, trafficImpact: 0,
+      capacitySeverity: 0 as number | null, persistence: 0, userImpact: 0, trafficImpact: 0,
       throughputDegradation: 0, worseningTrend: 0, kpiBreach: 0
     }
     try {
@@ -1377,12 +1377,12 @@ export async function getComparison(opts: {
   const dateCol = grain === 'daily' ? 'date' : grain === 'monthly' ? 'month_start' : 'week_start'
 
   const tech = await workspaceTechnology(conn)
-  const isDaily = grain === 'daily'
-  const prbCol = isDaily ? 'w.prb_utilization' : 'w.prb_avg'
-  const tpCol = isDaily ? 'w.dl_throughput_kbps' : 'w.dl_throughput_kbps_avg'
-  const usersCol = isDaily ? 'w.connected_users' : 'w.connected_users_sum'
-  const volCol = isDaily ? 'w.data_volume_mb' : 'w.data_volume_mb_sum'
-  const availCol = isDaily ? 'w.availability_pct' : 'w.availability_pct_avg'
+  // agg_cell_daily carries the weekly/monthly column names
+  const prbCol = 'w.prb_avg'
+  const tpCol = 'w.dl_throughput_kbps_avg'
+  const usersCol = 'w.connected_users_sum'
+  const volCol = 'w.data_volume_mb_sum'
+  const availCol = 'w.availability_pct_avg'
 
   const CORE_DEFS: Record<string, { label: string; unit: string; expr: string; worseIsHigher: boolean }> = {
     prb: { label: 'PRB utilization', unit: '%', expr: `avg(${prbCol})`, worseIsHigher: true },

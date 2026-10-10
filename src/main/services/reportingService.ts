@@ -67,12 +67,12 @@ function kpiCellValue(c: CellIntelligenceRow, key: string): string | null {
 
 /** The core utilization column is PRB in 4G; 2G/3G files map their traffic
  *  utilization into it, so their reports must not call it PRB. */
-async function utilLabels(): Promise<{ col: string; avg: string; severity: string }> {
+async function utilLabels(): Promise<{ col: string; avg: string; severity: string; prbApplies: boolean }> {
   const ws = getCurrent()
   const tech = ws ? await workspaceTechnology(ws.connection) : '4G'
   return tech === '4G'
-    ? { col: 'PRB %', avg: 'Avg PRB utilization', severity: 'PRB severity' }
-    : { col: 'Traffic util. %', avg: 'Avg traffic utilization', severity: 'Utilization severity' }
+    ? { col: 'PRB %', avg: 'Avg PRB utilization', severity: 'PRB severity', prbApplies: true }
+    : { col: 'Traffic util. %', avg: 'Avg traffic utilization', severity: tech === '2G' ? 'Congestion severity' : 'Capacity severity', prbApplies: false }
 }
 
 const fmtK = (v: number | null | undefined): string =>
@@ -195,7 +195,7 @@ const SECTION_BUILDERS: Partial<Record<ReportSectionId, SectionBuilder>> = {
     return {
       title: 'Priority Queue',
       columns: ['Cell', 'Region', 'District', 'Site', 'Score', 'Band', util.severity, 'Persistence', 'Trend'],
-      rows: q.map((p) => [p.cellName, p.region ?? '', p.district ?? '', p.site ?? '', p.score, p.band, p.components.prbSeverity, p.components.persistence, p.components.worseningTrend]),
+      rows: q.map((p) => [p.cellName, p.region ?? '', p.district ?? '', p.site ?? '', p.score, p.band, p.components.capacitySeverity, p.components.persistence, p.components.worseningTrend]),
       note: 'Balanced mode, latest week. Higher score = more urgent.'
     }
   },
@@ -989,13 +989,15 @@ async function renderPptx(
   const exec = pptx.addSlide()
   exec.background = { color: DARK }
   exec.addText('Executive Summary', { x: 0.4, y: 0.3, w: 9.2, h: 0.5, fontSize: 22, bold: true, color: 'FFFFFF' })
+  const util = await utilLabels()
   const bullets = [
     `Network health score: ${snapshot.kpis.healthScore ?? '—'} / 100`,
-    `Average PRB: ${snapshot.kpis.avgPrb ?? '—'}% · Availability: ${snapshot.kpis.avgAvailability ?? '—'}%`,
+    `${util.avg}: ${snapshot.kpis.avgPrb ?? '—'}% · Availability: ${snapshot.kpis.avgAvailability ?? '—'}%`,
     `DL throughput: ${snapshot.kpis.avgThroughputKbps == null ? '—' : `${(snapshot.kpis.avgThroughputKbps / 1024).toFixed(1)} Mbps`}`,
     `NC cells: ${snapshot.ncCount}`,
     `Classified: ${Object.entries(snapshot.classifications).map(([k, v]) => `${k} ${v}`).join(' · ')}`,
-    ...Object.entries(snapshot.thresholds).map(([k, v]) => `Threshold ${k}: ${v == null ? '—' : v}`)
+    // the PRB target is a 4G threshold
+    ...Object.entries(snapshot.thresholds).filter(([k]) => k !== 'prb' || util.prbApplies).map(([k, v]) => `Threshold ${k}: ${v == null ? '—' : v}`)
   ]
   exec.addText(bullets.map((b) => ({ text: b })), { x: 0.6, y: 1.0, w: 8.8, h: 5.4, fontSize: 14, color: TEXT, breakLine: true })
 

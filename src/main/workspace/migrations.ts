@@ -455,6 +455,14 @@ export async function cleanExtraMetricsTech(conn: DuckDBConnection): Promise<boo
   return deleted > 0
 }
 
+/** v8: the priority score's capacity part is per technology (PRB only in
+ *  4G). Stored scores were computed with the 4G PRB rule for every cell, so
+ *  any workspace holding them recomputes. */
+async function perTechnologyPriority(conn: DuckDBConnection): Promise<boolean> {
+  const n = (await conn.runAndReadAll(`SELECT count(*) AS n FROM cell_priority_history`)).getRowObjects()[0]?.n
+  return Number(n ?? 0) > 0
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'Schema catch-up', up: schemaCatchUp, readOnlyShim: periodCoverageShim },
   { version: 2, name: 'Targets owned by kpi_defs', up: targetsOwnedByKpiDefs },
@@ -462,7 +470,8 @@ export const MIGRATIONS: Migration[] = [
   { version: 4, name: 'Merge duplicate dimensions', up: mergeDuplicateDimensions },
   { version: 5, name: 'NC periods relabel', up: ncPeriodsRelabel },
   { version: 6, name: 'Technology correction', up: correctTechnology },
-  { version: 7, name: 'Extra-KPI technology clean-up', up: cleanExtraMetricsTech }
+  { version: 7, name: 'Extra-KPI technology clean-up', up: cleanExtraMetricsTech },
+  { version: 8, name: 'Per-technology priority', up: perTechnologyPriority }
 ]
 
 export const LATEST = MIGRATIONS[MIGRATIONS.length - 1].version

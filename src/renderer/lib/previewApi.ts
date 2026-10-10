@@ -685,7 +685,7 @@ function demoPriority(mode: PriorityMode): PriorityRow[] {
     ['ACC-009', 31, 30, 0, 0, 10, 0],
     ['KUM-010', 22, 20, 0, 0, 5, 0]
   ]
-  return base.map(([cellName, score, prbSeverity, persistence, userImpact, trafficImpact, throughputDegradation], i) => ({
+  return base.map(([cellName, score, capacitySeverity, persistence, userImpact, trafficImpact, throughputDegradation], i) => ({
     cellId: 200000 + i,
     cellName,
     site: cellName,
@@ -696,7 +696,7 @@ function demoPriority(mode: PriorityMode): PriorityRow[] {
     band: score >= 90 ? 'Critical' : score >= 75 ? 'High' : score >= 50 ? 'Medium' : score >= 25 ? 'Watch' : 'Low',
     mode,
     components: {
-      prbSeverity,
+      capacitySeverity,
       persistence,
       userImpact,
       trafficImpact,
@@ -1822,7 +1822,7 @@ async function rSection(id: ReportSectionId): Promise<{ id: ReportSectionId; tab
           table: {
             title: 'Priority Queue',
             columns: ['Cell', 'Region', 'District', 'Site', 'Score', 'Band', sevCol, 'Persistence', 'Trend'],
-            rows: q.map((p) => [p.cellName, p.region ?? '', p.district ?? '', p.site ?? '', p.score, p.band, p.components.prbSeverity, p.components.persistence, p.components.worseningTrend]),
+            rows: q.map((p) => [p.cellName, p.region ?? '', p.district ?? '', p.site ?? '', p.score, p.band, p.components.capacitySeverity, p.components.persistence, p.components.worseningTrend]),
             note: 'Balanced mode, latest week. Higher score = more urgent.'
           }
         }

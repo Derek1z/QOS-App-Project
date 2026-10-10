@@ -28,8 +28,8 @@ describe('restoring an older snapshot', () => {
     await snapshots.restoreSnapshot(snap.snapshotId)
     ws.conn = manager.getCurrent()!.connection
     const v = (await ws.conn.runAndReadAll(`SELECT value FROM workspace_meta WHERE key = 'schema_version'`)).getRowObjects()[0]?.value
-    expect(String(v)).toBe('7')
+    expect(String(v)).toBe('8')
     const backups = join(ws.dir, 'backups')
-    expect(existsSync(backups) ? readdirSync(backups).filter((f) => /^pre-upgrade-test-v7-/.test(f)) : []).toHaveLength(1)
+    expect(existsSync(backups) ? readdirSync(backups).filter((f) => /^pre-upgrade-test-v8-/.test(f)) : []).toHaveLength(1)
   })
 })

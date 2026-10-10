@@ -44,8 +44,8 @@ describe("a workspace's technology is never rewritten", () => {
       }
     }
     expect(writers.sort()).toEqual([
-      'workspace/manager.ts:correctTechnologyOnce',
-      'workspace/manager.ts:createWorkspaceNow'
+      'workspace/manager.ts:createWorkspaceNow',
+      'workspace/migrations.ts:correctTechnology'
     ])
   })
 

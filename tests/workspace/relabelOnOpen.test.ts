@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { recomputeAllAggregates } from '../../src/main/import/aggregates'
 import { refreshAllIntelligence } from '../../src/main/analytics/engine'
 
@@ -54,6 +54,7 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     // produced Intermittent), and it has no 'nc_periods' marker.
     await ws.conn.run(`UPDATE cell_nc_lifecycle SET lifecycle = 'Recurring NC' WHERE grain = 'daily' AND is_nc`)
     await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
+    await setSchemaVersion(ws.conn, 4) // before step 5 (NC periods relabel)
     expect(await lifecycleAt(ws, 'TUESDAYS', '2026-07-21')).toBe('Recurring NC')
 
     const manager = await import('../../src/main/workspace/manager')
@@ -64,10 +65,10 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
     // The open recomputed from raw facts, so the 3rd Tuesday is Intermittent
     // again, and the marker is now set.
     expect(await lifecycleAt(ws, 'TUESDAYS', '2026-07-21')).toBe('Intermittent NC')
-    const marker = (await ws.conn.runAndReadAll(
-      `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
+    const version = (await ws.conn.runAndReadAll(
+      `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01.2')
+    expect(String(version)).toBe('7')
 
     // Overwrite the same row again; with the marker present a second reopen
     // must not recompute, so the overwritten value survives.
@@ -91,22 +92,23 @@ describe('old workspaces are relabelled once on open (fix wave 2026-09-30, item 
       `INSERT INTO workspace_meta (key, value) VALUES ('nc_periods', '2026-09-30')
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`
     )
+    await setSchemaVersion(ws.conn, 4)
     const manager = await import('../../src/main/workspace/manager')
     await manager.closeWorkspace()
     await manager.openWorkspace(join(ws.dir, 'test.qosdb'))
     ws.conn = manager.getCurrent()!.connection
     expect(await lifecycleAt(ws, 'TUESDAYS', '2026-07-21')).toBe('Intermittent NC')
-    const marker = (await ws.conn.runAndReadAll(
-      `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
+    const version = (await ws.conn.runAndReadAll(
+      `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01.2')
+    expect(String(version)).toBe('7')
   })
 
-  it('a newly created workspace writes the marker so it never triggers the backfill', { timeout: 30000 }, async () => {
+  it('a newly created workspace is at the latest version, so it never triggers the relabel', { timeout: 30000 }, async () => {
     ws = await openRealWorkspace('3G')
-    const marker = (await ws.conn.runAndReadAll(
-      `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
+    const version = (await ws.conn.runAndReadAll(
+      `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(String(marker)).toBe('2026-10-01.2')
+    expect(String(version)).toBe('7')
   })
 })

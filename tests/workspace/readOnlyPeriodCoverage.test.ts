@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { recomputeAllAggregates } from '../../src/main/import/aggregates'
 import { refreshAllIntelligence } from '../../src/main/analytics/engine'
 
@@ -32,6 +32,8 @@ describe('a read-only open without period_coverage still serves weekly/monthly a
 
     // Simulate a pre-feature workspace: period_coverage never existed in it.
     await ws.conn.run(`DROP TABLE period_coverage`)
+    // a workspace that never had the table is older than step 1
+    await setSchemaVersion(ws.conn, 0)
 
     const manager = await import('../../src/main/workspace/manager')
     const path = join(ws.dir, 'test.qosdb')

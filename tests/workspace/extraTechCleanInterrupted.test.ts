@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 
 /** If the recompute after the once-on-open cleanup of other-technology KPI
  *  rows fails, the next open must still recompute: the aggregates would
@@ -50,12 +50,13 @@ describe('an interrupted other-technology KPI cleanup', () => {
     )
     await recomputeAllAggregates(ws.conn)
     await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'extra_tech_cleaned'`)
+    await setSchemaVersion(ws.conn, 6)
     expect(await weeklyTechs(ws)).toEqual(['2G', '3G', '4G'])
 
     const path = join(ws.dir, 'test.qosdb')
     await manager.closeWorkspace()
     failRecompute = true
-    await expect(manager.openWorkspace(path)).rejects.toThrow(/simulated/)
+    await expect(manager.openWorkspace(path)).rejects.toThrow(/step 7 \(Extra-KPI technology clean-up\)/)
     failRecompute = false
 
     await manager.openWorkspace(path)

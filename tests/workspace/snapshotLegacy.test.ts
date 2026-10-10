@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { snapshotKpis } from '../../src/main/services/snapshotService'
 
 /** A snapshot .qosdb is opened directly with DuckDBInstance (READ_ONLY),
@@ -21,6 +21,7 @@ describe('comparing a snapshot taken before period_coverage existed', () => {
     // Simulate a snapshot file saved before this feature landed: the table
     // simply never existed in it.
     await ws.conn.run(`DROP TABLE period_coverage`)
+    await setSchemaVersion(ws.conn, 0)
 
     const manager = await import('../../src/main/workspace/manager')
     const path = manager.getCurrent()!.path

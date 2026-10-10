@@ -38,3 +38,13 @@ export async function insertCells(conn: DuckDBConnection, names: string[]): Prom
     await conn.run(`INSERT INTO dim_cell VALUES (?, ?, 1, 1, 1)`, [i + 1, names[i]])
   }
 }
+
+/** Simulate a workspace written by an older (or newer) app: set its schema
+ *  version directly (versioned migrations spec §4.2). */
+export async function setSchemaVersion(conn: DuckDBConnection, v: number | string): Promise<void> {
+  await conn.run(
+    `INSERT INTO workspace_meta (key, value) VALUES ('schema_version', ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    [String(v)]
+  )
+}

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import * as ws from '../workspace/manager'
 import { backupsDir } from '../paths'
+import { backupOpenDatabase } from '../workspace/backup'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
 import { purgeRawArchive, rawArchive } from '../import/importer'
@@ -30,23 +31,6 @@ async function currentCatalog(conn: DuckDBConnection): Promise<string> {
   return String(r.getRowObjects()[0]?.n ?? 'main')
 }
 
-/** Full-database backup while the workspace is open: attach a fresh file and
- *  COPY FROM DATABASE (DuckDB's documented whole-db copy). No file locks. */
-async function backupTo(conn: DuckDBConnection, dest: string): Promise<void> {
-  if (existsSync(dest)) unlinkSync(dest)
-  const esc = dest.replace(/'/g, "''")
-  const src = (await currentCatalog(conn)).replace(/"/g, '""')
-  await conn.run(`ATTACH '${esc}' AS maintenance_backup`)
-  try {
-    await conn.run(`COPY FROM DATABASE "${src}" TO maintenance_backup`)
-  } finally {
-    try {
-      await conn.run('DETACH maintenance_backup')
-    } catch {
-      /* ignore */
-    }
-  }
-}
 
 async function run(
   action: MaintenanceAction,
@@ -167,7 +151,7 @@ async function rebuild(): Promise<{ ok: boolean; message: string; detail?: unkno
   requireWritable()
   const cur = ws.getCurrent()!
   const backup = join(backupsDir(), `maintenance-rebuild-${cur.name}-${stamp()}.qosdb`)
-  await backupTo(cur.connection, backup)
+  await backupOpenDatabase(cur.connection, backup)
   const before = await cur.connection.runAndReadAll(`SELECT count(*) AS n FROM fact_cell_daily`)
   await cur.connection.run('BEGIN TRANSACTION')
   try {
@@ -195,7 +179,7 @@ async function compact(): Promise<{ ok: boolean; message: string; detail?: unkno
   requireWritable()
   const cur = ws.getCurrent()!
   const backup = join(backupsDir(), `maintenance-compact-${cur.name}-${stamp()}.qosdb`)
-  await backupTo(cur.connection, backup)
+  await backupOpenDatabase(cur.connection, backup)
   const tmp = `${cur.path}.compact.tmp`
   if (existsSync(tmp)) unlinkSync(tmp)
 

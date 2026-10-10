@@ -38,5 +38,4 @@ export async function migrateLegacyTargets(conn: DuckDBConnection): Promise<void
       )
     }
   }
-  await conn.run(`INSERT OR REPLACE INTO workspace_meta (key, value) VALUES ('targets_owner', 'kpi_defs')`)
 }

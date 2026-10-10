@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { recomputeAllAggregates, recomputeAggregates, updateCoverage } from '../../src/main/import/aggregates'
 import { refreshAllIntelligence } from '../../src/main/analytics/engine'
 import { latestPeriodSql } from '../../src/main/analytics/periods'
@@ -99,6 +99,7 @@ describe('period coverage (spec §2, §4.1)', () => {
     await recomputeAllAggregates(ws.conn)
     await refreshAllIntelligence(ws.conn)
     await ws.conn.run(`DROP TABLE period_coverage`)
+    await setSchemaVersion(ws.conn, 0) // a workspace without the table predates migration 1
     await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
     const manager = await import('../../src/main/workspace/manager')
     await manager.closeWorkspace()

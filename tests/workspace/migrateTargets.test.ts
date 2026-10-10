@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { getKpiTarget } from '../../src/main/analytics/targets'
 
 /** Make the open workspace look like one written before kpi_defs owned
@@ -10,6 +10,7 @@ async function reopenAsLegacy(ws: RealWorkspace, prb: number, cssr: number): Pro
   await ws.conn.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS cssr_threshold_pct DOUBLE DEFAULT 95`)
   await ws.conn.run(`UPDATE ruleset SET prb_threshold_pct = ?, cssr_threshold_pct = ?`, [prb, cssr])
   await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'targets_owner'`)
+  await setSchemaVersion(ws.conn, 1)
   const manager = await import('../../src/main/workspace/manager')
   await manager.closeWorkspace()
   await manager.openWorkspace(join(ws.dir, 'test.qosdb'))

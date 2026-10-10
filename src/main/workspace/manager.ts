@@ -1,29 +1,21 @@
-import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync } from 'node:fs'
+import { existsSync, statSync, unlinkSync, openSync, readSync, closeSync, mkdirSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import os from 'node:os'
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
-import { SCHEMA_SQL, AGG_CELL_DAILY_SELECT, CELL_FORECASTS_SQL, FORECAST_DIRTY_SQL } from './schema'
+import { SCHEMA_SQL } from './schema'
 import { acquireLock, releaseLock, lockedByOther } from './lock'
 import * as appState from '../services/appState'
 import { seedKpiDefs, workspaceTechnology } from '../services/kpiService'
 import { ensureDerivedKpiSchema } from '../services/derivedKpiService'
-import { repairDuplicateDimensions } from '../services/dimRepair'
-import { migrateLegacyTargets } from './migrateTargets'
-import { recomputeNcLifecycle } from '../analytics/nc'
-import { periodCoverageViewSql } from '../analytics/periods'
 import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
-import { WORKSPACE_TECH_SQL } from '../analytics/ncRule'
+import { backupsDir } from '../paths'
+import { backupOpenDatabase } from './backup'
+import { LATEST, MIGRATIONS, readSchemaVersion, runMigrations, runReadOnlyShims } from './migrations'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
-import { NC_PERIOD_FIELDS, NC_PERIOD_KEYS } from '../../../shared/ruleDefaults'
 
-/** Bumped when a change to NC-period labelling means old workspaces must be
- *  relabelled once before their history reads correctly (2026-09-30:
- *  seven-label lifecycle; 2026-10-01: a week counts for the months its bad
- *  days fall in; 2026-10-01.2: complete periods — period_coverage backfill,
- *  partial non-NC periods skipped). Written at creation for new workspaces
- *  so they never trigger the backfill; checked on every writable open. */
-const NC_PERIODS_MARKER = '2026-10-01.2'
+export { inferWorkspaceTechnology } from './migrations'
+
 
 export async function configureDuckDbSession(connection: DuckDBConnection): Promise<void> {
   const totalRamGb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
@@ -129,123 +121,6 @@ async function closeWorkspaceNow(): Promise<void> {
 
 /** Backfill schema additions on workspaces created before a given feature
  *  landed. Runs on writable open only; every statement is idempotent. */
-async function ensureUpgradeSchema(connection: DuckDBConnection): Promise<void> {
-  // cell_forecasts was never written before the honest-forecasting spec; an
-  // old-shape table (metric/horizon columns) is replaced, not migrated
-  const fcCols = await connection.runAndReadAll(
-    `SELECT column_name FROM information_schema.columns WHERE table_name = 'cell_forecasts'`
-  )
-  const fcNames = fcCols.getRowObjects().map((x) => String(x.column_name))
-  if (fcNames.length > 0 && !fcNames.includes('kpi_key')) await connection.run('DROP TABLE cell_forecasts')
-  await connection.run(CELL_FORECASTS_SQL)
-  await connection.run(FORECAST_DIRTY_SQL)
-  await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_kpi_defs START 1`)
-  await connection.run(`CREATE TABLE IF NOT EXISTS kpi_defs (
-     kpi_id BIGINT DEFAULT nextval('seq_kpi_defs') PRIMARY KEY,
-     technology VARCHAR NOT NULL CHECK (technology IN ('2G', '3G', '4G')),
-     kpi_key VARCHAR NOT NULL,
-     label VARCHAR NOT NULL,
-     unit VARCHAR NOT NULL DEFAULT '',
-     worse_is_higher BOOLEAN NOT NULL DEFAULT true,
-     target DOUBLE,
-     agg VARCHAR NOT NULL DEFAULT 'avg' CHECK (agg IN ('avg', 'sum', 'max', 'min')),
-     source_headers JSON,
-     is_custom BOOLEAN NOT NULL DEFAULT false,
-     active BOOLEAN NOT NULL DEFAULT true,
-     sort_order INTEGER NOT NULL DEFAULT 0,
-     created_at TIMESTAMP DEFAULT now(),
-     updated_at TIMESTAMP DEFAULT now(),
-     UNIQUE (technology, kpi_key)
-   )`)
-  await connection.run(`CREATE TABLE IF NOT EXISTS fact_extra_metrics (
-     date_id INTEGER NOT NULL,
-     cell_id BIGINT NOT NULL,
-     kpi_id BIGINT NOT NULL,
-     value DOUBLE,
-     PRIMARY KEY (date_id, cell_id, kpi_id)
-   )`)
-  await connection.run(`CREATE TABLE IF NOT EXISTS agg_cell_kpi_weekly (
-     week_start DATE NOT NULL,
-     cell_id BIGINT NOT NULL,
-     kpi_id BIGINT NOT NULL,
-     avg_value DOUBLE, sum_value DOUBLE, max_value DOUBLE, min_value DOUBLE,
-     observed_days INTEGER,
-     PRIMARY KEY (week_start, cell_id, kpi_id)
-   )`)
-  await connection.run(
-    `CREATE TABLE IF NOT EXISTS raw_archive (
-       archive_id BIGINT DEFAULT nextval('seq_raw_archive') PRIMARY KEY,
-       import_id BIGINT, filename VARCHAR,
-       archived_path VARCHAR, size_bytes BIGINT, checksum VARCHAR,
-       imported_at TIMESTAMP DEFAULT now(), retention_until TIMESTAMP
-     )`
-  )
-  await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_raw_archive START 1`)
-  await connection.run(`ALTER TABLE workspace_snapshots ADD COLUMN IF NOT EXISTS path VARCHAR`)
-  for (const k of NC_PERIOD_KEYS) {
-    const fld = NC_PERIOD_FIELDS[k]
-    await connection.run(`ALTER TABLE ruleset ADD COLUMN IF NOT EXISTS ${fld.column} INTEGER DEFAULT ${fld.default}`)
-  }
-  await connection.run(`CREATE TABLE IF NOT EXISTS period_coverage (
-     grain VARCHAR NOT NULL, period_start DATE NOT NULL,
-     days_with_data INTEGER NOT NULL, days_in_period INTEGER NOT NULL, is_complete BOOLEAN NOT NULL,
-     PRIMARY KEY (grain, period_start)
-   )`)
-  await connection.run(`CREATE TABLE IF NOT EXISTS maintenance_settings (
-     id INTEGER PRIMARY KEY CHECK (id = 1),
-     enabled BOOLEAN DEFAULT false,
-     cadence_hours INTEGER DEFAULT 24,
-     actions JSON DEFAULT '["integrity","purge"]',
-     run_on_open BOOLEAN DEFAULT true,
-     last_run_at TIMESTAMP,
-     last_ok BOOLEAN,
-     last_summary VARCHAR,
-     updated_at TIMESTAMP DEFAULT now()
-   )`)
-  await connection.run(`INSERT INTO maintenance_settings (id) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM maintenance_settings)`)
-  await connection.run(`CREATE SEQUENCE IF NOT EXISTS seq_maintenance_runs START 1`)
-  await connection.run(`CREATE TABLE IF NOT EXISTS maintenance_runs (
-     run_id BIGINT DEFAULT nextval('seq_maintenance_runs') PRIMARY KEY,
-     ran_at TIMESTAMP DEFAULT now(),
-     ok BOOLEAN, actions JSON, summary VARCHAR, duration_ms BIGINT
-   )`)
-  await connection.run(`CREATE OR REPLACE VIEW agg_cell_daily AS ${AGG_CELL_DAILY_SELECT}`)
-  await connection.run(`
-    CREATE OR REPLACE VIEW agg_cell_kpi_daily AS
-    SELECT
-      d.date,
-      d.date AS period_start,
-      d.date AS period_end,
-      d.date AS week_start,
-      d.date AS month_start,
-      d.iso_year,
-      d.iso_week,
-      d.month,
-      d.year,
-      f.cell_id,
-      f.kpi_id,
-      f.value AS avg_value,
-      f.value AS sum_value,
-      f.value AS max_value,
-      f.value AS min_value,
-      1 AS observed_days
-    FROM fact_extra_metrics f
-    JOIN dim_date d USING (date_id)
-  `)
-
-  // Auto-backfill daily/monthly NC lifecycle if missing in existing workspaces
-  const dailyLifeR = await connection.runAndReadAll(
-    `SELECT count(*) AS n FROM cell_nc_lifecycle WHERE grain = 'daily'`
-  )
-  if (Number(dailyLifeR.getRowObjects()[0]?.n ?? 0) === 0) {
-    const cellsR = await connection.runAndReadAll(`SELECT DISTINCT cell_id FROM fact_cell_daily`)
-    const cellIds = cellsR.getRowObjects().map((r) => Number(r.cell_id)).filter((id) => !isNaN(id))
-    if (cellIds.length > 0) {
-      await recomputeNcLifecycle(connection, cellIds)
-    }
-  }
-}
-
 // --- description / validation ---
 
 async function describe(connection: DuckDBConnection): Promise<Omit<WorkspaceInfo, 'path' | 'name' | 'readOnly' | 'sizeBytes'>> {
@@ -301,107 +176,18 @@ export async function getCurrentInfo(): Promise<WorkspaceInfo | null> {
   return assemble(current)
 }
 
-// --- one-time technology correction (fixed workspace technology, spec §4.4) ---
+// --- upgrade backup ---
 
-/** The technology holding at least 90% of the imported KPI rows, or null
- *  when there are none or no technology reaches 90%. */
-export async function inferWorkspaceTechnology(conn: DuckDBConnection): Promise<Technology | null> {
-  const rows = (await conn.runAndReadAll(
-    `SELECT k.technology AS technology, count(*) AS n
-     FROM fact_extra_metrics e JOIN kpi_defs k ON k.kpi_id = e.kpi_id
-     GROUP BY k.technology ORDER BY n DESC`
-  )).getRowObjects()
-  const total = rows.reduce((a, r) => a + Number(r.n), 0)
-  if (total === 0) return null
-  const top = rows[0]
-  return Number(top.n) / total >= 0.9 ? (String(top.technology) as Technology) : null
-}
-
-/** Before this change the 2G/3G/4G buttons rewrote a workspace's technology,
- *  so an older workspace may hold one technology's data under another's
- *  label. Checked once per workspace (marker `tech_checked`); returns true
- *  when the technology was changed, so the caller recomputes. */
-async function correctTechnologyOnce(conn: DuckDBConnection): Promise<boolean> {
-  const checked = (await conn.runAndReadAll(
-    `SELECT value FROM workspace_meta WHERE key = 'tech_checked'`
-  )).getRowObjects()[0]?.value
-  if (checked != null) return false
-  const stored = (await conn.runAndReadAll(
-    `SELECT value FROM workspace_meta WHERE key = 'technology'`
-  )).getRowObjects()[0]?.value
-  const inferred = await inferWorkspaceTechnology(conn)
-  const change = inferred != null && inferred !== String(stored ?? '4G')
-  await conn.run('BEGIN TRANSACTION')
-  try {
-    if (change) {
-      console.log(`[techCheck] workspace technology ${String(stored ?? '4G')} -> ${inferred} (from its KPI rows)`)
-      await conn.run(
-        `INSERT INTO workspace_meta (key, value) VALUES ('technology', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-        [inferred]
-      )
-      // the caller recomputes now; dropping the relabel marker makes an
-      // interrupted recompute run again on the next open
-      await conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
-    }
-    await conn.run(
-      `INSERT INTO workspace_meta (key, value) VALUES ('tech_checked', ?)
-       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      [new Date().toISOString()]
-    )
-    await conn.run('COMMIT')
-  } catch (e) {
-    await conn.run('ROLLBACK').catch(() => {})
-    throw e
-  }
-  return change
-}
-
-/** Before imports resolved KPI keys within the workspace's technology, a
- *  column mapped to a key defined under several technologies (connected_users,
- *  data_volume) was stored once per technology. Once per workspace (marker
- *  `extra_tech_cleaned`), drop each other-technology row whose key exists in
- *  the workspace's technology and whose twin row (same cell, day and key)
- *  holds the workspace's copy. Returns true when rows were deleted, so the
- *  caller recomputes. */
-async function cleanExtraMetricsTechOnce(conn: DuckDBConnection): Promise<boolean> {
-  const cleaned = (await conn.runAndReadAll(
-    `SELECT value FROM workspace_meta WHERE key = 'extra_tech_cleaned'`
-  )).getRowObjects()[0]?.value
-  if (cleaned != null) return false
-  const countRows = async (): Promise<number> =>
-    Number((await conn.runAndReadAll(`SELECT count(*) AS n FROM fact_extra_metrics`)).getRowObjects()[0].n)
-  await conn.run('BEGIN TRANSACTION')
-  try {
-    const before = await countRows()
-    await conn.run(
-      `DELETE FROM fact_extra_metrics AS e
-       WHERE EXISTS (
-         SELECT 1
-         FROM kpi_defs k
-         JOIN kpi_defs w ON w.kpi_key = k.kpi_key AND w.technology = ${WORKSPACE_TECH_SQL}
-         JOIN fact_extra_metrics t ON t.kpi_id = w.kpi_id AND t.cell_id = e.cell_id AND t.date_id = e.date_id
-         WHERE k.kpi_id = e.kpi_id AND k.technology <> ${WORKSPACE_TECH_SQL}
-       )`
-    )
-    const deleted = before - (await countRows())
-    if (deleted > 0) {
-      console.log(`[extraTech] dropped ${deleted} other-technology KPI row(s)`)
-      // the caller recomputes now; dropping the relabel marker makes an
-      // interrupted recompute run again on the next open
-      await conn.run(`DELETE FROM workspace_meta WHERE key = 'nc_periods'`)
-    }
-    await conn.run(
-      `INSERT INTO workspace_meta (key, value) VALUES ('extra_tech_cleaned', ?)
-       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      [new Date().toISOString()]
-    )
-    await conn.run('COMMIT')
-    return deleted > 0
-  } catch (e) {
-    await conn.run('ROLLBACK').catch(() => {})
-    throw e
-  }
+/** backups/<name>-before-v<LATEST>-<YYYYMMDD-HHmmss>.qosdb, taken from the
+ *  open database before the first pending migration. */
+async function backupBeforeUpgrade(conn: DuckDBConnection, path: string): Promise<string> {
+  const d = new Date()
+  const p2 = (n: number): string => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
+  mkdirSync(backupsDir(), { recursive: true })
+  const dest = join(backupsDir(), `${nameFromPath(path)}-before-v${LATEST}-${stamp}.qosdb`)
+  await backupOpenDatabase(conn, dest)
+  return dest
 }
 
 // --- lifecycle ---
@@ -440,8 +226,7 @@ async function createWorkspaceNow(dir: string, name: string, technology?: string
       const esc = safe.replace(/'/g, "''")
       await connection.run(
         `INSERT INTO workspace_meta (key, value) VALUES ` +
-        `('schema_version', '1.0.0'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}'), ` +
-        `('nc_periods', '${NC_PERIODS_MARKER}'), ('tech_checked', '${now}'), ('extra_tech_cleaned', '${now}')`
+        `('schema_version', '${LATEST}'), ('created_at', '${now}'), ('name', '${esc}'), ('technology', '${tech}')`
       )
       await seedKpiDefs(connection, '2G')
       await seedKpiDefs(connection, '3G')
@@ -510,60 +295,23 @@ async function openWorkspaceNow(
     const connection = await instance.connect()
     try {
       await configureDuckDbSession(connection)
+      const version = await readSchemaVersion(connection)
       if (!readOnly) {
-        await ensureUpgradeSchema(connection)
-        await seedKpiDefs(connection, '2G')
-        await seedKpiDefs(connection, '3G')
-        await seedKpiDefs(connection, '4G')
-        await migrateLegacyTargets(connection)
-
-        // Relabel once for workspaces built before this branch's lifecycle
-        // rules (fix wave 2026-09-30): imports only recompute touched cells,
-        // so a workspace opened but never re-imported would otherwise show
-        // old-semantics labels forever. Read-only opens never recompute.
-        const markerR = await connection.runAndReadAll(
-          `SELECT value FROM workspace_meta WHERE key = 'nc_periods'`
-        )
-        const markerVal = markerR.getRowObjects()[0]?.value
-        const techCorrected = await correctTechnologyOnce(connection)
-        // after the correction, so rows are judged against the final technology
-        const extraCleaned = await cleanExtraMetricsTechOnce(connection)
-        if (techCorrected || extraCleaned || markerVal == null || String(markerVal) !== NC_PERIODS_MARKER) {
-          await recomputeAllAggregates(connection)
-          await refreshAllIntelligence(connection)
-          await connection.run(
-            `INSERT INTO workspace_meta (key, value) VALUES ('nc_periods', '${NC_PERIODS_MARKER}')
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value`
-          )
-        }
-
-        await ensureDerivedKpiSchema(connection)
-        // legacy workspaces may hold duplicate dimension names (pre-import
-        // dedupe fix); merge them so lookups/joins stay unambiguous — this is
-        // best-effort and never blocks opening the workspace
-        try {
-          const repaired = await repairDuplicateDimensions(connection)
-          if (repaired.mergedCells > 0 || repaired.mergedSites > 0 || repaired.mergedDistricts > 0) {
-            console.log(
-              '[dimRepair] merged ' + repaired.mergedDistricts + ' district(s), ' +
-              repaired.mergedSites + ' site(s), ' + repaired.mergedCells + ' cell(s)'
-            )
+        // versioned migrations: the steps this workspace has not had, in
+        // order, once, after a backup (spec 2026-10-10-versioned-migrations)
+        await runMigrations(connection, MIGRATIONS, version, {
+          backup: () => backupBeforeUpgrade(connection, path),
+          recompute: async (c) => {
+            await recomputeAllAggregates(c)
+            await refreshAllIntelligence(c)
           }
-        } catch (e) {
-          console.error('[dimRepair] failed (workspace still opens): ' + (e instanceof Error ? e.message : String(e)))
-        }
+        })
+        // the built-in KPI catalogue stays current on every open
+        for (const t of ['2G', '3G', '4G'] as Technology[]) await seedKpiDefs(connection, t)
       } else {
-        // A pre-feature workspace opened read-only never gets period_coverage
-        // backfilled (ensureUpgradeSchema runs on writable opens only, above)
-        // — every weekly/monthly screen would otherwise throw a catalog error
-        // (fix wave 2026-10-01 final review, item 3). DuckDB allows a TEMP
-        // VIEW on a READ_ONLY database, so stand one in when the table is
-        // missing.
-        try {
-          await connection.run(`SELECT 1 FROM period_coverage LIMIT 0`)
-        } catch {
-          await connection.run(periodCoverageViewSql())
-        }
+        // read-only opens never write: stand-ins (temp views) for the steps an
+        // older workspace is missing
+        await runReadOnlyShims(connection, MIGRATIONS, version)
       }
       const info = await describe(connection)
       const ws: OpenWorkspace = {

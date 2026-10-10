@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { openRealWorkspace, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { fillDays, rebuild, setTarget, count, forecastWorkspace } from '../helpers/forecastData'
 import {
   planForecastJob, runForecastJob, markForecastDirty, storedForecastKpis, readStoredForecasts
@@ -107,6 +107,7 @@ describe('stored per-cell forecasts (spec §6.1)', () => {
     await ws.conn.run(`CREATE TABLE cell_forecasts (cell_id BIGINT, metric VARCHAR, horizon VARCHAR, as_of DATE,
       method VARCHAR, forecast JSON, lower_bound DOUBLE, upper_bound DOUBLE, mae DOUBLE, rmse DOUBLE,
       quality VARCHAR, risk VARCHAR, PRIMARY KEY (cell_id, metric, horizon, as_of))`)
+    await setSchemaVersion(ws.conn, 0) // the old-shape table predates migration 1
     await mgr.closeWorkspace()
     await mgr.openWorkspace(path)
     const cols = (await mgr.getCurrent()!.connection.runAndReadAll(

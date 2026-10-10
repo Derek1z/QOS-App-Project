@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 
 /** Final review finding 2: if the recompute after a technology correction
  *  fails, the next open must still recompute (the marker may not claim a
@@ -52,12 +52,13 @@ describe('an interrupted technology correction', () => {
     await recomputeAllAggregates(ws.conn)
     await refreshAllIntelligence(ws.conn)
     await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'tech_checked'`)
+    await setSchemaVersion(ws.conn, 5)
     expect(await ncDays(ws)).toBe(20)
 
     const path = join(ws.dir, 'test.qosdb')
     await manager.closeWorkspace()
     failRecompute = true
-    await expect(manager.openWorkspace(path)).rejects.toThrow(/simulated/)
+    await expect(manager.openWorkspace(path)).rejects.toThrow(/step 6 \(Technology correction\)/)
     failRecompute = false
 
     const info = await manager.openWorkspace(path)

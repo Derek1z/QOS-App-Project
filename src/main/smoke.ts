@@ -1322,6 +1322,9 @@ export async function runSmokeTest(dir: string): Promise<void> {
     await conn.run(`INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value) VALUES (20260705, 30, ${kpiId}, 5.0), (20260705, 31, ${kpiId}, 6.0)`)
     await conn.run(`INSERT INTO cell_anomalies (cell_id, date_id, metric, score, detail) VALUES (30, 20260705, 'prb', 0.5, '{}'), (31, 20260705, 'prb', 0.9, '{}')`)
     await conn.run(`INSERT INTO entity_action_status (entity_type, entity_id, status, owner) VALUES ('cell', 30, 'watch', 'x'), ('cell', 31, 'watch', 'y'), ('site', 21, 'watch', 'z')`)
+    // duplicates come from old app versions: mark the workspace as older than
+    // migration 4 (Merge duplicate dimensions)
+    await conn.run(`UPDATE workspace_meta SET value = '3' WHERE key = 'schema_version'`)
   }
   await ws.closeWorkspace()
   await ws.openWorkspace(join(repairWsPath, 'Repair Test.qosdb')) // the repair hook runs on open

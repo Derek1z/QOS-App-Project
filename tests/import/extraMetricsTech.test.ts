@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { openRealWorkspace, insertCells, type RealWorkspace } from '../helpers/realWorkspace'
+import { openRealWorkspace, insertCells, setSchemaVersion, type RealWorkspace } from '../helpers/realWorkspace'
 import { runImportCore } from '../../src/main/import/importCore'
 import { autoMap, makeFingerprint } from '../../src/main/import/mapping'
 
@@ -74,15 +74,16 @@ describe('extra KPI columns are stored under the workspace technology', () => {
     )
     // a workspace from before this change: no marker
     await ws.conn.run(`DELETE FROM workspace_meta WHERE key = 'extra_tech_cleaned'`)
+    await setSchemaVersion(ws.conn, 6)
     expect(await techKeys(ws)).toEqual([
       '2G:connected_users', '3G:connected_users', '4G:call_setup_success_4g', '4G:connected_users'
     ])
 
     await reopen(ws)
     expect(await techKeys(ws)).toEqual(['2G:connected_users', '4G:call_setup_success_4g'])
-    const marker = (await ws.conn.runAndReadAll(
-      `SELECT value FROM workspace_meta WHERE key = 'extra_tech_cleaned'`
+    const version = (await ws.conn.runAndReadAll(
+      `SELECT value FROM workspace_meta WHERE key = 'schema_version'`
     )).getRowObjects()[0]?.value
-    expect(marker).not.toBeUndefined()
+    expect(String(version)).toBe('7')
   })
 })

@@ -708,20 +708,15 @@ export async function getCellDetail(cellId: number, grain: Grain = 'weekly', _te
      LIMIT 1`
   )
   const life = lifeR.getRowObjects()[0]
-  const isDaily = g === 'daily'
-  const prbCol = isDaily ? 'w.prb_utilization' : 'w.prb_avg'
-  const tpCol = isDaily ? 'w.dl_throughput_kbps' : 'w.dl_throughput_kbps_avg'
-  const usersCol = isDaily ? 'w.connected_users' : 'w.connected_users_sum'
-  const volCol = isDaily ? 'w.data_volume_mb' : 'w.data_volume_mb_sum'
-  const availCol = isDaily ? 'w.availability_pct' : 'w.availability_pct_avg'
 
+  // agg_cell_daily carries the weekly/monthly column names
   const wkR = await conn.runAndReadAll(
     `SELECT CAST(${dateCol} AS VARCHAR) AS week_start,
-       ${prbCol} AS prb_avg,
-       ${tpCol} AS dl_throughput_kbps_avg,
-       ${usersCol} AS connected_users_sum,
-       ${volCol} AS data_volume_mb_sum,
-       ${availCol} AS availability_pct_avg,
+       w.prb_avg,
+       w.dl_throughput_kbps_avg,
+       w.connected_users_sum,
+       w.data_volume_mb_sum,
+       w.availability_pct_avg,
        CAST(COALESCE(w.breach_days, 0) AS DOUBLE) AS breach_days,
        COALESCE(l.is_nc, false) AS is_nc,
        COALESCE(l.lifecycle, 'Healthy') AS lifecycle,

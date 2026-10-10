@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { AGG_CELL_DAILY_SELECT, CELL_FORECASTS_SQL, FORECAST_DIRTY_SQL } from './schema'
 import { migrateLegacyTargets } from './migrateTargets'
@@ -54,6 +55,29 @@ export async function readSchemaVersion(conn: DuckDBConnection): Promise<number>
   return parseSchemaVersion(await getMeta(conn, 'schema_version'))
 }
 
+/** The highest version this file has reached or started: an upgrade a newer
+ *  app left unfinished (upgrading_to / recompute_pending above its recorded
+ *  schema_version) makes the file "newer" too (final review 1). */
+export async function readNewestVersion(conn: DuckDBConnection): Promise<number> {
+  const v = await readSchemaVersion(conn)
+  const to = parseSchemaVersion(await getMeta(conn, 'upgrading_to'))
+  const pending = parseSchemaVersion(await getMeta(conn, 'recompute_pending'))
+  return Math.max(v, to, pending)
+}
+
+/** One transaction: the last upgrade writes land together (final review 2). */
+async function finish(conn: DuckDBConnection, version: number): Promise<void> {
+  await conn.run('BEGIN TRANSACTION')
+  try {
+    await conn.run(`DELETE FROM workspace_meta WHERE key IN ('recompute_pending', 'upgrading_to', 'upgrade_backup')`)
+    await setMeta(conn, 'schema_version', String(version))
+    await conn.run('COMMIT')
+  } catch (e) {
+    await conn.run('ROLLBACK').catch(() => undefined)
+    throw e
+  }
+}
+
 const failure = (m: { version: number; name: string } | undefined, backupPath: string | null, cause: unknown): Error => {
   const where = m ? `step ${m.version} (${m.name})` : 'the final recompute'
   const copy = backupPath ?? 'the backups folder'
@@ -78,13 +102,22 @@ export async function runMigrations(
 
   let backupPath: string | null = null
   if (pending.length > 0) {
-    try {
-      backupPath = await opts.backup()
-    } catch (e) {
-      throw new Error(
-        `Upgrading this workspace was not started: the backup failed (${e instanceof Error ? e.message : String(e)}). Nothing was changed.`
-      )
+    // a retried upgrade keeps the copy taken before its first attempt
+    // (final review 4): no new full-size backup of a half-upgraded file
+    const recorded = await getMeta(conn, 'upgrade_backup')
+    if (recorded && existsSync(recorded)) {
+      backupPath = recorded
+    } else {
+      try {
+        backupPath = await opts.backup()
+      } catch (e) {
+        throw new Error(
+          `Upgrading this workspace was not started: the backup failed (${e instanceof Error ? e.message : String(e)}). Nothing was changed.`
+        )
+      }
+      await setMeta(conn, 'upgrade_backup', backupPath)
     }
+    await setMeta(conn, 'upgrading_to', String(pending[pending.length - 1].version))
   }
 
   let asker = pendingFlag != null ? list.find((m) => m.version === Number(pendingFlag)) : undefined
@@ -106,15 +139,17 @@ export async function runMigrations(
     if (!recomputeOutstanding) await setMeta(conn, 'schema_version', String(m.version))
   }
 
-  if (!recomputeOutstanding) return { ran, backupPath, recomputed: false }
+  const last = Math.max(pending.at(-1)?.version ?? from, from)
+  if (!recomputeOutstanding) {
+    await finish(conn, last)
+    return { ran, backupPath, recomputed: false }
+  }
   try {
     await opts.recompute(conn)
   } catch (e) {
     throw failure(asker, backupPath, e)
   }
-  await conn.run(`DELETE FROM workspace_meta WHERE key = 'recompute_pending'`)
-  const last = pending.at(-1)?.version ?? from
-  await setMeta(conn, 'schema_version', String(Math.max(last, from)))
+  await finish(conn, last)
   return { ran, backupPath, recomputed: true }
 }
 
@@ -160,6 +195,21 @@ async function schemaCatchUp(conn: DuckDBConnection): Promise<void> {
      updated_at TIMESTAMP DEFAULT now(),
      UNIQUE (technology, kpi_key)
    )`)
+  // kpi_defs columns added after the first release (DuckDB cannot add NOT
+  // NULL through ALTER; the defaults keep existing rows valid)
+  for (const col of [
+    `better_direction VARCHAR DEFAULT 'lower_is_better'`,
+    `category VARCHAR DEFAULT 'Congestion'`,
+    `warning_threshold DOUBLE`,
+    `critical_threshold DOUBLE`,
+    `is_core BOOLEAN DEFAULT false`,
+    `supports_congestion BOOLEAN DEFAULT false`,
+    `supports_persistent_nc BOOLEAN DEFAULT true`,
+    `show_in_executive BOOLEAN DEFAULT true`,
+    `decimal_precision INTEGER DEFAULT 1`
+  ]) {
+    await conn.run(`ALTER TABLE kpi_defs ADD COLUMN IF NOT EXISTS ${col}`)
+  }
   await conn.run(`CREATE TABLE IF NOT EXISTS fact_extra_metrics (
      date_id INTEGER NOT NULL,
      cell_id BIGINT NOT NULL,
@@ -175,6 +225,7 @@ async function schemaCatchUp(conn: DuckDBConnection): Promise<void> {
      observed_days INTEGER,
      PRIMARY KEY (week_start, cell_id, kpi_id)
    )`)
+  await conn.run(`CREATE SEQUENCE IF NOT EXISTS seq_raw_archive START 1`)
   await conn.run(
     `CREATE TABLE IF NOT EXISTS raw_archive (
        archive_id BIGINT DEFAULT nextval('seq_raw_archive') PRIMARY KEY,
@@ -183,7 +234,6 @@ async function schemaCatchUp(conn: DuckDBConnection): Promise<void> {
        imported_at TIMESTAMP DEFAULT now(), retention_until TIMESTAMP
      )`
   )
-  await conn.run(`CREATE SEQUENCE IF NOT EXISTS seq_raw_archive START 1`)
   await conn.run(`ALTER TABLE workspace_snapshots ADD COLUMN IF NOT EXISTS path VARCHAR`)
   for (const k of NC_PERIOD_KEYS) {
     const fld = NC_PERIOD_FIELDS[k]
@@ -235,6 +285,42 @@ async function schemaCatchUp(conn: DuckDBConnection): Promise<void> {
     FROM fact_extra_metrics f
     JOIN dim_date d USING (date_id)
   `)
+  // objects added after the first release that the old upgrade never created
+  // (found by the v0 parity test, 2026-10-10); literal DDL, frozen with v1
+  await conn.run(`CREATE TABLE IF NOT EXISTS agg_cell_kpi_monthly (
+     month_start DATE NOT NULL,
+     cell_id BIGINT NOT NULL,
+     kpi_id BIGINT NOT NULL,
+     avg_value DOUBLE, sum_value DOUBLE, max_value DOUBLE, min_value DOUBLE,
+     observed_days INTEGER,
+     PRIMARY KEY (month_start, cell_id, kpi_id)
+   )`)
+  await conn.run(`CREATE INDEX IF NOT EXISTS idx_fact_extra_cell_date ON fact_extra_metrics (cell_id, date_id)`)
+  await conn.run(`CREATE VIEW IF NOT EXISTS view_cell_kpi_unified_daily AS
+   SELECT
+     d.date AS period_start,
+     c.cell_id,
+     c.name AS cell_name,
+     s.name AS site,
+     dt.name AS district,
+     rg.name AS region,
+     COALESCE(l.is_nc, false) AS is_nc,
+     COALESCE(l.lifecycle, 'Healthy') AS lifecycle,
+     COALESCE(l.severity, 'Normal') AS severity,
+     COALESCE(l.trend, 'Stable') AS trend,
+     f.prb_utilization AS prb_avg,
+     f.dl_throughput_kbps AS dl_throughput_kbps_avg,
+     f.connected_users AS connected_users_sum,
+     f.data_volume_mb AS data_volume_mb_sum,
+     f.availability_pct AS availability_pct_avg,
+     CAST(COALESCE(l.breach_days, 0) AS DOUBLE) AS breach_days
+   FROM fact_cell_daily f
+   JOIN dim_date d ON d.date_id = f.date_id
+   JOIN dim_cell c ON c.cell_id = f.cell_id
+   LEFT JOIN dim_site s ON s.site_id = c.site_id
+   LEFT JOIN dim_district dt ON dt.district_id = c.district_id
+   LEFT JOIN dim_region rg ON rg.region_id = c.region_id
+   LEFT JOIN cell_nc_lifecycle l ON l.cell_id = f.cell_id AND l.period_start = d.date AND l.grain = 'daily'`)
 }
 
 /** v1's read-only stand-in: weekly/monthly screens need period_coverage. */
@@ -305,6 +391,17 @@ export async function inferWorkspaceTechnology(conn: DuckDBConnection): Promise<
   return Number(top.n) / total >= 0.9 ? (String(top.technology) as Technology) : null
 }
 
+async function inTransaction(conn: DuckDBConnection, fn: () => Promise<void>): Promise<void> {
+  await conn.run('BEGIN TRANSACTION')
+  try {
+    await fn()
+    await conn.run('COMMIT')
+  } catch (e) {
+    await conn.run('ROLLBACK').catch(() => undefined)
+    throw e
+  }
+}
+
 async function hasMarker(conn: DuckDBConnection, key: string): Promise<boolean> {
   return (await conn.runAndReadAll(`SELECT 1 FROM workspace_meta WHERE key = ?`, [key])).getRowObjects().length > 0
 }
@@ -312,7 +409,7 @@ async function hasMarker(conn: DuckDBConnection, key: string): Promise<boolean> 
 /** v6: before workspaces had a fixed technology, the 2G/3G/4G buttons rewrote
  *  it, so an older workspace may hold one technology's data under another's
  *  label. Takes the technology of ≥ 90% of its KPI rows. */
-async function correctTechnology(conn: DuckDBConnection): Promise<boolean> {
+export async function correctTechnology(conn: DuckDBConnection): Promise<boolean> {
   if (await hasMarker(conn, 'tech_checked')) return false
   const stored = String((await conn.runAndReadAll(
     `SELECT value FROM workspace_meta WHERE key = 'technology'`
@@ -320,11 +417,12 @@ async function correctTechnology(conn: DuckDBConnection): Promise<boolean> {
   const inferred = await inferWorkspaceTechnology(conn)
   if (inferred == null || inferred === stored) return false
   console.log(`[techCheck] workspace technology ${stored} -> ${inferred} (from its KPI rows)`)
-  await conn.run(
-    `INSERT INTO workspace_meta (key, value) VALUES ('technology', ?)
-     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-    [inferred]
-  )
+  // the change and the pending recompute land together: a crash in between
+  // must not leave aggregates computed under the old technology (review 2)
+  await inTransaction(conn, async () => {
+    await setMeta(conn, 'technology', inferred)
+    await setMeta(conn, 'recompute_pending', '6')
+  })
   return true
 }
 
@@ -332,22 +430,27 @@ async function correctTechnology(conn: DuckDBConnection): Promise<boolean> {
  *  key defined under several technologies (connected_users, data_volume) was
  *  stored once per technology. Drops each other-technology row whose twin
  *  (same cell, day and key) holds the workspace technology's copy. */
-async function cleanExtraMetricsTech(conn: DuckDBConnection): Promise<boolean> {
+export async function cleanExtraMetricsTech(conn: DuckDBConnection): Promise<boolean> {
   if (await hasMarker(conn, 'extra_tech_cleaned')) return false
   const countRows = async (): Promise<number> =>
     Number((await conn.runAndReadAll(`SELECT count(*) AS n FROM fact_extra_metrics`)).getRowObjects()[0].n)
-  const before = await countRows()
-  await conn.run(
-    `DELETE FROM fact_extra_metrics AS e
-     WHERE EXISTS (
-       SELECT 1
-       FROM kpi_defs k
-       JOIN kpi_defs w ON w.kpi_key = k.kpi_key AND w.technology = ${WORKSPACE_TECH_SQL}
-       JOIN fact_extra_metrics t ON t.kpi_id = w.kpi_id AND t.cell_id = e.cell_id AND t.date_id = e.date_id
-       WHERE k.kpi_id = e.kpi_id AND k.technology <> ${WORKSPACE_TECH_SQL}
-     )`
-  )
-  const deleted = before - (await countRows())
+  let deleted = 0
+  await inTransaction(conn, async () => {
+    const before = await countRows()
+    await conn.run(
+      `DELETE FROM fact_extra_metrics AS e
+       WHERE EXISTS (
+         SELECT 1
+         FROM kpi_defs k
+         JOIN kpi_defs w ON w.kpi_key = k.kpi_key AND w.technology = ${WORKSPACE_TECH_SQL}
+         JOIN fact_extra_metrics t ON t.kpi_id = w.kpi_id AND t.cell_id = e.cell_id AND t.date_id = e.date_id
+         WHERE k.kpi_id = e.kpi_id AND k.technology <> ${WORKSPACE_TECH_SQL}
+       )`
+    )
+    deleted = before - (await countRows())
+    // with the deletion, in one transaction (review 2)
+    if (deleted > 0) await setMeta(conn, 'recompute_pending', '7')
+  })
   if (deleted > 0) console.log(`[extraTech] dropped ${deleted} other-technology KPI row(s)`)
   return deleted > 0
 }

@@ -11,7 +11,7 @@ import { recomputeAllAggregates } from '../import/aggregates'
 import { refreshAllIntelligence } from '../analytics/engine'
 import { backupsDir } from '../paths'
 import { backupOpenDatabase } from './backup'
-import { LATEST, MIGRATIONS, readSchemaVersion, runMigrations, runReadOnlyShims } from './migrations'
+import { LATEST, MIGRATIONS, readNewestVersion, readSchemaVersion, runMigrations, runReadOnlyShims } from './migrations'
 import type { WorkspaceInfo, Technology } from '../../../shared/api'
 
 export { inferWorkspaceTechnology } from './migrations'
@@ -179,16 +179,36 @@ export async function getCurrentInfo(): Promise<WorkspaceInfo | null> {
   return assemble(current)
 }
 
-// --- upgrade backup ---
+// --- version probe and upgrade backup ---
 
-/** backups/<name>-before-v<LATEST>-<YYYYMMDD-HHmmss>.qosdb, taken from the
+/** The newest version the file has reached or started, read through a short
+ *  READ_ONLY instance so nothing (not even a leftover WAL) is written. */
+async function probeNewestVersion(path: string): Promise<number> {
+  const probe = await DuckDBInstance.create(path, { access_mode: 'READ_ONLY' })
+  try {
+    const c = await probe.connect()
+    try {
+      return await readNewestVersion(c)
+    } catch {
+      return 0 // no workspace_meta: describe() rejects it after the real open
+    } finally {
+      c.closeSync()
+    }
+  } finally {
+    probe.closeSync()
+  }
+}
+
+/** backups/pre-upgrade-<name>-v<LATEST>-<YYYYMMDD-HHmmss>.qosdb, taken from the
  *  open database before the first pending migration. */
 async function backupBeforeUpgrade(conn: DuckDBConnection, path: string): Promise<string> {
   const d = new Date()
   const p2 = (n: number): string => String(n).padStart(2, '0')
   const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
   mkdirSync(backupsDir(), { recursive: true })
-  const dest = join(backupsDir(), `${nameFromPath(path)}-before-v${LATEST}-${stamp}.qosdb`)
+  // a prefix of its own, like pre-restore-: import rotation keeps the 7 newest
+  // '<name>-*' files and must never count (or delete around) these (review 5)
+  const dest = join(backupsDir(), `pre-upgrade-${nameFromPath(path)}-v${LATEST}-${stamp}.qosdb`)
   await backupOpenDatabase(conn, dest)
   return dest
 }
@@ -285,7 +305,11 @@ async function openWorkspaceNow(
   }
   if (current) await closeWorkspaceNow()
 
-  const readOnly = !!opts.readOnly
+  // read the versions through a read-only handle first: a writable open would
+  // replay a leftover .wal into a file a newer app wrote (final review 3)
+  const newer = (await probeNewestVersion(path)) > LATEST
+  const readOnly = !!opts.readOnly || newer
+  const readOnlyReason = newer ? ('newerVersion' as const) : undefined
   const lockHeld = readOnly ? false : acquireLock(path)
   if (!readOnly && !lockHeld) {
     throw new Error('This workspace is open in another instance. Open it read-only instead.')
@@ -299,14 +323,6 @@ async function openWorkspaceNow(
     try {
       await configureDuckDbSession(connection)
       const version = await readSchemaVersion(connection)
-      if (!readOnly && version > LATEST) {
-        // saved by a newer app: never write to it — reopen read-only
-        connection.closeSync()
-        instance.closeSync()
-        if (lockHeld) releaseLock(path)
-        return await openWorkspaceNow(path, { readOnly: true })
-      }
-      const readOnlyReason = version > LATEST ? ('newerVersion' as const) : undefined
       if (!readOnly) {
         // versioned migrations: the steps this workspace has not had, in
         // order, once, after a backup (spec 2026-10-10-versioned-migrations)
@@ -319,7 +335,7 @@ async function openWorkspaceNow(
         })
         // the built-in KPI catalogue stays current on every open
         for (const t of ['2G', '3G', '4G'] as Technology[]) await seedKpiDefs(connection, t)
-      } else {
+      } else if (!newer) {
         // read-only opens never write: stand-ins (temp views) for the steps an
         // older workspace is missing
         await runReadOnlyShims(connection, MIGRATIONS, version)

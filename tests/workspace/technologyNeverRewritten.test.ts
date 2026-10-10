@@ -42,6 +42,12 @@ describe("a workspace's technology is never rewritten", () => {
         const fn = [...text.slice(0, m.index).matchAll(/function\s+(\w+)/g)].pop()?.[1] ?? '?'
         writers.push(`${file.slice(root.length + 1)}:${fn}`)
       }
+      // writes through a meta helper (e.g. setMeta(conn, 'technology', …))
+      for (const m of text.matchAll(/\w*[Mm]eta\(\s*\w+\s*,\s*'technology'/g)) {
+        if (/get[A-Z]?\w*[Mm]eta/.test(m[0])) continue
+        const fn = [...text.slice(0, m.index).matchAll(/function\s+(\w+)/g)].pop()?.[1] ?? '?'
+        writers.push(`${file.slice(root.length + 1)}:${fn}`)
+      }
     }
     expect(writers.sort()).toEqual([
       'workspace/manager.ts:createWorkspaceNow',

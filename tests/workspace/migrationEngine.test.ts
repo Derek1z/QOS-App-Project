@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import os from 'node:os'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { parseSchemaVersion, readSchemaVersion, runMigrations, runReadOnlyShims, type Migration } from '../../src/main/workspace/migrations'
 
@@ -138,6 +141,49 @@ describe('runMigrations', () => {
     await runMigrations(conn, steps(2, []), 2, opts(calls))
     expect(calls).toEqual({ backup: 0, recompute: 1 })
     expect(await meta('recompute_pending')).toBeNull()
+  })
+})
+
+describe('final review fixes', () => {
+  it('marks the version being upgraded to while an upgrade is unfinished (review 1)', async () => {
+    let during: string | null = 'unset'
+    const list = steps(3, [], [], { 2: { up: async () => { during = await meta('upgrading_to'); return false } } })
+    const calls = { backup: 0, recompute: 0 }
+    await runMigrations(conn, list, 0, opts(calls))
+    expect(during).toBe('3')
+    expect(await meta('upgrading_to')).toBeNull()
+
+    const failing = steps(3, [], [], { 3: { up: async () => { throw new Error('boom') } } })
+    await conn.run(`UPDATE workspace_meta SET value = '0' WHERE key = 'schema_version'`)
+    await expect(runMigrations(conn, failing, 0, opts(calls))).rejects.toThrow(/step 3/)
+    expect(await meta('upgrading_to')).toBe('3')
+  })
+
+  it('a retried upgrade reuses the first backup instead of taking another (review 4)', async () => {
+    const dir = mkdtempSync(join(os.tmpdir(), 'qos-mig-'))
+    const first = join(dir, 'first.qosdb')
+    let n = 0
+    const backup = async (): Promise<string> => {
+      n++
+      writeFileSync(first, 'x')
+      return first
+    }
+    const failing = steps(2, [], [], { 2: { up: async () => { throw new Error('boom') } } })
+    const recompute = async (): Promise<void> => {}
+    await expect(runMigrations(conn, failing, 0, { backup, recompute })).rejects.toThrow(first)
+    await expect(runMigrations(conn, failing, 1, { backup, recompute })).rejects.toThrow(first)
+    expect(n).toBe(1)
+    const ok = await runMigrations(conn, steps(2, []), 1, { backup, recompute })
+    expect(ok.backupPath).toBe(first)
+    expect(n).toBe(1)
+    expect(await meta('upgrade_backup')).toBeNull()
+  })
+
+  it('takes a new backup when the recorded one is gone', async () => {
+    await conn.run(`INSERT INTO workspace_meta VALUES ('upgrade_backup', '/nowhere/gone.qosdb')`)
+    let n = 0
+    await runMigrations(conn, steps(1, []), 0, { backup: async () => { n++; return '/b/new.qosdb' }, recompute: async () => {} })
+    expect(n).toBe(1)
   })
 })
 

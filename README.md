@@ -125,7 +125,7 @@ Every number on the Forecasting screen is an imported value, a forecast from imp
 ## Workspaces and data safety
 
 - A workspace is one `.qosdb` DuckDB file of one technology. Opening it takes a write lock; a second copy of the app can open it read-only.
-- Each workspace records its schema version. Opening an older workspace upgrades it once, step by step, after saving a copy to `backups/<name>-before-v<N>-<date>.qosdb`; a failed step names itself and the backup. A workspace saved by a newer version of the app (copied from a colleague) opens read-only with a notice to update the app, and is never written.
+- Each workspace records its schema version. Opening an older workspace upgrades it once, step by step, after saving a copy to `backups/pre-upgrade-<name>-v<N>-<date>.qosdb` (a retried upgrade reuses that copy); a failed step names itself and the backup. A workspace saved by a newer version of the app (copied from a colleague) opens read-only with a notice to update the app, and is never written.
 - Each import runs in a separate process on its own connection, backs the workspace up first, and rolls back on error.
 - The original import files are kept gzip-compressed in `<workspace>.qosdb.raw/` for 90 days.
 - Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.

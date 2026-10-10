@@ -104,6 +104,15 @@ Stated at the top of `migrations.ts`:
 - Never edit or reorder a migration that has shipped.
 The parity test (§6 item 7) fails when only one side changes.
 
+### 4.8 As built (2026-10-10, after the final review)
+- `up()` returns `true` when it changed data that needs the recompute (no static `recompute` flag). Steps v2 and v5–v7 read their legacy marker as "already done" and never write markers.
+- `recompute_pending` (meta) is written when a step asks for the recompute — by v6/v7 in the same transaction as their change — and cleared with the final version in one transaction; an interrupted recompute re-runs on the next open even when no step reports a change.
+- `upgrading_to` (meta) marks the target version while an upgrade is unfinished; together with `recompute_pending` it counts toward "newer than this app" (§4.3 item 2), so an upgrade a newer app left unfinished is never written by an older app.
+- The versions are read through a short read-only DuckDB handle before any writable open, so a leftover `.wal` next to a newer file is never replayed into it.
+- `upgrade_backup` (meta) records the pre-upgrade copy; a retried upgrade reuses it while it exists.
+- Backup name: `backups/pre-upgrade-<name>-v<LATEST>-<YYYYMMDD-HHmmss>.qosdb` (the `<name>-before-…` form of §4.3 fell inside the import backup rotation).
+- v1 also creates the post-release objects the old upgrade never did (kpi_defs columns, `agg_cell_kpi_monthly`, `idx_fact_extra_cell_date`, `view_cell_kpi_unified_daily`) and creates `seq_raw_archive` before `raw_archive`. The parity test builds a real version-0 file from the first release's schema (`tests/fixtures/schemaV0.ts`, git f98c3b0) and compares it, upgraded, with a new workspace in both directions (tables, columns with type and default, indexes, constraints; nullability excluded because ALTER cannot add NOT NULL; `ruleset.prb_threshold_pct` allowed as a legacy column).
+
 ## 5. Consumers
 
 | Where | Change |

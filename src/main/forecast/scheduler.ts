@@ -91,13 +91,19 @@ async function loop(factory: () => ForecastRunner): Promise<void> {
       runner.dispose()
       controller = null
       activeRunner = null
-      status.running = false
     }
     if (ctl.signal.aborted) {
+      status.running = false
       emit()
       return
     }
-    await readAsOf()
+    // read the new as-of dates before reporting the job finished, so the
+    // status never says "done" with the old dates (race seen under load)
+    try {
+      await readAsOf()
+    } finally {
+      status.running = false
+    }
     emit()
   } while (rerun)
 }

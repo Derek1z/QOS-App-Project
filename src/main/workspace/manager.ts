@@ -56,6 +56,8 @@ interface OpenWorkspace {
   instance: DuckDBInstance
   connection: DuckDBConnection
   lockHeld: boolean
+  /** set when the file was saved by a newer app (its schema is above LATEST) */
+  readOnlyReason?: 'newerVersion'
 }
 
 let current: OpenWorkspace | null = null
@@ -167,6 +169,7 @@ async function assemble(ws: OpenWorkspace): Promise<WorkspaceInfo> {
     path: ws.path,
     name: ws.name,
     readOnly: ws.readOnly,
+    ...(ws.readOnlyReason ? { readOnlyReason: ws.readOnlyReason } : {}),
     sizeBytes: statSync(ws.path).size
   }
 }
@@ -296,6 +299,14 @@ async function openWorkspaceNow(
     try {
       await configureDuckDbSession(connection)
       const version = await readSchemaVersion(connection)
+      if (!readOnly && version > LATEST) {
+        // saved by a newer app: never write to it — reopen read-only
+        connection.closeSync()
+        instance.closeSync()
+        if (lockHeld) releaseLock(path)
+        return await openWorkspaceNow(path, { readOnly: true })
+      }
+      const readOnlyReason = version > LATEST ? ('newerVersion' as const) : undefined
       if (!readOnly) {
         // versioned migrations: the steps this workspace has not had, in
         // order, once, after a backup (spec 2026-10-10-versioned-migrations)
@@ -315,11 +326,13 @@ async function openWorkspaceNow(
       }
       const info = await describe(connection)
       const ws: OpenWorkspace = {
-        path, name: nameFromPath(path), readOnly, instance, connection, lockHeld
+        path, name: nameFromPath(path), readOnly, instance, connection, lockHeld, readOnlyReason
       }
       current = ws
       await appState.touchRecent(path, ws.name, info.technology)
-      return { ...info, path, name: ws.name, readOnly, sizeBytes: statSync(path).size }
+      return {
+        ...info, path, name: ws.name, readOnly, ...(readOnlyReason ? { readOnlyReason } : {}), sizeBytes: statSync(path).size
+      }
     } catch (e) {
       try {
         connection.closeSync()

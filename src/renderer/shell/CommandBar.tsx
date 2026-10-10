@@ -3,6 +3,9 @@ import { useAppStore, emit, on, type PeriodId, type Grain, type ModuleId } from 
 import type { Rules } from '../../../shared/api'
 import TargetsModal from '../modules/TargetsModal'
 
+/** versioned migrations spec §4.6 */
+const NEWER_VERSION_NOTICE = 'Saved by a newer version of the app — opened read-only. Update the app to edit it.'
+
 const PERIODS: { id: PeriodId; label: string }[] = [
   { id: '7d', label: 'Last 7 days' },
   { id: '4w', label: 'Last 4 weeks' },
@@ -63,8 +66,15 @@ export default function CommandBar(): React.JSX.Element {
       <div className="bar-left">
         <span className="bar-workspace" title={workspace?.path} style={{ fontWeight: 600, fontSize: '0.95rem' }}>
           {workspace ? workspace.name : 'QoS Network Intelligence Workstation v2.0'}
-          {workspace?.readOnly && <span className="badge badge-ro">READ ONLY</span>}
+          {workspace?.readOnly && (
+            <span className="badge badge-ro" title={workspace.readOnlyReason === 'newerVersion' ? NEWER_VERSION_NOTICE : undefined}>
+              READ ONLY
+            </span>
+          )}
         </span>
+        {workspace?.readOnlyReason === 'newerVersion' && (
+          <span className="bar-notice" role="status">{NEWER_VERSION_NOTICE}</span>
+        )}
       </div>
       <div className="bar-right">
         <button

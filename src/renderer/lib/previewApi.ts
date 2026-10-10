@@ -3962,7 +3962,7 @@ function demoWorkspaceInfo(): WorkspaceInfo {
     path: demoWorkspacePath(demoTech),
     name: `${demoWorkspaceName} ${demoTech} (browser demo)`,
     readOnly: false,
-    schemaVersion: '1.0.0',
+    schemaVersion: '7',
     createdAt: new Date().toISOString(),
     sizeBytes: 48_000_000 + demoFacts.length * 200,
     rowCount: BASELINE.rowCount + demoFacts.length,

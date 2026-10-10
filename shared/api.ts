@@ -29,6 +29,8 @@ export interface WorkspaceInfo {
   name: string
   readOnly: boolean
   schemaVersion: string
+  /** why a writable open came back read-only: the file was saved by a newer app */
+  readOnlyReason?: 'newerVersion'
   createdAt: string | null
   sizeBytes: number
   rowCount: number

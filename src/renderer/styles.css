@@ -209,6 +209,13 @@ code {
   gap: 8px;
 }
 
+.bar-notice {
+  font-size: 12px;
+  color: var(--warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .bar-workspace {
   font-weight: 600;
   max-width: 380px;

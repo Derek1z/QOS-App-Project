@@ -12,7 +12,7 @@ import { recomputeAggregates, updateCoverage } from './aggregates'
 import { markForecastDirty } from '../forecast/job'
 import { refreshIntelligence } from '../analytics/engine'
 import { writeQuality } from './quality'
-import { listDerivedKpis, saveDerivedKpi } from '../services/derivedKpiService'
+import { listDerivedKpis, ensureDerivedKpiDef } from '../services/derivedKpiService'
 import { workspaceTechnology } from '../services/kpiService'
 import { WORKSPACE_TECH_SQL } from '../analytics/ncRule'
 import type {
@@ -436,7 +436,7 @@ async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
   if (enabledDerived.length === 0) return
 
   for (const def of enabledDerived) {
-    await saveDerivedKpi(conn, def)
+    await ensureDerivedKpiDef(conn, def)
     const kpiRow = await conn.runAndReadAll(`SELECT kpi_id FROM kpi_defs WHERE technology = ${WORKSPACE_TECH_SQL} AND kpi_key = '${def.id.replace(/'/g, "''")}'`)
     const kpiId = Number(kpiRow.getRowObjects()[0]?.kpi_id)
     if (!kpiId) continue

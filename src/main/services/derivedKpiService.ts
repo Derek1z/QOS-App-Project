@@ -1,8 +1,9 @@
 import type { DuckDBConnection } from '@duckdb/node-api'
-import type { Technology, DerivedKPI, DerivedKpiSuggestion, DerivedOperation } from '../../../shared/api'
+import type { Technology, DerivedKPI, DerivedKpiSuggestion, DerivedOperation, KpiDefinition } from '../../../shared/api'
 import { BUILTIN_DERIVED_KPIS } from '../../../shared/api'
 import { normalizeHeader } from '../import/mapping'
-import { saveKpiDef } from './kpiService'
+import { listKpiDefs, saveKpiDef } from './kpiService'
+import { saveKpiTargets } from './targetService'
 
 /**
  * Derived KPI & Formula Engine
@@ -65,13 +66,20 @@ export async function listDerivedKpis(
   technology?: Technology
 ): Promise<DerivedKPI[]> {
   await ensureDerivedKpiSchema(conn)
-  const where = technology ? `WHERE technology = '${technology.replace(/'/g, "''")}'` : ''
+  const where = technology ? `WHERE d.technology = '${technology.replace(/'/g, "''")}'` : ''
+  // kpi_defs owns the target, thresholds, direction and core flag once the
+  // KPI exists there; derived_kpi_defs only holds the formula and the seed
+  // values used to create it.
+  const own = (col: string, seedCol = col): string => `CASE WHEN k.kpi_id IS NULL THEN d.${seedCol} ELSE k.${col} END AS ${seedCol}`
   const r = await conn.runAndReadAll(`
-    SELECT id, name, technology, operation, source_kpis, unit, target,
-           warning_threshold, critical_threshold, direction, category,
-           is_core, enabled, treat_missing_as_zero, description
-    FROM derived_kpi_defs ${where}
-    ORDER BY technology, id
+    SELECT d.id, d.name, d.technology, d.operation, d.source_kpis, d.unit,
+           ${own('target')}, ${own('warning_threshold')}, ${own('critical_threshold')},
+           ${own('better_direction', 'direction')}, d.category,
+           ${own('is_core')}, d.enabled, d.treat_missing_as_zero, d.description
+    FROM derived_kpi_defs d
+    LEFT JOIN kpi_defs k ON k.technology = d.technology AND k.kpi_key = d.id
+    ${where}
+    ORDER BY d.technology, d.id
   `)
 
   return r.getRowObjects().map((row) => {
@@ -133,19 +141,38 @@ export async function saveDerivedKpi(
       operation = excluded.operation,
       source_kpis = excluded.source_kpis,
       unit = excluded.unit,
-      target = excluded.target,
-      warning_threshold = excluded.warning_threshold,
-      critical_threshold = excluded.critical_threshold,
-      direction = excluded.direction,
       category = excluded.category,
-      is_core = excluded.is_core,
       enabled = excluded.enabled,
       treat_missing_as_zero = excluded.treat_missing_as_zero,
       description = excluded.description,
       updated_at = now()
   `)
 
-  // Synchronize with kpi_defs
+  // kpi_defs owns the target, thresholds, direction, core flag and on/off
+  // (single source of truth): create the definition there once, after that
+  // only an on/off change is forwarded, through the target service so it
+  // versions the ruleset and recomputes like any other target edit.
+  const existing = await findKpiDef(conn, def)
+  if (!existing) {
+    await createKpiDef(conn, def)
+  } else if (existing.active !== (def.enabled ?? true)) {
+    await saveKpiTargets(conn, [{ technology: def.technology, key: def.id, active: def.enabled ?? true }])
+  }
+
+  return (await listDerivedKpis(conn, def.technology)).find((d) => d.id === def.id) ?? def
+}
+
+/** The import's step for each enabled derived KPI: create its kpi_defs
+ *  definition if it has none, never change one that exists. */
+export async function ensureDerivedKpiDef(conn: DuckDBConnection, def: DerivedKPI): Promise<void> {
+  if (!(await findKpiDef(conn, def))) await createKpiDef(conn, def)
+}
+
+async function findKpiDef(conn: DuckDBConnection, def: DerivedKPI): Promise<KpiDefinition | undefined> {
+  return (await listKpiDefs(conn, def.technology)).find((k) => k.key === def.id)
+}
+
+async function createKpiDef(conn: DuckDBConnection, def: DerivedKPI): Promise<void> {
   await saveKpiDef(conn, {
     technology: def.technology,
     key: def.id,
@@ -162,8 +189,6 @@ export async function saveDerivedKpi(
     isCustom: false,
     active: def.enabled ?? true
   })
-
-  return def
 }
 
 /**

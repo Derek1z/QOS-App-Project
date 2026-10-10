@@ -137,7 +137,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
   handle('derived:save', (_e, def: DerivedKPI) => {
     const w = ws.getCurrent()
     if (!w) throw new Error('No workspace is open')
-    return saveDerivedKpi(w.connection, def)
+    return saveDerivedKpi(w.connection, def).then(afterForecastInput)
   })
   handle('derived:detect', (_e, headers: string[], technology?: Technology) =>
     detectDerivedKpiSuggestions(headers, technology))

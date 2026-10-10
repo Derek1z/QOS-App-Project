@@ -8,15 +8,19 @@ A portable desktop app for analysing 2G, 3G and 4G cell KPIs against regulatory 
 
 ## Screenshots
 
-These were taken on 29/08/2026 and predate the October changes (NC periods, complete periods, forecasting).
+Taken on 10/10/2026 from the browser preview with its built-in demo data (4G demo workspace). Regenerate them with `npm run preview:web` in one terminal and `npm run screenshots` in another.
 
-| Executive Overview | Investigation Workspace |
+| Executive Overview | NC & Breach Analytics |
 | :---: | :---: |
-| ![Executive Overview](docs/screenshots/executive_overview.png) | ![Investigation Workspace](docs/screenshots/investigation_workspace.png) |
+| ![Executive Overview](docs/screenshots/executive_overview.png) | ![NC & Breach Analytics](docs/screenshots/nc_breach_analytics.png) |
 
-| Ghana Health Matrix | Data Manager |
+| Forecasting & Early Warning | Cell Investigation |
 | :---: | :---: |
-| ![Ghana map](docs/screenshots/ghana_map_analytics.png) | ![Data Manager import](docs/screenshots/data_manager_import.png) |
+| ![Forecasting](docs/screenshots/forecasting.png) | ![Cell Investigation](docs/screenshots/cell_investigation.png) |
+
+| Ghana Health Matrix (260 districts) | Data Manager — column mapping |
+| :---: | :---: |
+| ![Ghana Health Matrix](docs/screenshots/ghana_health_matrix.png) | ![Data Manager](docs/screenshots/data_manager_import.png) |
 
 ---
 
@@ -24,7 +28,9 @@ These were taken on 29/08/2026 and predate the October changes (NC periods, comp
 
 **Files:** `.xlsx` workbooks (every sheet is read, so per-technology or multi-week sheets work; first row = headers) and comma-separated `.csv` / `.txt`. Legacy `.xls` is rejected with a message to save it as `.xlsx` or CSV. Semicolon- or tab-separated text is not supported.
 
-**Columns:** the importer suggests a mapping from the column names (Huawei-style headers such as `4G Peak Hour Traffic Utilization_NCA(%)` or `RRC Connected UEs (Avg)`) and remembers your mapping per file layout. Every KPI the technology defines can be mapped; the core columns are date, cell, site, district, region, PRB/utilisation, users, data volume, throughput and availability.
+**Columns:** the importer suggests a mapping from the column names (Huawei-style headers such as `4G Peak Hour Traffic Utilization_NCA(%)` or `RRC Connected UEs (Avg)`) and remembers your mapping per file layout. Each column has one **Mapped to** list: a network & cell field (date, cell, site, district, region, users, data volume, throughput, availability, and PRB utilisation in 4G) or any KPI of the workspace's technology.
+
+**Technology:** a workspace holds one technology, chosen when it is created. Keep one workspace per technology: the 2G/3G/4G tabs on each screen and the command palette (**Open 3G workspace**) open the most recently used workspace of that technology, or offer to create one. A file that looks like another technology is stopped with **Open/Create the <T> workspace** or **Import anyway**. Workspaces whose technology was switched by older versions are corrected once when opened, from the technology of their imported KPIs.
 
 **Dates:** day-first (`07/05/2026` is 7 May).
 
@@ -76,13 +82,14 @@ In the sidebar:
 | **NC & Breach Analytics** | NC labels, trend (Improving / Stable / Worsening), severity (Normal / Watch / High / Critical) across daily, weekly and monthly views |
 | **Smart Priority Queue** | Cells, sites and districts ranked 0–100 (bands Critical 90+, High 75+, Medium 50+, Watch 25+, Low); workflow status, owner, ticket and review date per entity, with overdue flags |
 | **Forecasting & Early Warning** | Backtested forecasts of imported KPIs, per-cell risk against targets, capacity growth — see below |
+| **Cell Intelligence** | Cell cards filtered by severity, with PRB, a telemetry chart drawer and a link to Investigation |
 | **Cell Investigation** | One cell, site or district: KPI history, rule-based findings in calibrated language, root-cause hypotheses, before/after comparison around an intervention date, notes, Markdown export |
 | **Network Explorer** | Region → district → site → cell drill-down with health roll-ups |
-| **Ghana Health Matrix** | 16-region map with 253-district drill-down, and a 4–26-week health heatmap |
+| **Ghana Health Matrix** | 16-region map with a 260-district drill-down (2019 boundaries; Guan District, created in 2021, has no shape yet), and a 4–26-week health heatmap. District names match ignoring case, punctuation and Municipal/Metropolitan; the map lists names it cannot place |
 | **Performance Analysis** | Distributions, a PRB-vs-throughput quadrant scatter and a correlation matrix |
 | **Data Manager** | Import (analyse → map → preview → import), starter CSV templates, import history and data quality, raw-file archive, maintenance |
 | **KPI Definitions & Derived** | Per-technology KPI catalogue (targets, direction, aggregation, aliases) and derived KPIs |
-| **Workspace Settings** | Workspace info and recent workspaces |
+| **Workspace Settings** | Workspace info, snapshots (create, restore, delete, compare two) and recent workspaces |
 
 Also: **Reports** (top bar → Export Packs) and **Comparison Lab** (command palette → Compare Periods or Regions).
 
@@ -117,11 +124,11 @@ Every number on the Forecasting screen is an imported value, a forecast from imp
 
 ## Workspaces and data safety
 
-- A workspace is one `.qosdb` DuckDB file. Opening it takes a write lock; a second copy of the app can open it read-only.
+- A workspace is one `.qosdb` DuckDB file of one technology. Opening it takes a write lock; a second copy of the app can open it read-only.
 - Each import runs in a separate process on its own connection, backs the workspace up first, and rolls back on error.
 - The original import files are kept gzip-compressed in `<workspace>.qosdb.raw/` for 90 days.
 - Maintenance (Data Manager): integrity check, optimise, rebuild aggregates, compact, purge expired raw files. Rebuild and compact back the workspace up first.
-- Workspace snapshots (create, compare, restore) exist in the backend but have no screen yet.
+- Snapshots (Workspace Settings): point-in-time copies to restore (the current data is backed up first) or to compare two milestones KPI by KPI.
 
 ---
 
@@ -170,9 +177,10 @@ docs/superpowers/   specs and plans for the 2026 changes
 
 - Legacy `.xls`, `.xlsb`, `.ods` and non-comma CSV are not imported.
 - Report schedules only run while the app is open.
-- Workspace snapshots have no screen yet.
 - The Windows build since the October 2026 changes is untested on Windows.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Map data: region boundaries from [virgoaugustine/Ghana-GeoJSON-data](https://github.com/virgoaugustine/Ghana-GeoJSON-data) (MIT); district boundaries from [geoBoundaries](https://www.geoboundaries.org) gbOpen GHA ADM2 (CC BY 4.0; source: USAID Ghana HPNO, Ghana Statistical Service), simplified by `scripts/build-ghana-districts.cjs`.

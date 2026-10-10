@@ -8,15 +8,19 @@ A portable desktop app for analysing 2G, 3G and 4G cell KPIs against regulatory 
 
 ## Screenshots
 
-These were taken on 29/08/2026 and predate the October changes (NC periods, complete periods, forecasting).
+Taken on 10/10/2026 from the browser preview with its built-in demo data (4G demo workspace). Regenerate them with `npm run preview:web` in one terminal and `npm run screenshots` in another.
 
-| Executive Overview | Investigation Workspace |
+| Executive Overview | NC & Breach Analytics |
 | :---: | :---: |
-| ![Executive Overview](docs/screenshots/executive_overview.png) | ![Investigation Workspace](docs/screenshots/investigation_workspace.png) |
+| ![Executive Overview](docs/screenshots/executive_overview.png) | ![NC & Breach Analytics](docs/screenshots/nc_breach_analytics.png) |
 
-| Ghana Health Matrix | Data Manager |
+| Forecasting & Early Warning | Cell Investigation |
 | :---: | :---: |
-| ![Ghana map](docs/screenshots/ghana_map_analytics.png) | ![Data Manager import](docs/screenshots/data_manager_import.png) |
+| ![Forecasting](docs/screenshots/forecasting.png) | ![Cell Investigation](docs/screenshots/cell_investigation.png) |
+
+| Ghana Health Matrix (260 districts) | Data Manager — column mapping |
+| :---: | :---: |
+| ![Ghana Health Matrix](docs/screenshots/ghana_health_matrix.png) | ![Data Manager](docs/screenshots/data_manager_import.png) |
 
 ---
 

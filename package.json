@@ -18,6 +18,7 @@
     "bench:forecast": "electron-vite build && electron . --bench-forecast --no-sandbox --ozone-platform=headless --headless",
     "verify:packaged": "node scripts/clean-smoke-temp.cjs && electron-vite build && electron-builder --linux dir --config.directories.output=release-check --config.npmRebuild=false && node scripts/smoke-packaged.cjs release-check/linux-unpacked",
     "preview:web": "vite --config .preview/vite.config.ts",
+    "screenshots": "electron scripts/capture-screenshots.cjs",
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
     "postinstall": "node scripts/ensure-duckdb-bindings.cjs",
     "dist": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",

@@ -45,8 +45,10 @@
       "build/icon.png",
       "build/favicon.png"
     ],
+    "asar": {
+      "smartUnpack": false
+    },
     "asarUnpack": [
-      "**/node_modules/@duckdb/**",
       "**/*.node",
       "**/*.dll",
       "**/*.so"

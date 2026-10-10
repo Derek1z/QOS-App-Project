@@ -81,6 +81,8 @@ Set in `package.json` → `build.electronFuses`, written into the binary by elec
 | `onlyLoadAppFromAsar` | `true` |
 | `enableEmbeddedAsarIntegrityValidation` | `true` for Linux; for Windows only if §6 item 5 confirms the integrity record is embedded in the exe, otherwise `false` with the reason in the plan ledger (it then belongs to the code-signing work) |
 
+Implementation notes (2026-10-10): the Windows record was confirmed, so the fuse is on everywhere; Electron enforces it on Windows and macOS only (on Linux it has no effect). The check covers `app.asar` only, so `asarUnpack` keeps only native binaries (`*.node`, `*.so`, `*.dll`) outside the archive. Without code signing, whoever can rewrite the exe can also rewrite its fuses and integrity record.
+
 ## 5. Consumers
 
 | Where | Change |

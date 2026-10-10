@@ -138,8 +138,9 @@ The app is meant to be shared, and it opens files from other systems, so neither
 - The window cannot open other windows, navigate away from the app page, or embed web views; every browser permission request (camera, notifications, …) is refused.
 - The main process answers API calls only from the app page itself; anything else is rejected and logged.
 - The packaged app's Content Security Policy allows no inline, eval or remote scripts and no network connections (dev mode keeps a relaxed policy for hot reload).
-- Fuses baked into the binary: it cannot be run as plain Node.js (`ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` are ignored), it loads only its packaged code, and it refuses to start if that code was altered (archive integrity check; the Windows exe's integrity record is verified at build time).
-- Each of these is checked by the smoke test against the real window, and the fuses are read back from the built binaries. The exe is not code-signed yet, so Windows still shows an "unknown publisher" warning.
+- Fuses baked into the binary: it cannot be run as plain Node.js (`ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` are ignored) and loads only its packaged code. On Windows it also refuses to start if the app's packaged JavaScript (`app.asar`) was altered; the integrity record in the exe is verified at build time, and only native DuckDB binaries are kept outside the archive. Electron does not enforce this integrity check on Linux.
+- Each of these is checked by the smoke test against the real window, and the fuses are read back from the built binaries.
+- Limits: the exe is not code-signed yet, so Windows shows an "unknown publisher" warning, and someone who can rewrite the exe itself could also rewrite its fuses and integrity record. Code signing closes that gap.
 
 ---
 

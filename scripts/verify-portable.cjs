@@ -45,7 +45,7 @@ if (process.platform === 'win32') {
   const { checkPackageLayout } = require('./check-package-layout.cjs')
   const problems = checkPackageLayout(join(RELEASE, 'win-unpacked', 'resources'), 'win32')
   if (problems.length === 0) {
-    console.log('verify-portable: Windows package layout verified (DuckDB API + win32 engine unpacked, no foreign engines, import process present).')
+    console.log('verify-portable: Windows package layout verified (win32 DuckDB engine unpacked, no foreign engines, no JavaScript outside app.asar, import process present).')
     r = { status: 0, stdout: 'Layout verified', stderr: '' }
   } else {
     for (const p of problems) console.error('verify-portable: ' + p)

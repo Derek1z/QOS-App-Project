@@ -22,10 +22,17 @@
     "clean:smoke-temp": "node scripts/clean-smoke-temp.cjs",
     "postinstall": "node scripts/ensure-duckdb-bindings.cjs",
     "dist": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win",
-    "dist:portable": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs",
+    "dist:portable": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win portable && node scripts/verify-portable.cjs && node scripts/check-win-integrity.cjs release/win-unpacked",
     "dist:zip": "node scripts/ensure-duckdb-bindings.cjs && node scripts/clean-build-headroom.cjs && electron-vite build && electron-builder --win dir && node scripts/zip-portable-folder.cjs"
   },
   "build": {
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true
+    },
     "appId": "com.qos.networkintelligence",
     "productName": "2G/3G/4G QoS",
     "directories": {

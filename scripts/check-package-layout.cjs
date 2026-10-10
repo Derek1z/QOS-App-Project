@@ -43,7 +43,27 @@ function checkPackageLayout(resourcesDir, platform) {
   return problems
 }
 
-module.exports = { checkPackageLayout }
+/** The fuses the app ships with (Electron hardening spec §4.4), by the
+ *  @electron/fuses option name. */
+const EXPECTED_FUSES = {
+  RunAsNode: false,
+  EnableNodeOptionsEnvironmentVariable: false,
+  EnableNodeCliInspectArguments: false,
+  OnlyLoadAppFromAsar: true,
+  EnableEmbeddedAsarIntegrityValidation: true
+}
+
+/** Fuses of the Electron binary that differ from `expected`, as sentences. */
+async function checkFuses(binaryPath, expected = EXPECTED_FUSES) {
+  const { getCurrentFuseWire, FuseV1Options } = require('@electron/fuses')
+  const wire = await getCurrentFuseWire(binaryPath)
+  const ENABLE = 49 // FuseState.ENABLE ('1'); DISABLE is 48 ('0')
+  return Object.entries(expected)
+    .filter(([name, on]) => (wire[FuseV1Options[name]] === ENABLE) !== on)
+    .map(([name, on]) => `fuse ${name} should be ${on ? 'on' : 'off'}`)
+}
+
+module.exports = { checkPackageLayout, checkFuses, EXPECTED_FUSES }
 
 if (require.main === module) {
   const [resourcesDir, platform] = process.argv.slice(2)

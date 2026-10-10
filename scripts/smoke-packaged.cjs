@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process')
 const { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { tmpdir } = require('node:os')
-const { checkPackageLayout } = require('./check-package-layout.cjs')
+const { checkPackageLayout, checkFuses } = require('./check-package-layout.cjs')
 const { cleanSmokeTemp } = require('./clean-smoke-temp.cjs')
 
 const appDir = process.argv[2] && resolve(process.argv[2])
@@ -53,10 +53,19 @@ const out = (r.stdout ?? '') + (r.stderr ?? '')
 rmSync(home, { recursive: true, force: true })
 cleanSmokeTemp()
 
-if (r.status === 0 && out.includes('SMOKE_OK')) {
-  console.log('smoke-packaged: packaged build passed the full smoke suite')
-  process.exit(0)
+if (r.status !== 0 || !out.includes('SMOKE_OK')) {
+  console.error(out.split('\n').slice(-40).join('\n'))
+  console.error(`smoke-packaged: FAILED (exit ${r.status}${r.error ? `, ${r.error.message}` : ''})`)
+  process.exit(1)
 }
-console.error(out.split('\n').slice(-40).join('\n'))
-console.error(`smoke-packaged: FAILED (exit ${r.status}${r.error ? `, ${r.error.message}` : ''})`)
-process.exit(1)
+console.log('smoke-packaged: packaged build passed the full smoke suite')
+// Electron hardening spec §4.4: the binary carries the shipped fuses
+checkFuses(exe).then((fuseProblems) => {
+  for (const p of fuseProblems) console.error(`smoke-packaged: ${p}`)
+  if (fuseProblems.length > 0) process.exit(1)
+  console.log('smoke-packaged: fuses verified')
+  process.exit(0)
+}, (e) => {
+  console.error(`smoke-packaged: could not read fuses: ${e.message}`)
+  process.exit(1)
+})

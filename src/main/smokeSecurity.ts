@@ -1,8 +1,10 @@
 import { BrowserWindow, session } from 'electron'
+import { join } from 'node:path'
 import { STRICT_CSP } from '../../shared/csp'
 import { applySecurity, appEntry } from './security'
 import { isAppUrl } from './securityRules'
 import { createMainWindow } from './window'
+import { registerIpc } from './ipc'
 
 /** Smoke step for the Electron hardening spec (§6 item 2): open the real app
  *  window offscreen from the built page and try each attack. Every check
@@ -35,7 +37,14 @@ export async function runSecuritySmoke(): Promise<void> {
   }
 
   const win = createMainWindow({ show: false, offscreen: true })
+  // the smoke run calls services directly; the page's API needs the real channels
+  registerIpc(() => win)
   const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, offscreen: true } })
+  // a page that is not the app, with the app's preload (so it has window.api)
+  const stranger = new BrowserWindow({
+    show: false,
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, offscreen: true }
+  })
   try {
     await loaded(win)
     const page = (js: string): Promise<unknown> => win.webContents.executeJavaScript(js, true)
@@ -86,11 +95,20 @@ export async function runSecuritySmoke(): Promise<void> {
       await report.loadURL('data:text/html,<p>r</p>')
       return (await report.webContents.executeJavaScript(`document.body.textContent`)) === 'r'
     })
+    const appCall = `window.api.appState.get().then((s) => Array.isArray(s.recentWorkspaces), (e) => 'rejected: ' + e.message)`
+    await check('IPC answers the app page', async () => (await page(appCall)) === true)
+    await check('IPC rejects another page', async () => {
+      await stranger.loadURL('data:text/html,<p>x</p>')
+      const r = await stranger.webContents.executeJavaScript(appCall, true)
+      return typeof r === 'string' && r.includes('Untrusted sender')
+    })
+    await check('IPC still answers the app page afterwards', async () => (await page(appCall)) === true)
     // last: without the guard this opens a real window, which a headless run cannot survive
     await check('window.open blocked', async () => (await page(`window.open('https://example.com') === null`)) === true)
   } finally {
     win.destroy()
     report.destroy()
+    stranger.destroy()
   }
   if (failures.length) throw new Error(`security smoke failed: ${failures.join('; ')}`)
   console.log('[SMOKE] security guards verified (sandbox, navigation, windows, permissions, CSP, downloads).')

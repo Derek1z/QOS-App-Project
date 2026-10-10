@@ -1,4 +1,5 @@
-import { ipcMain, dialog, type BrowserWindow } from 'electron'
+import { ipcMain, dialog, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { assertTrustedSender } from './security'
 import * as ws from './workspace/manager'
 import * as appState from './services/appState'
 import {
@@ -63,12 +64,22 @@ function afterForecastInput<T>(result: T): T {
   return result
 }
 
+/** Every channel is registered through here (Electron hardening spec §4.1):
+ *  a call is answered only when it comes from the main frame of the app page. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function handle(channel: string, fn: (e: IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, (e, ...args) => {
+    assertTrustedSender(e, channel)
+    return fn(e, ...args)
+  })
+}
+
 export function registerIpc(win: () => BrowserWindow | null): void {
-  ipcMain.handle('workspace:listRecent', () => appState.load().recentWorkspaces)
+  handle('workspace:listRecent', () => appState.load().recentWorkspaces)
 
-  ipcMain.handle('workspace:isLocked', (_e, path: string) => lockedByOther(path))
+  handle('workspace:isLocked', (_e, path: string) => lockedByOther(path))
 
-  ipcMain.handle('workspace:pickOpen', async () => {
+  handle('workspace:pickOpen', async () => {
     const res = await dialog.showOpenDialog({
       title: 'Open 2G/3G/4G QoS Workspace',
       properties: ['openFile'],
@@ -78,7 +89,7 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
-  ipcMain.handle('workspace:pickDirectory', async () => {
+  handle('workspace:pickDirectory', async () => {
     const res = await dialog.showOpenDialog({
       title: 'Choose Folder for New Workspace',
       properties: ['openDirectory', 'createDirectory'],
@@ -87,12 +98,12 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
-  ipcMain.handle('workspace:create', async (_e, dir: string, name: string, technology?: string) => {
+  handle('workspace:create', async (_e, dir: string, name: string, technology?: string) => {
     const info = await ws.createWorkspace(dir, name, technology)
     scheduleForecastRefresh()
     return info
   })
-  ipcMain.handle('workspace:open', async (_e, path: string, opts?: { readOnly?: boolean }) => {
+  handle('workspace:open', async (_e, path: string, opts?: { readOnly?: boolean }) => {
     const info = await ws.openWorkspace(path, opts)
     if (!opts?.readOnly) {
       // spec §9: expired raw copies are purged whenever a workspace opens writable
@@ -104,53 +115,53 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     }
     return info
   })
-  ipcMain.handle('workspace:close', () => ws.closeWorkspace())
-  ipcMain.handle('workspace:info', () => ws.getCurrentInfo())
-  ipcMain.handle('workspace:findRecent', (_e, technology: Technology, excludePath?: string) =>
+  handle('workspace:close', () => ws.closeWorkspace())
+  handle('workspace:info', () => ws.getCurrentInfo())
+  handle('workspace:findRecent', (_e, technology: Technology, excludePath?: string) =>
     appState.findRecentWorkspace(technology, excludePath, appState.load().recentWorkspaces, existsSync))
 
-  ipcMain.handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
-  ipcMain.handle('kpis:save', async (_e, patch: KpiDefPatch) => afterForecastInput((await saveKpiTargetsCurrent([patch]))[0]))
-  ipcMain.handle('kpis:saveTargets', (_e, patches: KpiDefPatch[]) => saveKpiTargetsCurrent(patches).then(afterForecastInput))
-  ipcMain.handle('kpis:remove', (_e, kpiId: number) => removeCurrent(kpiId))
-  ipcMain.handle('kpis:discover', (_e, headers: string[], technology?: Technology) =>
+  handle('kpis:list', (_e, technology?: Technology) => listCurrent(technology))
+  handle('kpis:save', async (_e, patch: KpiDefPatch) => afterForecastInput((await saveKpiTargetsCurrent([patch]))[0]))
+  handle('kpis:saveTargets', (_e, patches: KpiDefPatch[]) => saveKpiTargetsCurrent(patches).then(afterForecastInput))
+  handle('kpis:remove', (_e, kpiId: number) => removeCurrent(kpiId))
+  handle('kpis:discover', (_e, headers: string[], technology?: Technology) =>
     discoverCurrent(headers, technology))
-  ipcMain.handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
-  ipcMain.handle('kpis:resetDefaults', (_e, technology?: Technology) => resetKpiTargetsCurrent(technology).then(afterForecastInput))
+  handle('kpis:seed', (_e, technology?: Technology) => seedCurrent(technology))
+  handle('kpis:resetDefaults', (_e, technology?: Technology) => resetKpiTargetsCurrent(technology).then(afterForecastInput))
 
-  ipcMain.handle('derived:list', (_e, technology?: Technology) => {
+  handle('derived:list', (_e, technology?: Technology) => {
     const w = ws.getCurrent()
     if (!w) return []
     return listDerivedKpis(w.connection, technology)
   })
-  ipcMain.handle('derived:save', (_e, def: DerivedKPI) => {
+  handle('derived:save', (_e, def: DerivedKPI) => {
     const w = ws.getCurrent()
     if (!w) throw new Error('No workspace is open')
     return saveDerivedKpi(w.connection, def)
   })
-  ipcMain.handle('derived:detect', (_e, headers: string[], technology?: Technology) =>
+  handle('derived:detect', (_e, headers: string[], technology?: Technology) =>
     detectDerivedKpiSuggestions(headers, technology))
 
-  ipcMain.handle('analytics:summary', (_e, opts?: { period?: string; grain?: string }) =>
+  handle('analytics:summary', (_e, opts?: { period?: string; grain?: string }) =>
     getSummary(opts as { period?: PeriodId; grain?: Grain } | undefined))
-  ipcMain.handle('analytics:executiveOverview', (_e, opts?: { period?: PeriodId; grain?: Grain }) => getExecutiveOverview(opts))
-  ipcMain.handle('synthetic:generate', (_e, config?: SyntheticDataConfig) => generateSyntheticMultiTechData(config))
-  ipcMain.handle('analytics:ncLifecycle', (_e, grain?: string) => getNcLifecycle((grain as Grain) ?? 'weekly'))
-  ipcMain.handle('analytics:ncMovement', (_e, limit?: number, grain?: string, technology?: Technology) =>
+  handle('analytics:executiveOverview', (_e, opts?: { period?: PeriodId; grain?: Grain }) => getExecutiveOverview(opts))
+  handle('synthetic:generate', (_e, config?: SyntheticDataConfig) => generateSyntheticMultiTechData(config))
+  handle('analytics:ncLifecycle', (_e, grain?: string) => getNcLifecycle((grain as Grain) ?? 'weekly'))
+  handle('analytics:ncMovement', (_e, limit?: number, grain?: string, technology?: Technology) =>
     getNcMovement(limit, (grain as Grain) ?? 'weekly', technology)
   )
-  ipcMain.handle('analytics:priorityQueue', (_e, mode: PriorityMode, limit?: number) =>
+  handle('analytics:priorityQueue', (_e, mode: PriorityMode, limit?: number) =>
     getPriorityQueue(mode, limit)
   )
-  ipcMain.handle('analytics:health', (_e, grain?: string) =>
+  handle('analytics:health', (_e, grain?: string) =>
     getHealth((grain as Grain) ?? 'weekly'))
-  ipcMain.handle('analytics:kpiOverview', (_e, limit?: number, grain?: string) => getKpiOverview(limit, (grain as Grain) ?? 'weekly'))
-  ipcMain.handle(
+  handle('analytics:kpiOverview', (_e, limit?: number, grain?: string) => getKpiOverview(limit, (grain as Grain) ?? 'weekly'))
+  handle(
     'analytics:healthMatrix',
     (_e, scope: HealthScope, opts?: { weeks?: number; limit?: number; sort?: 'worst' | 'name' }) =>
       getHealthMatrix(scope, opts)
   )
-  ipcMain.handle(
+  handle(
     'analytics:cellIntelligence',
     (_e, opts?: {
       search?: string
@@ -163,23 +174,23 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       technology?: Technology
     }) => getCellIntelligence(opts)
   )
-  ipcMain.handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain, technology?: Technology) =>
+  handle('analytics:cellDetail', (_e, cellId: number, grain?: Grain, technology?: Technology) =>
     getCellDetail(cellId, grain, technology)
   )
-  ipcMain.handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) => getPerformance(opts))
-  ipcMain.handle(
+  handle('analytics:performance', (_e, opts?: { grain?: Grain; period?: PeriodId; technology?: Technology }) => getPerformance(opts))
+  handle(
     'analytics:comparison',
     (_e, opts?: { type?: ComparisonType; scope?: CompareScope; metric?: CompareMetric; grain?: Grain; period?: PeriodId; technology?: Technology }) =>
       getComparison(opts)
   )
-  ipcMain.handle(
+  handle(
     'analytics:explorer',
     (_e, level: ExplorerLevel, parentId?: number | null, opts?: { q?: string }) =>
       getExplorer(level, parentId ?? null, opts)
   )
-  ipcMain.handle('analytics:priorityCenter', (_e, opts?: PriorityCenterOpts) => getPriorityCenter(opts))
-  ipcMain.handle('analytics:forecast', (_e, opts?: ForecastOpts) => getForecast(opts))
-  ipcMain.handle('forecast:status', () => forecastStatus())
+  handle('analytics:priorityCenter', (_e, opts?: PriorityCenterOpts) => getPriorityCenter(opts))
+  handle('analytics:forecast', (_e, opts?: ForecastOpts) => getForecast(opts))
+  handle('forecast:status', () => forecastStatus())
   // background recompute progress, at most one event per 250 ms (plus the last)
   let lastSent = 0
   let trailing: ReturnType<typeof setTimeout> | null = null
@@ -193,22 +204,22 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     if (!s.running || Date.now() - lastSent >= 250) send()
     else trailing = setTimeout(send, 250)
   })
-  ipcMain.handle('analytics:regionMap', (_e, technology?: Technology, grain?: Grain, period?: PeriodId) =>
+  handle('analytics:regionMap', (_e, technology?: Technology, grain?: Grain, period?: PeriodId) =>
     getRegionMap(technology, grain, period)
   )
-  ipcMain.handle('analytics:regionDistricts', (_e, regionId: number, technology?: Technology, grain?: Grain, period?: PeriodId) =>
+  handle('analytics:regionDistricts', (_e, regionId: number, technology?: Technology, grain?: Grain, period?: PeriodId) =>
     getRegionDistricts(regionId, technology, grain, period)
   )
 
-  ipcMain.handle('investigation:search', (_e, scope: InvestigationScope, q?: string, technology?: Technology) =>
+  handle('investigation:search', (_e, scope: InvestigationScope, q?: string, technology?: Technology) =>
     searchEntities(scope, q, technology)
   )
-  ipcMain.handle(
+  handle(
     'investigation:get',
     (_e, scope: InvestigationScope, entityId: number, opts?: { interventionWeek?: string; grain?: Grain; period?: PeriodId; technology?: Technology }) =>
       getInvestigation(scope, entityId, opts)
   )
-  ipcMain.handle(
+  handle(
     'investigation:setStatus',
     (_e, scope: InvestigationScope, entityId: number, patch: {
       status?: ActionStatus | null
@@ -217,36 +228,36 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       targetReviewDate?: string | null
     }) => setInvestigationStatus(scope, entityId, patch)
   )
-  ipcMain.handle('investigation:addNote', (_e, scope: InvestigationScope, entityId: number, note: string) =>
+  handle('investigation:addNote', (_e, scope: InvestigationScope, entityId: number, note: string) =>
     addInvestigationNote(scope, entityId, note)
   )
-  ipcMain.handle('investigation:exportReport', (_e, scope: InvestigationScope, entityId: number) =>
+  handle('investigation:exportReport', (_e, scope: InvestigationScope, entityId: number) =>
     exportInvestigationReport(scope, entityId)
   )
 
-  ipcMain.handle('reports:generate', (_e, opts?: ReportOpts) => generateReportPack(opts))
-  ipcMain.handle('reports:definitions', () => listReportDefinitions())
-  ipcMain.handle('reports:saveDefinition', (_e, name: string, type: ReportType, sections: ReportSectionId[], schedule?: string | null, charts?: unknown) =>
+  handle('reports:generate', (_e, opts?: ReportOpts) => generateReportPack(opts))
+  handle('reports:definitions', () => listReportDefinitions())
+  handle('reports:saveDefinition', (_e, name: string, type: ReportType, sections: ReportSectionId[], schedule?: string | null, charts?: unknown) =>
     saveReportDefinition(name, type, sections, schedule ?? null, charts as ReportChartConfig)
   )
-  ipcMain.handle('reports:history', () => listReportHistory())
-  ipcMain.handle('reports:due', () => checkDueReports())
-  ipcMain.handle('reports:reveal', (_e, path: string) => revealReport(path))
+  handle('reports:history', () => listReportHistory())
+  handle('reports:due', () => checkDueReports())
+  handle('reports:reveal', (_e, path: string) => revealReport(path))
 
-  ipcMain.handle('rules:get', () => getRulesCurrent())
-  ipcMain.handle('rules:update', (_e, patch: RulesPatch) => updateRulesCurrent(patch))
+  handle('rules:get', () => getRulesCurrent())
+  handle('rules:update', (_e, patch: RulesPatch) => updateRulesCurrent(patch))
 
-  ipcMain.handle('appState:get', () => appState.load())
-  ipcMain.handle('appState:set', (_e, patch: Partial<appState.AppState>) => appState.patch(patch))
+  handle('appState:get', () => appState.load())
+  handle('appState:set', (_e, patch: Partial<appState.AppState>) => appState.patch(patch))
 
-  ipcMain.handle('import:analyze', (_e, paths: string[]) =>
+  handle('import:analyze', (_e, paths: string[]) =>
     analyzeFiles(paths, (p) => {
       const w = win()
       if (w && !w.isDestroyed()) w.webContents.send('import:progress', p)
     })
   )
-  ipcMain.handle('import:preview', (_e, id: string, mapping: MappingConfig) => previewImport(id, mapping))
-  ipcMain.handle('import:run', (_e, id: string, mapping: MappingConfig) =>
+  handle('import:preview', (_e, id: string, mapping: MappingConfig) => previewImport(id, mapping))
+  handle('import:run', (_e, id: string, mapping: MappingConfig) =>
     runImport(id, mapping, {
       onProgress: (p) => {
         const w = win()
@@ -259,16 +270,16 @@ export function registerIpc(win: () => BrowserWindow | null): void {
       return res
     })
   )
-  ipcMain.handle('import:history', () => importHistory())
-  ipcMain.handle('import:coverage', () => importCoverage())
-  ipcMain.handle('import:quality', () => importQuality())
-  ipcMain.handle('import:archive', () => rawArchive())
-  ipcMain.handle('import:purgeArchive', () => purgeRawArchive())
+  handle('import:history', () => importHistory())
+  handle('import:coverage', () => importCoverage())
+  handle('import:quality', () => importQuality())
+  handle('import:archive', () => rawArchive())
+  handle('import:purgeArchive', () => purgeRawArchive())
 
-  ipcMain.handle('import:inspect-excel', (_e, filePath: string) => inspectExcelSheets(filePath))
-  ipcMain.handle('import:geoStats', (_e, id: string, mapping: MappingConfig) =>
+  handle('import:inspect-excel', (_e, filePath: string) => inspectExcelSheets(filePath))
+  handle('import:geoStats', (_e, id: string, mapping: MappingConfig) =>
     geoStats(id, mapping))
-  ipcMain.handle('import:exportCsv', async (_e, sourcePath: string) => {
+  handle('import:exportCsv', async (_e, sourcePath: string) => {
     if (!isExcelPath(sourcePath)) throw new Error('Not an Excel workbook: ' + sourcePath)
     if (!existsSync(sourcePath)) throw new Error('File no longer exists: ' + sourcePath)
     const res = await dialog.showSaveDialog({
@@ -281,20 +292,20 @@ export function registerIpc(win: () => BrowserWindow | null): void {
     return { path: res.filePath }
   })
 
-  ipcMain.handle('workspace:snapshots', () => listSnapshots())
-  ipcMain.handle('workspace:snapshotCreate', (_e, name: string, opts?: CreateSnapshotOpts) =>
+  handle('workspace:snapshots', () => listSnapshots())
+  handle('workspace:snapshotCreate', (_e, name: string, opts?: CreateSnapshotOpts) =>
     createSnapshot(name, opts)
   )
-  ipcMain.handle('workspace:snapshotRestore', (_e, id: number) => restoreSnapshot(id).then(afterForecastInput))
-  ipcMain.handle('workspace:snapshotRemove', (_e, id: number) => removeSnapshot(id))
-  ipcMain.handle('workspace:snapshotCompare', (_e, aId: number, bId: number) =>
+  handle('workspace:snapshotRestore', (_e, id: number) => restoreSnapshot(id).then(afterForecastInput))
+  handle('workspace:snapshotRemove', (_e, id: number) => removeSnapshot(id))
+  handle('workspace:snapshotCompare', (_e, aId: number, bId: number) =>
     compareSnapshots(aId, bId)
   )
 
-  ipcMain.handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action))
-  ipcMain.handle('maintenance:getSchedule', () => getSchedule())
-  ipcMain.handle('maintenance:setSchedule', (_e, patch) => setSchedule(patch))
-  ipcMain.handle('maintenance:runScheduled', () => runScheduled())
-  ipcMain.handle('maintenance:scheduleHistory', (_e, limit?: number) => scheduleHistory(limit))
+  handle('maintenance:run', (_e, action: MaintenanceAction) => runMaintenance(action))
+  handle('maintenance:getSchedule', () => getSchedule())
+  handle('maintenance:setSchedule', (_e, patch) => setSchedule(patch))
+  handle('maintenance:runScheduled', () => runScheduled())
+  handle('maintenance:scheduleHistory', (_e, limit?: number) => scheduleHistory(limit))
   void win
 }

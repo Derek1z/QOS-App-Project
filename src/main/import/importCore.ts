@@ -40,9 +40,24 @@ async function dropStaging(conn: DuckDBConnection): Promise<void> {
   await conn.run('DROP TABLE IF EXISTS stg_import')
   await conn.run('DROP TABLE IF EXISTS stg_rejects')
   await conn.run('DROP TABLE IF EXISTS stg_clean')
+  await conn.run('DROP TABLE IF EXISTS stg_kpi_cols')
 }
 
 // --- staging ---
+
+/** The file's KPI-bearing columns, staged as plain VARCHAR columns kc_0..kc_n
+ *  (a JSON blob per row cost ~80% of a large import: built, then unpacked and
+ *  parsed twice per value). Only columns that can be stored are kept. */
+interface StagedKpiColumns {
+  /** the file has extra (non-core) columns at all; derived KPIs run only then */
+  hasExtra: boolean
+  /** staged columns, in order */
+  cols: string[]
+  /** staged column → the KPI key it stores (one column per key: the first wins) */
+  keys: Array<{ col: string; key: string }>
+  /** derived-KPI source name → staged column */
+  sources: Map<string, string>
+}
 
 async function stageCsv(
   conn: DuckDBConnection,
@@ -50,16 +65,8 @@ async function stageCsv(
   header: string[],
   mapping: MappingConfig,
   displayName = basename(path)
-): Promise<void> {
-  await conn.run('DROP TABLE IF EXISTS stg_import')
-  await conn.run('DROP TABLE IF EXISTS stg_rejects')
-  await conn.run('DROP TABLE IF EXISTS stg_clean')
-  await conn.run(`CREATE TEMP TABLE stg_import (
-    date_raw VARCHAR, cell_raw VARCHAR, district_raw VARCHAR, region_raw VARCHAR,
-    site_raw VARCHAR, prb_raw VARCHAR, users_raw VARCHAR, volume_raw VARCHAR,
-    avail_raw VARCHAR, thrpt_raw VARCHAR, src_file VARCHAR,
-    kpi_json VARCHAR
-  )`)
+): Promise<StagedKpiColumns> {
+  await dropStaging(conn)
 
   const seen = new Set<string>()
   for (const h of header) {
@@ -73,29 +80,59 @@ async function stageCsv(
     return h ? quoteId(h) : `NULL::VARCHAR`
   }
 
-  // extra columns mapped to KPI keys + unmapped source headers become one JSON object per row:
-  // {"tch_congestion": "1.2", "VS.RRC.Rej.DLPower.Cong": "5"}
+  // Extra columns carry a KPI under a name: a column mapped to a KPI key goes
+  // by that key, any other non-core column by its own header. A name is kept
+  // when it is a KPI key of the workspace technology or a source an enabled
+  // derived KPI reads; the first column wins when two share a name.
   const kpiCols = (mapping.kpiColumns ?? {})
   const mappedCols = new Set(Object.keys(mapping.columns))
   const unmapped = header.filter((h) => !mappedCols.has(h) && !kpiCols[h])
-  const allKpiEntries = [
+  const named: Array<[string, string]> = [
     ...Object.entries(kpiCols).filter(([h, k]) => header.includes(h) && k),
     ...unmapped.map((h) => [h, h] as [string, string])
   ]
-  const kpiJsonSel = (() => {
-    if (allKpiEntries.length === 0) return `NULL::VARCHAR`
-    const json = allKpiEntries.map(([h, k]) => `'${esc(k)}', ${quoteId(h)}`).join(', ')
-    return `json_object(${json})`
-  })()
+  const firstHeader = new Map<string, string>()
+  for (const [h, name] of named) if (!firstHeader.has(name)) firstHeader.set(name, h)
+
+  const techKeys = new Set(
+    (await conn.runAndReadAll(`SELECT kpi_key FROM kpi_defs WHERE technology = ${WORKSPACE_TECH_SQL}`))
+      .getRowObjects().map((x) => String(x.kpi_key))
+  )
+  const tech = await workspaceTechnology(conn)
+  const sourceNames = (await listDerivedKpis(conn))
+    .filter((d) => d.enabled && d.technology === tech)
+    .flatMap((d) => d.sourceKPIs)
+
+  const colOf = new Map<string, string>() // header → staged column
+  const stageHeader = (h: string): string => {
+    if (!colOf.has(h)) colOf.set(h, `kc_${colOf.size}`)
+    return colOf.get(h)!
+  }
+  const keys: StagedKpiColumns['keys'] = []
+  for (const [name, h] of firstHeader) if (techKeys.has(name)) keys.push({ col: stageHeader(h), key: name })
+  const sources = new Map<string, string>()
+  for (const name of sourceNames) {
+    const h = firstHeader.get(name)
+    if (h) sources.set(name, stageHeader(h))
+  }
+  const staged: StagedKpiColumns = { hasExtra: named.length > 0, cols: [...colOf.values()], keys, sources }
+
+  await conn.run(`CREATE TEMP TABLE stg_import (
+    date_raw VARCHAR, cell_raw VARCHAR, district_raw VARCHAR, region_raw VARCHAR,
+    site_raw VARCHAR, prb_raw VARCHAR, users_raw VARCHAR, volume_raw VARCHAR,
+    avail_raw VARCHAR, thrpt_raw VARCHAR, src_file VARCHAR${staged.cols.map((c) => `, ${c} VARCHAR`).join('')}
+  )`)
+  await conn.run(`CREATE TEMP TABLE stg_kpi_cols (col VARCHAR, kpi_key VARCHAR)`)
+  for (const k of keys) await conn.run(`INSERT INTO stg_kpi_cols VALUES (?, ?)`, [k.col, k.key])
 
   await conn.run(`
     INSERT INTO stg_import
       (date_raw, cell_raw, district_raw, region_raw, site_raw,
-       prb_raw, users_raw, volume_raw, avail_raw, thrpt_raw, src_file, kpi_json)
+       prb_raw, users_raw, volume_raw, avail_raw, thrpt_raw, src_file${staged.cols.map((c) => `, ${c}`).join('')})
     SELECT
       ${sel('date')}, ${sel('cell')}, ${sel('district')}, ${sel('region')}, ${sel('site')},
       ${sel('prb')}, ${sel('users')}, ${sel('volume')}, ${sel('availability')}, ${sel('throughput')},
-      '${esc(displayName)}', ${kpiJsonSel}
+      '${esc(displayName)}'${[...colOf].map(([h]) => `, ${quoteId(h)}`).join('')}
     FROM read_csv('${esc(path)}', header = true, columns = { ${dict} },
       ignore_errors = true, store_rejects = true, rejects_table = 'stg_rejects')
   `)
@@ -120,6 +157,7 @@ async function stageCsv(
       `UPDATE stg_import SET ${col} = CASE ${cases} ELSE ${col} END WHERE ${col} IS NOT NULL`
     )
   }
+  return staged
 }
 
 const CANDIDATE_DATE_PATTERNS = [
@@ -218,7 +256,7 @@ async function detectOptimalDateCoalesce(conn: DuckDBConnection): Promise<string
     .join(',\n        ')
 }
 
-async function buildClean(conn: DuckDBConnection): Promise<void> {
+async function buildClean(conn: DuckDBConnection, staged: StagedKpiColumns): Promise<void> {
   const dateCoalesceExpr = await detectOptimalDateCoalesce(conn)
   await conn.run(`
     CREATE TEMP TABLE stg_clean AS
@@ -251,7 +289,7 @@ async function buildClean(conn: DuckDBConnection): Promise<void> {
       try_cast(p.volume_raw AS DOUBLE) AS volume,
       try_cast(p.avail_raw AS DOUBLE) AS avail,
       try_cast(p.thrpt_raw AS DOUBLE) AS thrpt,
-      p.kpi_json,
+      ${staged.cols.map((c) => `p.${c}, `).join('')}
       row_number() OVER (PARTITION BY d.date_id, trim(p.cell_raw) ORDER BY 1) AS rn
     FROM (
       SELECT *, coalesce(
@@ -402,33 +440,34 @@ async function insertFacts(conn: DuckDBConnection, importId: number): Promise<nu
   return count(conn, `SELECT count(*) n FROM fact_cell_daily WHERE source_import_id = ${importId}`)
 }
 
-/** Persist extra per-cell KPI values (spec §54a): unmapped source columns that
- *  were assigned a KpiDefinition.key are extracted directly from each row's JSON blob.
- *  A key is resolved within the workspace's technology only: kpi_defs is unique
- *  on (technology, kpi_key) and keys like connected_users exist under several. */
-async function insertExtraMetrics(conn: DuckDBConnection): Promise<void> {
-  const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
-  if (Number(r.getRowObjects()[0].n) === 0) return
-
+/** Persist extra per-cell KPI values (spec §54a): the staged KPI columns,
+ *  unpivoted to one row per value. A key is resolved within the workspace's
+ *  technology only: kpi_defs is unique on (technology, kpi_key) and keys like
+ *  connected_users exist under several. Stored values are never overwritten. */
+async function insertExtraMetrics(conn: DuckDBConnection, staged: StagedKpiColumns): Promise<void> {
+  if (staged.keys.length === 0) return
+  const cols = staged.keys.map((k) => k.col).join(', ')
   await conn.run(`
     INSERT INTO fact_extra_metrics (date_id, cell_id, kpi_id, value)
-    SELECT s.date_id, c.cell_id, k.kpi_id, try_cast(json_extract_string(s.kpi_json, '$.' || kv.k_key) AS DOUBLE)
-    FROM stg_clean s
-    JOIN dim_cell c ON c.name = s.cell_name
-    CROSS JOIN UNNEST(json_keys(s.kpi_json)) AS kv(k_key)
-    JOIN kpi_defs k ON k.kpi_key = kv.k_key AND k.technology = ${WORKSPACE_TECH_SQL}
-    WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.rn = 1
-      AND try_cast(json_extract_string(s.kpi_json, '$.' || kv.k_key) AS DOUBLE) IS NOT NULL
+    SELECT u.date_id, c.cell_id, k.kpi_id, try_cast(u.raw AS DOUBLE)
+    FROM (
+      UNPIVOT (SELECT date_id, cell_name, ${cols} FROM stg_clean
+               WHERE date_id IS NOT NULL AND cell_name IS NOT NULL AND rn = 1)
+      ON ${cols} INTO NAME col VALUE raw
+    ) u
+    JOIN stg_kpi_cols m ON m.col = u.col
+    JOIN dim_cell c ON c.name = u.cell_name
+    JOIN kpi_defs k ON k.kpi_key = m.kpi_key AND k.technology = ${WORKSPACE_TECH_SQL}
+    WHERE try_cast(u.raw AS DOUBLE) IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM fact_extra_metrics f
-        WHERE f.date_id = s.date_id AND f.cell_id = c.cell_id AND f.kpi_id = k.kpi_id
+        WHERE f.date_id = u.date_id AND f.cell_id = c.cell_id AND f.kpi_id = k.kpi_id
       )
   `)
 }
 
-async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
-  const r = await conn.runAndReadAll(`SELECT count(*) n FROM stg_clean WHERE kpi_json IS NOT NULL`)
-  if (Number(r.getRowObjects()[0].n) === 0) return
+async function insertDerivedMetrics(conn: DuckDBConnection, staged: StagedKpiColumns): Promise<void> {
+  if (!staged.hasExtra) return
 
   const derivedList = await listDerivedKpis(conn)
   const tech = await workspaceTechnology(conn)
@@ -441,9 +480,10 @@ async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
     const kpiId = Number(kpiRow.getRowObjects()[0]?.kpi_id)
     if (!kpiId) continue
 
+    // a source missing from the file reads as NULL
     const parts = def.sourceKPIs.map((src) => {
-      const escSrc = src.replace(/'/g, "''")
-      return `COALESCE(try_cast(json_extract_string(s.kpi_json, '$.\"${escSrc}\"') AS DOUBLE), try_cast(json_extract_string(s.kpi_json, '$.${escSrc}') AS DOUBLE))`
+      const col = staged.sources.get(src)
+      return col ? `try_cast(s.${col} AS DOUBLE)` : 'CAST(NULL AS DOUBLE)'
     })
 
     let calcExpr = ''
@@ -473,7 +513,6 @@ async function insertDerivedMetrics(conn: DuckDBConnection): Promise<void> {
       FROM stg_clean s
       JOIN dim_cell c ON c.name = s.cell_name
       WHERE s.date_id IS NOT NULL AND s.cell_name IS NOT NULL AND s.cell_name <> '' AND s.rn = 1
-        AND s.kpi_json IS NOT NULL
         AND (${calcExpr}) IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM fact_extra_metrics f
@@ -614,10 +653,10 @@ async function runImportCoreInner(
 
   // stage + authoritative validation
   onPhase?.('Reading file', basename(path))
-  await stageCsv(conn, csvPath, header, mapping, basename(path))
+  const kpiStaged = await stageCsv(conn, csvPath, header, mapping, basename(path))
   const staged = await count(conn, `SELECT count(*) n FROM stg_import`)
   const csvRejects = await count(conn, `SELECT count(*) n FROM stg_rejects`)
-  await buildClean(conn)
+  await buildClean(conn, kpiStaged)
   onPhase?.('Validating')
   const issues: ValidationIssue[] = await validateStaged(conn, mapping)
   const errors = issues.filter((i) => i.severity === 'error')
@@ -642,8 +681,8 @@ async function runImportCoreInner(
     await backfillCellDims(conn)
     const importId = await nextAuditId(conn)
     const inserted = await insertFacts(conn, importId)
-    await insertExtraMetrics(conn)
-    await insertDerivedMetrics(conn)
+    await insertExtraMetrics(conn, kpiStaged)
+    await insertDerivedMetrics(conn, kpiStaged)
     const dateIds = await affectedDateIds(conn)
     onPhase?.('Aggregating', `${dateIds.length} day${dateIds.length === 1 ? '' : 's'}`)
     await recomputeAggregates(conn, dateIds)

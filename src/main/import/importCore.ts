@@ -90,7 +90,7 @@ async function stageCsv(
   const named: Array<[string, string]> = [
     ...Object.entries(kpiCols).filter(([h, k]) => header.includes(h) && k),
     ...unmapped.map((h) => [h, h] as [string, string])
-  ]
+  ].sort(([a], [b]) => header.indexOf(a) - header.indexOf(b)) // first in the file wins
   const firstHeader = new Map<string, string>()
   for (const [h, name] of named) if (!firstHeader.has(name)) firstHeader.set(name, h)
 

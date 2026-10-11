@@ -132,11 +132,88 @@ describe('duplicate rows and duplicate mappings', () => {
     expect([[98.5, 0.4], [50, 9]]).toContainEqual(pair)
   })
 
-  it('two columns mapped to one KPI: the first column wins and the import succeeds', async () => {
-    const res = await importCsv(ws, 'two-to-one.csv', [...BASE, 'CSSR A', 'CSSR B'], [
-      ['02/07/2026', ...geo('C1'), '91', '92']
+})
+
+describe('derived KPIs and edge cases (behaviour pinned from the JSON-blob import)', () => {
+  let ws: RealWorkspace
+  let got: Record<string, number>
+  let none: Record<string, number>
+  beforeAll(async () => {
+    ws = await openRealWorkspace('3G')
+    const { saveDerivedKpi } = await import('../../src/main/services/derivedKpiService')
+    const def = (id: string, operation: 'SUM' | 'AVERAGE' | 'RATIO', sourceKPIs: string[], extra = {}) =>
+      saveDerivedKpi(ws.conn, { id, name: id, technology: '3G', operation, sourceKPIs, enabled: true, ...extra })
+    await def('zz_ratio', 'RATIO', ['Num.Ctr', 'Den.Ctr'])
+    await def('zz_avg', 'AVERAGE', ['Num.Ctr', 'Den.Ctr'])
+    await def('zz_zero', 'SUM', ['Absent.Ctr'], { treatMissingAsZero: true })
+    await def('zz_off', 'SUM', ['Num.Ctr'], { enabled: false })
+    await def('zz_2g', 'SUM', ['Num.Ctr'], { technology: '2G' })
+    await def('zz_mapped', 'SUM', ['VS.Mapped.Src']) // source supplied by a mapped column
+    await def('zz_shared', 'SUM', ['data_access_success_3g']) // a column that is also a KPI key
+    await importCsv(ws, 'derived.csv', [...BASE, 'Num.Ctr', 'Den.Ctr', 'Rej DL', 'data_access_success_3g'], [
+      ['01/07/2026', ...geo('C1'), '6', '3', '4', '97'],
+      ['01/07/2026', ...geo('C2'), '6', '0', '', '96']
+    ], { 'Rej DL': 'VS.Mapped.Src' })
+    got = await stored(ws)
+    // a file with no extra columns at all: no derived KPI runs, not even zz_zero
+    await importCsv(ws, 'core-only.csv', [...BASE], [['02/07/2026', ...geo('C1')]], {})
+    none = Object.fromEntries(Object.entries(await stored(ws)).filter(([k]) => k.includes('|02/07|')))
+  }, 60000)
+  afterAll(async () => {
+    await ws?.cleanup()
+  })
+
+  it('RATIO divides and skips a zero denominator; AVERAGE averages', () => {
+    expect(got['zz_ratio|01/07|C1']).toBe(2)
+    expect(got['zz_ratio|01/07|C2']).toBeUndefined()
+    expect(got['zz_avg|01/07|C1']).toBe(4.5)
+    expect(got['zz_avg|01/07|C2']).toBe(3)
+  })
+
+  it('treat-missing-as-zero writes 0 when the file has extra columns but none of the sources', () => {
+    expect(got['zz_zero|01/07|C1']).toBe(0)
+    expect(got['zz_zero|01/07|C2']).toBe(0)
+  })
+
+  it('skips disabled derived KPIs and other technologies\' ones', () => {
+    expect(Object.keys(got).some((k) => k.startsWith('zz_off|') || k.startsWith('zz_2g|'))).toBe(false)
+  })
+
+  it('reads a source supplied by a mapped column, and a column that is both a KPI and a source', () => {
+    expect(got['zz_mapped|01/07|C1']).toBe(4)
+    expect(got['zz_mapped|01/07|C2']).toBeUndefined()
+    expect(got['data_access_success_3g|01/07|C1']).toBe(97)
+    expect(got['zz_shared|01/07|C1']).toBe(97)
+    expect(got['zz_shared|01/07|C2']).toBe(96)
+  })
+
+  it('a file with no extra columns stores no KPI values', () => {
+    expect(none).toEqual({})
+  })
+})
+
+describe('two columns carrying one KPI: the first column in the file wins (used to fail the import)', () => {
+  let ws: RealWorkspace
+  beforeAll(async () => {
+    ws = await openRealWorkspace('3G')
+  }, 60000)
+  afterAll(async () => {
+    await ws?.cleanup()
+  })
+
+  it('two columns mapped to one KPI', async () => {
+    // mapping order is A then B; file order is B then A
+    const res = await importCsv(ws, 'two-to-one.csv', [...BASE, 'CSSR B', 'CSSR A'], [
+      ['02/07/2026', ...geo('C1'), '92', '91']
     ], { 'CSSR A': 'call_setup_success_3g', 'CSSR B': 'call_setup_success_3g' })
     expect(res.insertedRows).toBe(1)
-    expect((await stored(ws))['call_setup_success_3g|02/07|C1']).toBe(91)
+    expect((await stored(ws))['call_setup_success_3g|02/07|C1']).toBe(92)
+  })
+
+  it('a header named like a KPI next to a column mapped to that KPI', async () => {
+    await importCsv(ws, 'named-and-mapped.csv', [...BASE, 'call_drop_rate_3g', 'Drops X'], [
+      ['03/07/2026', ...geo('C1'), '0.5', '0.9']
+    ], { 'Drops X': 'call_drop_rate_3g' })
+    expect((await stored(ws))['call_drop_rate_3g|03/07|C1']).toBe(0.5)
   })
 })
